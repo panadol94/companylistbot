@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  bot-platform:
+    build: .
+    container_name: list_company_bot_saas
+    restart: always
+    environment:
+      - MOTHER_TOKEN=${MOTHER_TOKEN}
+      - MASTER_ADMIN_ID=${MASTER_ADMIN_ID}
+      - DB_FILE=/data/bot_platform.db
+    volumes:
+      - ./data:/data
