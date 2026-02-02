@@ -173,14 +173,14 @@ class ChildBot:
             keyboard.append([InlineKeyboardButton("📤 REQUEST WITHDRAWAL", callback_data="req_withdraw")])
         keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
         
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    async def share_link(self, update: Update):
+    async def share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_uname = context.bot.username
         link = f"https://t.me/{bot_uname}?start={update.effective_user.id}"
-        await update.callback_query.message.reply_text(f"🔗 **Link Referral Anda:**\n`{link}`\n\nShare link ini dan dapatkan RM1.00 setiap invite!", parse_mode='Markdown')
+        await update.callback_query.message.reply_text(f"🔗 Link Referral Anda:\n{link}\n\nShare link ini dan dapatkan RM1.00 setiap invite!")
 
-    async def leaderboard(self, update: Update):
+    async def leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Simple Logic: Top users by invite
         conn = self.db.get_connection()
         top = conn.execute("SELECT telegram_id, total_invites FROM users WHERE bot_id = ? ORDER BY total_invites DESC LIMIT 10", (self.bot_id,)).fetchall()
