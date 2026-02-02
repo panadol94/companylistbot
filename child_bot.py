@@ -185,14 +185,23 @@ class ChildBot:
         if comp.get('button_text') and comp.get('button_url'):
             keyboard.append([InlineKeyboardButton(comp['button_text'], url=comp['button_url'])])
         
-        # Row 2: Navigation row (Prev/Next)
-        nav_buttons = []
-        if page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"list_page_{page-1}"))
-        if page < len(companies) - 1:
-            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"list_page_{page+1}"))
-        if nav_buttons:
-            keyboard.append(nav_buttons)
+        # Row 2+: Other company buttons (show names of other companies)
+        other_companies = [c for i, c in enumerate(companies) if i != page]
+        if other_companies:
+            # Show up to 3 companies per row
+            row = []
+            for i, other in enumerate(other_companies):
+                # Find the index of this company for navigation
+                other_page = next(idx for idx, c in enumerate(companies) if c['id'] == other['id'])
+                # Truncate name if too long
+                btn_name = other['name'][:15] + "..." if len(other['name']) > 15 else other['name']
+                row.append(InlineKeyboardButton(f"🏢 {btn_name}", callback_data=f"list_page_{other_page}"))
+                # Max 2 per row for readability
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:  # Add remaining buttons
+                keyboard.append(row)
         
         # Admin-only buttons
         if is_admin:
