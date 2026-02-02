@@ -151,6 +151,13 @@ class Database:
         bot = conn.execute("SELECT * FROM bots WHERE token = ?", (token,)).fetchone()
         conn.close()
         return dict(bot) if bot else None
+    
+    def get_bot_by_id(self, bot_id):
+        """Get bot details by bot ID"""
+        conn = self.get_connection()
+        bot = conn.execute("SELECT * FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        return dict(bot) if bot else None
 
     def extend_subscription(self, owner_id, days):
         with self.lock:
