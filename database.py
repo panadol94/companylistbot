@@ -186,11 +186,6 @@ class Database:
             )
             conn.commit()
             conn.close()
-        with self.lock:
-            conn = self.get_connection()
-            conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
-            conn.commit()
-            conn.close()
 
     def edit_company(self, company_id, field, value):
         with self.lock:
