@@ -84,16 +84,17 @@ class ChildBot:
         
         # Edit Company Wizard
         edit_company_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(self.edit_company_start, pattern="^edit_company_\\d+$")],
+            entry_points=[CallbackQueryHandler(self.edit_company_start, pattern=r'^edit_company_\d+$')],
             states={
-                EDIT_FIELD: [CallbackQueryHandler(self.edit_company_choose_field)],
+                EDIT_FIELD: [CallbackQueryHandler(self.edit_company_choose_field, pattern=r'^ef_')],
                 EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_name)],
                 EDIT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_desc)],
                 EDIT_MEDIA: [MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, self.edit_company_save_media)],
                 EDIT_BTN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_text)],
                 EDIT_BTN_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_url)],
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op)]
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern=r'^cancel$')],
+            per_message=False
         )
         self.app.add_handler(edit_company_conv)
         
