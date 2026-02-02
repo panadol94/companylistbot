@@ -634,35 +634,27 @@ class ChildBot:
         return MEDIA
 
     async def add_company_media(self, update, context):
-        # Prepare Storage - use /data/media for persistent volume storage
-        import os
-        media_base = os.environ.get('MEDIA_DIR', '/data/media')
-        media_dir = f"{media_base}/{self.bot_id}"
-        os.makedirs(media_dir, exist_ok=True)
-        timestamp = int(datetime.datetime.now().timestamp())
-        
-        file_obj = None
-        file_ext = ""
+        """Store media using Telegram's file_id (no local download needed)"""
+        file_id = None
         media_type = ""
 
         if update.message.photo:
-            file_obj = await update.message.photo[-1].get_file()
-            file_ext = ".jpg"
+            # Get highest resolution photo
+            file_id = update.message.photo[-1].file_id
             media_type = 'photo'
         elif update.message.video:
-            file_obj = await update.message.video.get_file()
-            file_ext = ".mp4"
+            file_id = update.message.video.file_id
             media_type = 'video'
         elif update.message.animation:  # GIF support!
-            file_obj = await update.message.animation.get_file()
-            file_ext = ".gif"
+            file_id = update.message.animation.file_id
             media_type = 'animation'
         
-        # Download and Save
-        file_path = f"{media_dir}/{timestamp}{file_ext}"
-        await file_obj.download_to_drive(file_path)
+        if not file_id:
+            await update.message.reply_text("❌ Sila hantar gambar, video atau GIF.")
+            return MEDIA
         
-        context.user_data['new_comp']['media'] = file_path
+        # Store file_id directly - Telegram hosts the file for us!
+        context.user_data['new_comp']['media'] = file_id
         context.user_data['new_comp']['type'] = media_type
         await update.message.reply_text("Masukkan **Text pada Button** (Contoh: REGISTER NOW):")
         return BUTTON_TEXT
