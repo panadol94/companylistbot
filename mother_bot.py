@@ -37,6 +37,9 @@ class MotherBot:
             fallbacks=[CommandHandler("cancel", self.cancel)]
         )
         self.app.add_handler(create_conv)
+        
+        # Callback Handler for buttons
+        self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Admin Commands
         self.app.add_handler(CommandHandler("setglobalad", self.set_global_ad))
@@ -100,9 +103,15 @@ class MotherBot:
             await update.message.reply_text(f"❌ Error: {msg}\nTry /createbot again.")
             return ConversationHandler.END
 
+
     async def cancel(self, update, context):
         await update.message.reply_text("Cancelled.")
         return ConversationHandler.END
+    
+    async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle button clicks (placeholder for Mother Bot)"""
+        query = update.callback_query
+        await query.answer("This feature is not implemented in Mother Bot.")
 
     # --- My Bots ---
     async def my_bots(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
