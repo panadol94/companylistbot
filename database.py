@@ -110,6 +110,14 @@ class Database:
                 )
             ''')
 
+            # Create indexes for better query performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_companies_bot_id ON companies(bot_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_bot_id ON users(bot_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_bot_id ON withdrawals(bot_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_user_id ON withdrawals(user_id)')
+
             conn.commit()
             conn.close()
 
