@@ -97,16 +97,6 @@ class ChildBot:
         )
         self.app.add_handler(edit_company_conv)
         
-        # Search Company Wizard
-        search_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(self.search_company_start, pattern="^search_company$")],
-            states={
-                SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.search_company_results)]
-            },
-            fallbacks=[CommandHandler("cancel", self.cancel_op)]
-        )
-        self.app.add_handler(search_conv)
-        
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
