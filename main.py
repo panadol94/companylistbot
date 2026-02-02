@@ -57,9 +57,9 @@ class BotManager:
             logger.error(f"❌ Failed to hook bot {token[:15]}...: {e}")
 
     async def enable_bot_updates(self, app, token):
-        # Check if localhost
-        if "localhost" in DOMAIN_URL or "127.0.0.1" in DOMAIN_URL:
-            logger.info(f"🔄 Localhost detected. Starting POLLING for {token[:10]}...")
+        # Check if localhost or HTTP (not HTTPS)
+        if "localhost" in DOMAIN_URL or "127.0.0.1" in DOMAIN_URL or DOMAIN_URL.startswith("http://"):
+            logger.info(f"🔄 Non-HTTPS environment detected. Starting POLLING for {token[:10]}...")
             await app.updater.start_polling()
         else:
             await self.setup_webhook(app, token)
