@@ -10,6 +10,8 @@ from config import DEFAULT_GLOBAL_AD
 NAME, DESC, MEDIA, BUTTON_TEXT, BUTTON_URL = range(5)
 # States for Broadcast
 BROADCAST_CONTENT, BROADCAST_CONFIRM = range(7, 9)
+# States for Edit Welcome
+WELCOME_PHOTO, WELCOME_TEXT = range(11, 13)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -64,6 +66,17 @@ class ChildBot:
             fallbacks=[CommandHandler("cancel", self.cancel_op)]
         )
         self.app.add_handler(broadcast_conv)
+
+        # Edit Welcome Wizard
+        welcome_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.edit_welcome_start, pattern="^edit_welcome$")],
+            states={
+                WELCOME_PHOTO: [MessageHandler(filters.PHOTO, self.save_welcome_photo)],
+                WELCOME_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.save_welcome_text)]
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel_welcome)]
+        )
+        self.app.add_handler(welcome_conv)
         
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -204,7 +217,7 @@ class ChildBot:
         text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
         keyboard = [
             [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
-            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Customize", callback_data="admin_customize")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Edit Welcome", callback_data="edit_welcome")],
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton("💬 Support Reply", callback_data="admin_support")],
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
@@ -313,6 +326,60 @@ class ChildBot:
         )
         keyboard = [[InlineKeyboardButton("« Back", callback_data="close_panel")]]
         await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    # --- Edit Welcome Wizard ---
+    async def edit_welcome_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start Edit Welcome wizard - ask for photo"""
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(
+            "📸 **EDIT WELCOME MESSAGE**\n\n"
+            "Step 1: Upload your welcome banner image\n\n"
+            "Send a photo that will be displayed when users type /start\n\n"
+            "Type /cancel to cancel."
+        )
+        return WELCOME_PHOTO
+    
+    async def save_welcome_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save photo file_id and ask for caption"""
+        photo = update.message.photo[-1]  # Get highest resolution
+        context.user_data['welcome_banner'] = photo.file_id
+        
+        await update.message.reply_text(
+            "✅ Photo saved!\n\n"
+            "Step 2: Enter your welcome message text\n\n"
+            "This text will be shown with the banner when users type /start\n\n"
+            "Type /cancel to cancel."
+        )
+        return WELCOME_TEXT
+    
+    async def save_welcome_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save caption to database and show preview"""
+        caption_text = update.message.text
+        banner_file_id = context.user_data.get('welcome_banner')
+        
+        # Update database
+        bot_data = self.db.get_bot_by_token(self.token)
+        self.db.update_welcome_settings(bot_data['id'], banner_file_id, caption_text)
+        
+        # Show preview
+        keyboard = [[InlineKeyboardButton("🔙 Back to Settings", callback_data="close_panel")]]
+        await update.message.reply_photo(
+            photo=banner_file_id,
+            caption=f"✅ **WELCOME MESSAGE UPDATED!**\n\n"
+                    f"Preview:\n{caption_text}\n\n"
+                    f"Users will see this when they type /start",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        # Clear user data
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    async def cancel_welcome(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Cancel Edit Welcome wizard"""
+        context.user_data.clear()
+        await update.message.reply_text("❌ Edit Welcome cancelled.")
+        return ConversationHandler.END
 
     # --- Support Logic ---
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

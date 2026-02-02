@@ -164,6 +164,17 @@ class Database:
                 conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
                 conn.commit()
                 conn.close()
+
+    def update_welcome_settings(self, bot_id, banner_file_id, caption_text):
+        """Update custom banner and caption for a bot"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "UPDATE bots SET custom_banner = ?, custom_caption = ? WHERE id = ?",
+                (banner_file_id, caption_text, bot_id)
+            )
+            conn.commit()
+            conn.close()
             return True
         except Exception as e:
             print(f"Error deleting company: {e}")
