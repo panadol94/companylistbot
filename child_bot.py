@@ -430,6 +430,56 @@ class ChildBot:
         else:
             await update.callback_query.message.edit_text("Error processing.")
     
+    # --- User Wallet & Share Functions ---
+    async def show_wallet(self, update: Update):
+        """Show user's wallet with balance and referral stats"""
+        user_id = update.effective_user.id
+        user = self.db.get_user(self.bot_id, user_id)
+        
+        if not user:
+            await update.callback_query.message.reply_text("❌ User not found. Type /start first.")
+            return
+        
+        balance = user.get('balance', 0)
+        total_invites = user.get('total_invites', 0)
+        total_earned = total_invites * 1.00  # RM1 per referral
+        
+        text = (
+            f"💰 **YOUR WALLET**\n\n"
+            f"💵 Balance: **RM {balance:.2f}**\n"
+            f"👥 Total Referrals: **{total_invites}**\n"
+            f"💎 Total Earned: **RM {total_earned:.2f}**\n\n"
+            f"_Minimum withdrawal: RM10_"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("📤 WITHDRAW", callback_data="withdraw")],
+            [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
+        ]
+        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def show_share_link(self, update: Update):
+        """Show user's referral share link"""
+        user_id = update.effective_user.id
+        
+        # Get bot info for the link
+        bot_data = self.db.get_bot_by_token(self.token)
+        bot_username = bot_data.get('bot_username', 'bot') if bot_data else 'bot'
+        
+        referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+        
+        text = (
+            f"🔗 **YOUR REFERRAL LINK**\n\n"
+            f"`{referral_link}`\n\n"
+            f"📢 Share link ini dengan kawan-kawan!\n"
+            f"💰 Dapat **RM1.00** untuk setiap referral yang join!\n\n"
+            f"_Tap link di atas untuk copy_"
+        )
+        
+        keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]]
+        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    
     # --- Delete Company Logic ---
     async def show_delete_company_list(self, update: Update):
         """Show list of companies with delete buttons"""
