@@ -447,6 +447,7 @@ class ChildBot:
         elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
         elif data == "admin_customize": await self.show_customize_menu(update)
         elif data == "admin_support": await self.show_support_messages(update)
+        elif data.startswith("edit_company_"): await self.show_edit_company_menu(update, int(data.split("_")[2]))
         elif data == "close_panel": await query.message.delete()
 
     # --- Withdrawal Logic ---
@@ -476,6 +477,34 @@ class ChildBot:
             # To be strict, I should fetch user_id from the just processed WD. 
         else:
             await update.callback_query.message.edit_text("Error processing.")
+    
+    # --- Edit Company Menu ---
+    async def show_edit_company_menu(self, update: Update, company_id: int):
+        """Show edit options for a specific company"""
+        company = next((c for c in self.db.get_companies(self.bot_id) if c['id'] == company_id), None)
+        if not company:
+            await update.callback_query.message.reply_text("❌ Company not found.")
+            return
+        
+        text = (
+            f"✏️ **EDIT COMPANY**\n\n"
+            f"🏢 **{company['name']}**\n\n"
+            f"Select what to edit:"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("📝 Edit Name", callback_data=f"ec_name_{company_id}")],
+            [InlineKeyboardButton("📄 Edit Description", callback_data=f"ec_desc_{company_id}")],
+            [InlineKeyboardButton("🖼️ Edit Media", callback_data=f"ec_media_{company_id}")],
+            [InlineKeyboardButton("🔗 Edit Button", callback_data=f"ec_btn_{company_id}")],
+            [InlineKeyboardButton("🔙 BACK", callback_data="list_page_0")]
+        ]
+        
+        await update.callback_query.message.reply_text(
+            text, 
+            reply_markup=InlineKeyboardMarkup(keyboard), 
+            parse_mode='Markdown'
+        )
     
     # --- User Wallet & Share Functions ---
     async def show_wallet(self, update: Update):
