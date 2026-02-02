@@ -49,16 +49,20 @@ class MotherBot:
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
-            "🤖 **Welcome to Bot Factory!**\n\n"
-            "Create your own **Company List Bot** in seconds.\n"
-            "Features included:\n"
+            "🤖 **Welcome to MASUK10 ROBOT!**\n\n"
+            "Create your own **Company List Bot** in seconds.\n\n"
+            "✨ **Features included:**\n"
             "✅ Company Listing & Search\n"
             "✅ Referral System (RM1/invite)\n"
             "✅ Wallet & Withdrawal\n"
+            "✅ Custom Welcome Message\n"
             "✅ Admin Dashboard\n\n"
             "👇 **Get Started:**\n"
             "/createbot - Create new bot\n"
-            "/mybots - Manage your bots"
+            "/mybots - Manage your bots\n\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "🔧 Powered by **MASUK10**\n"
+            "💬 Support: @cyberslotadmin"
         )
         await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -112,13 +116,17 @@ class MotherBot:
                 bot_link = f"https://t.me/{bot_username}"
                 success_msg = (
                     f"🎉 **Bot is ONLINE!**\n\n"
-                    f"**Bot Name:** {bot_name}\n"
-                    f"**Username:** @{bot_username}\n"
-                    f"**Bot Link:** {bot_link}\n"
-                    f"**Bot ID:** #{bot_data['id']}\n\n"
-                    f"**Subscription:** Trial 3 Days\n"
-                    f"**Expires:** {bot_data['subscription_end'][:10]}\n\n"
-                    f"✨ Go to your bot and type /start to begin!"
+                    f"📱 **Bot Info:**\n"
+                    f"• Name: {bot_name}\n"
+                    f"• Username: @{bot_username}\n"
+                    f"• Link: {bot_link}\n"
+                    f"• ID: #{bot_data['id']}\n\n"
+                    f"📅 **Subscription:** Trial 3 Days\n"
+                    f"⏰ **Expires:** {bot_data['subscription_end'][:10]}\n\n"
+                    f"✨ Go to your bot and type /start to begin!\n\n"
+                    f"━━━━━━━━━━━━━━━━━\n"
+                    f"🔧 Powered by **MASUK10 ROBOT**\n"
+                    f"💬 Support: @cyberslotadmin"
                 )
                 await update.message.reply_text(success_msg, parse_mode='Markdown')
             except Exception as e:
