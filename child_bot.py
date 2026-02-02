@@ -129,12 +129,20 @@ class ChildBot:
         bot_data = self.db.get_bot_by_token(self.token)
         caption = bot_data['custom_caption'] or f"Selamat Datang ke {bot_data['bot_username']}! 🚀\n\nPlatform penyenaraian Company terbaik.\nSila pilih menu di bawah:"
         
+        # Check if referral system is enabled
+        referral_enabled = self.db.is_referral_enabled(self.bot_id)
+        
         keyboard = [
             [InlineKeyboardButton("🏢 LIST COMPANY", callback_data="list_page_0")],
-            [InlineKeyboardButton("💰 DOMPET SAYA", callback_data="wallet")],
-            [InlineKeyboardButton("🔗 SHARE LINK", callback_data="share_link")],
-            [InlineKeyboardButton("🏆 LEADERBOARD", callback_data="leaderboard"), InlineKeyboardButton("💬 SUPPORT", callback_data="support_info")]
         ]
+        
+        # Only show referral buttons if enabled
+        if referral_enabled:
+            keyboard.append([InlineKeyboardButton("💰 DOMPET SAYA", callback_data="wallet")])
+            keyboard.append([InlineKeyboardButton("🔗 SHARE LINK", callback_data="share_link")])
+            keyboard.append([InlineKeyboardButton("🏆 LEADERBOARD", callback_data="leaderboard"), InlineKeyboardButton("💬 SUPPORT", callback_data="support_info")])
+        else:
+            keyboard.append([InlineKeyboardButton("💬 SUPPORT", callback_data="support_info")])
 
         if update.callback_query:
             try: await update.callback_query.message.delete()
@@ -421,11 +429,16 @@ class ChildBot:
             await update.message.reply_text("⛔ Access Denied.")
             return
 
+        # Check referral status for toggle button
+        referral_enabled = self.db.is_referral_enabled(self.bot_id)
+        referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
+
         text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
         keyboard = [
             [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
             [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Edit Start", callback_data="edit_welcome")],
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton("💬 Support Reply", callback_data="admin_support")],
+            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -461,6 +474,7 @@ class ChildBot:
         elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
         elif data == "admin_customize": await self.show_customize_menu(update)
         elif data == "admin_support": await self.show_support_messages(update)
+        elif data == "toggle_referral": await self.toggle_referral_system(update)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -723,6 +737,24 @@ class ChildBot:
             "📨 _No pending messages at the moment._"
         )
         keyboard = [[InlineKeyboardButton("« Back", callback_data="close_panel")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def toggle_referral_system(self, update: Update):
+        """Toggle referral system on/off"""
+        new_state = self.db.toggle_referral(self.bot_id)
+        status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
+        
+        # Update the admin panel with new button state
+        referral_btn_text = "🟢 Referral: ON" if new_state else "🔴 Referral: OFF"
+        
+        text = f"👑 **ADMIN SETTINGS DASHBOARD**\n\n✅ Referral system is now {status_text}"
+        keyboard = [
+            [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Edit Start", callback_data="edit_welcome")],
+            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton("💬 Support Reply", callback_data="admin_support")],
+            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
+            [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
+        ]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     # --- Edit Welcome Wizard ---

@@ -36,9 +36,16 @@ class Database:
                     is_active BOOLEAN DEFAULT 1,
                     custom_banner TEXT,
                     custom_caption TEXT,
+                    referral_enabled BOOLEAN DEFAULT 1,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+            
+            # Migration: Add referral_enabled column if missing
+            try:
+                cursor.execute("ALTER TABLE bots ADD COLUMN referral_enabled BOOLEAN DEFAULT 1")
+            except:
+                pass  # Column already exists
 
             # 2. Companies Table (Content for each bot)
             cursor.execute('''
@@ -374,3 +381,22 @@ class Database:
                  conn.execute("UPDATE bots SET custom_caption = ? WHERE id = ?", (caption, bot_id))
             conn.commit()
             conn.close()
+
+    def toggle_referral(self, bot_id):
+        """Toggle referral system on/off for a bot"""
+        with self.lock:
+            conn = self.get_connection()
+            # Get current state
+            current = conn.execute("SELECT referral_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+            new_state = 0 if current and current['referral_enabled'] else 1
+            conn.execute("UPDATE bots SET referral_enabled = ? WHERE id = ?", (new_state, bot_id))
+            conn.commit()
+            conn.close()
+            return new_state  # Returns new state (1=ON, 0=OFF)
+
+    def is_referral_enabled(self, bot_id):
+        """Check if referral system is enabled for a bot"""
+        conn = self.get_connection()
+        bot = conn.execute("SELECT referral_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        return bool(bot['referral_enabled']) if bot else True  # Default True
