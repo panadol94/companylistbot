@@ -181,7 +181,11 @@ class ChildBot:
         # Build keyboard
         keyboard = []
         
-        # Navigation row
+        # Row 1: Company action button (REGISTER)
+        if comp.get('button_text') and comp.get('button_url'):
+            keyboard.append([InlineKeyboardButton(comp['button_text'], url=comp['button_url'])])
+        
+        # Row 2: Navigation row (Prev/Next)
         nav_buttons = []
         if page > 0:
             nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"list_page_{page-1}"))
