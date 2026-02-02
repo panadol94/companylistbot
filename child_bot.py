@@ -1240,18 +1240,96 @@ class ChildBot:
                 await update.message.reply_text("Tap below to continue:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
-        # User -> Admin
-        if user_id != owner_id:
-            await context.bot.forward_message(chat_id=owner_id, from_chat_id=update.effective_chat.id, message_id=update.message.message_id)
-            await context.bot.send_message(chat_id=owner_id, text=f"💬 Reply using: `/reply {user_id} [message]`")
+        # --- LIVEGRAM FUNCTIONALITY ---
+        # Admin replies to forwarded message -> send to user
+        if user_id == owner_id and update.message.reply_to_message:
+            replied_msg = update.message.reply_to_message
+            replied_msg_id = replied_msg.message_id
+            
+            # Check if this is a reply to a forwarded user message
+            forwarded_msgs = context.bot_data.get('forwarded_msgs', {})
+            original_user_id = forwarded_msgs.get(replied_msg_id)
+            
+            if original_user_id:
+                try:
+                    # Send admin's reply to the original user
+                    if update.message.text:
+                        await context.bot.send_message(
+                            chat_id=original_user_id, 
+                            text=f"💬 **Admin:**\n{update.message.text}", 
+                            parse_mode='Markdown'
+                        )
+                    elif update.message.photo:
+                        await context.bot.send_photo(
+                            chat_id=original_user_id,
+                            photo=update.message.photo[-1].file_id,
+                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
+                            parse_mode='Markdown'
+                        )
+                    elif update.message.video:
+                        await context.bot.send_video(
+                            chat_id=original_user_id,
+                            video=update.message.video.file_id,
+                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
+                            parse_mode='Markdown'
+                        )
+                    elif update.message.document:
+                        await context.bot.send_document(
+                            chat_id=original_user_id,
+                            document=update.message.document.file_id,
+                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
+                            parse_mode='Markdown'
+                        )
+                    elif update.message.voice:
+                        await context.bot.send_voice(
+                            chat_id=original_user_id,
+                            voice=update.message.voice.file_id
+                        )
+                    elif update.message.sticker:
+                        await context.bot.send_sticker(
+                            chat_id=original_user_id,
+                            sticker=update.message.sticker.file_id
+                        )
+                    await update.message.reply_text("✅ Sent to user!")
+                except Exception as e:
+                    await update.message.reply_text(f"❌ Failed: {str(e)}")
+                return
         
-        # Admin Reply Command (Simple regex or check)
-        elif update.message.text.startswith("/reply "):
+        # User -> Admin (forward message and store mapping)
+        if user_id != owner_id:
+            # Forward message to admin
+            forwarded = await context.bot.forward_message(
+                chat_id=owner_id, 
+                from_chat_id=update.effective_chat.id, 
+                message_id=update.message.message_id
+            )
+            
+            # Store mapping: forwarded_msg_id -> original_user_id
+            if 'forwarded_msgs' not in context.bot_data:
+                context.bot_data['forwarded_msgs'] = {}
+            context.bot_data['forwarded_msgs'][forwarded.message_id] = user_id
+            
+            # Clean old mappings (keep only last 500 to save memory)
+            if len(context.bot_data['forwarded_msgs']) > 500:
+                oldest_keys = list(context.bot_data['forwarded_msgs'].keys())[:-500]
+                for k in oldest_keys:
+                    del context.bot_data['forwarded_msgs'][k]
+            
+            # Send hint to admin
+            user_name = update.effective_user.first_name or "User"
+            await context.bot.send_message(
+                chat_id=owner_id, 
+                text=f"👤 **{user_name}** (ID: `{user_id}`)\n\n💡 _Reply terus ke message di atas untuk balas._",
+                parse_mode='Markdown'
+            )
+        
+        # Admin /reply command (legacy fallback)
+        elif update.message.text and update.message.text.startswith("/reply "):
             try:
                 parts = update.message.text.split(" ", 2)
                 target_id = int(parts[1])
                 msg = parts[2]
-                await context.bot.send_message(chat_id=target_id, text=f"💬 **Admin Reply:**\n{msg}", parse_mode='Markdown')
+                await context.bot.send_message(chat_id=target_id, text=f"💬 **Admin:**\n{msg}", parse_mode='Markdown')
                 await update.message.reply_text("✅ Sent.")
             except:
                 await update.message.reply_text("❌ Format: /reply USER_ID MESSAGE")
