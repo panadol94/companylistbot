@@ -933,15 +933,20 @@ class ChildBot:
             # Check if expiring soon (within 3 days)
             days_left = (expiry - now).days
             if days_left <= 3 and days_left > 0:
-                # Only show warning ONCE per session (not on every interaction)
-                if not hasattr(self, '_expiry_warned') or not self._expiry_warned:
-                    self._expiry_warned = True  # Mark as warned for this session
-                    warning_msg = (
-                        f"⚠️ **Subscription Expiring Soon!**\n\n"
-                        f"📅 Expires in: **{days_left} day(s)**\n"
-                        f"Contact owner to extend subscription."
-                    )
-                    await update.effective_chat.send_message(warning_msg, parse_mode='Markdown')
+                # Only show warning to BOT OWNER, not regular users
+                user_id = update.effective_user.id if update.effective_user else None
+                is_owner = user_id == bot_data.get('owner_id')
+                
+                if is_owner:
+                    # Only show warning ONCE per session (not on every interaction)
+                    if not hasattr(self, '_expiry_warned') or not self._expiry_warned:
+                        self._expiry_warned = True  # Mark as warned for this session
+                        warning_msg = (
+                            f"⚠️ **Subscription Expiring Soon!**\n\n"
+                            f"📅 Expires in: **{days_left} day(s)**\n"
+                            f"Contact owner to extend subscription."
+                        )
+                        await update.effective_chat.send_message(warning_msg, parse_mode='Markdown')
             
             return True  # Allow operation
             
