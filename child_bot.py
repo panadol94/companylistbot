@@ -552,6 +552,15 @@ class ChildBot:
         elif data == "finish_company": 
             await query.message.edit_text("✅ Company Berjaya Ditambah!")
             context.user_data.pop('new_comp', None)
+        # Company Button Management
+        elif data.startswith("manage_co_btns_"): await self.show_company_buttons(update, int(data.split("_")[3]))
+        elif data.startswith("add_co_btn_"): await self.start_add_company_btn(update, context, int(data.split("_")[3]))
+        elif data.startswith("del_co_btn_"): await self.delete_company_btn(update, int(data.split("_")[3]))
+        elif data.startswith("pair_co_btns_"): await self.start_pair_company_btns(update, int(data.split("_")[3]))
+        elif data.startswith("copair1_"): await self.select_co_pair_btn1(update, context)
+        elif data.startswith("copair2_"): await self.complete_co_pair(update)
+        elif data.startswith("unpair_co_btn_"): await self.unpair_company_btn(update, int(data.split("_")[3]))
+        elif data == "ef_manage_btns": await self.show_company_buttons_from_edit(update, context)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -602,6 +611,7 @@ class ChildBot:
             [InlineKeyboardButton("📄 Edit Description", callback_data=f"ec_desc_{company_id}")],
             [InlineKeyboardButton("🖼️ Edit Media", callback_data=f"ec_media_{company_id}")],
             [InlineKeyboardButton("🔗 Edit Button", callback_data=f"ec_btn_{company_id}")],
+            [InlineKeyboardButton("🔘 Manage Buttons", callback_data=f"manage_co_btns_{company_id}")],
             [InlineKeyboardButton("🔙 BACK", callback_data="list_page_0")]
         ]
         
@@ -630,6 +640,7 @@ class ChildBot:
             [InlineKeyboardButton("🖼️ Media", callback_data="ef_media")],
             [InlineKeyboardButton("🔗 Button Text", callback_data="ef_btn_text")],
             [InlineKeyboardButton("🌐 Button URL", callback_data="ef_btn_url")],
+            [InlineKeyboardButton("🔘 Manage Buttons", callback_data="ef_manage_btns")],
             [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
         ]
         await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
@@ -958,6 +969,151 @@ class ChildBot:
         await update.callback_query.answer("✅ Button unpaired!")
         await self.show_manage_buttons(update)
     
+    # --- Company Button Management ---
+    async def show_company_buttons(self, update: Update, company_id: int):
+        """Show buttons for a specific company with management options"""
+        buttons = self.db.get_company_buttons(company_id)
+        company = next((c for c in self.db.get_companies(self.bot_id) if c['id'] == company_id), None)
+        name = company['name'] if company else 'Company'
+        
+        if not buttons:
+            text = f"🔘 **MANAGE BUTTONS: {name}**\n\n_No buttons yet._"
+            keyboard = [
+                [InlineKeyboardButton("➕ Add Button", callback_data=f"add_co_btn_{company_id}")],
+                [InlineKeyboardButton("« Back", callback_data=f"edit_company_{company_id}")]
+            ]
+        else:
+            text = f"🔘 **MANAGE BUTTONS: {name}**\n\nButtons ({len(buttons)}):"
+            keyboard = []
+            for btn in buttons:
+                paired = "🔗" if btn['row_group'] else ""
+                keyboard.append([
+                    InlineKeyboardButton(f"{paired} {btn['text']}", callback_data=f"view_co_btn_{btn['id']}"),
+                    InlineKeyboardButton("🗑️", callback_data=f"del_co_btn_{btn['id']}")
+                ])
+            keyboard.append([InlineKeyboardButton("➕ Add Button", callback_data=f"add_co_btn_{company_id}")])
+            keyboard.append([InlineKeyboardButton("🔗 Pair Buttons", callback_data=f"pair_co_btns_{company_id}")])
+            keyboard.append([InlineKeyboardButton("« Back", callback_data=f"edit_company_{company_id}")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def show_company_buttons_from_edit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show company buttons from Edit Company wizard context"""
+        company_id = context.user_data.get('edit_company_id')
+        if not company_id:
+            await update.callback_query.answer("Error: No company in context")
+            return
+        await self.show_company_buttons(update, company_id)
+
+    async def start_add_company_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE, company_id: int):
+        """Start adding button to existing company"""
+        context.user_data['add_btn_company_id'] = company_id
+        context.user_data['awaiting_co_btn_text'] = True
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(
+            "➕ **ADD BUTTON**\n\nMasukkan text untuk button:",
+            parse_mode='Markdown'
+        )
+
+    async def delete_company_btn(self, update: Update, button_id: int):
+        """Delete a company button"""
+        # Get button to find company_id
+        conn = self.db.get_connection()
+        btn = conn.execute("SELECT company_id FROM company_buttons WHERE id = ?", (button_id,)).fetchone()
+        if btn:
+            company_id = btn['company_id']
+            conn.execute("DELETE FROM company_buttons WHERE id = ?", (button_id,))
+            conn.commit()
+            conn.close()
+            await update.callback_query.answer("✅ Button deleted!")
+            await self.show_company_buttons(update, company_id)
+        else:
+            conn.close()
+            await update.callback_query.answer("⚠️ Button not found")
+
+    async def start_pair_company_btns(self, update: Update, company_id: int):
+        """Start pairing buttons for a company"""
+        buttons = self.db.get_company_buttons(company_id)
+        unpaired = [b for b in buttons if not b['row_group']]
+        
+        if len(unpaired) < 2:
+            await update.callback_query.answer("Need at least 2 unpaired buttons!")
+            return
+        
+        text = "🔗 **PAIR BUTTONS**\n\nSelect first button:"
+        keyboard = []
+        for btn in unpaired:
+            keyboard.append([InlineKeyboardButton(btn['text'], callback_data=f"copair1_{company_id}_{btn['id']}")])
+        keyboard.append([InlineKeyboardButton("« Cancel", callback_data=f"manage_co_btns_{company_id}")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def select_co_pair_btn1(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """First button selected, show second button options"""
+        data = update.callback_query.data
+        parts = data.split("_")
+        company_id = int(parts[1])
+        btn1_id = int(parts[2])
+        
+        context.user_data['pair_co_btn1'] = btn1_id
+        context.user_data['pair_co_company'] = company_id
+        
+        buttons = self.db.get_company_buttons(company_id)
+        unpaired = [b for b in buttons if not b['row_group'] and b['id'] != btn1_id]
+        
+        text = "🔗 **PAIR BUTTONS**\n\nSelect second button:"
+        keyboard = []
+        for btn in unpaired:
+            keyboard.append([InlineKeyboardButton(btn['text'], callback_data=f"copair2_{btn['id']}")])
+        keyboard.append([InlineKeyboardButton("« Cancel", callback_data=f"manage_co_btns_{company_id}")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def complete_co_pair(self, update: Update):
+        """Complete company button pairing"""
+        context = update.callback_query
+        data = update.callback_query.data
+        btn2_id = int(data.split("_")[1])
+        
+        # Get from bot's context via application
+        btn1_id = None
+        company_id = None
+        # This is a callback, we need to access application context differently
+        # For simplicity, extract from delete first button's data
+        conn = self.db.get_connection()
+        btn2 = conn.execute("SELECT company_id FROM company_buttons WHERE id = ?", (btn2_id,)).fetchone()
+        if btn2:
+            company_id = btn2['company_id']
+        conn.close()
+        
+        if company_id:
+            # Since we can't easily access context in callback, use a simpler approach
+            # Pair with previous button (last unpaired before this one)
+            buttons = self.db.get_company_buttons(company_id)
+            unpaired = [b for b in buttons if not b['row_group'] and b['id'] != btn2_id]
+            if unpaired:
+                btn1_id = unpaired[0]['id']
+                self.db.pair_company_buttons(btn1_id, btn2_id)
+                await update.callback_query.answer("✅ Buttons paired!")
+            await self.show_company_buttons(update, company_id)
+        else:
+            await update.callback_query.answer("⚠️ Error pairing buttons")
+
+    async def unpair_company_btn(self, update: Update, button_id: int):
+        """Unpair a company button"""
+        conn = self.db.get_connection()
+        btn = conn.execute("SELECT company_id FROM company_buttons WHERE id = ?", (button_id,)).fetchone()
+        if btn:
+            company_id = btn['company_id']
+            conn.execute("UPDATE company_buttons SET row_group = NULL WHERE id = ?", (button_id,))
+            conn.commit()
+            conn.close()
+            await update.callback_query.answer("✅ Button unpaired!")
+            await self.show_company_buttons(update, company_id)
+        else:
+            conn.close()
+            await update.callback_query.answer("⚠️ Button not found")
+    
     # --- Edit Welcome Wizard ---
     async def edit_welcome_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start Edit Welcome wizard - ask for photo"""
@@ -1018,6 +1174,71 @@ class ChildBot:
         bot_data = self.db.get_bot_by_token(self.token)
         owner_id = bot_data['owner_id']
         user_id = update.effective_user.id
+        
+        # Handle Add Company Button flows (awaiting text/url after callback)
+        if context.user_data.get('awaiting_btn_text'):
+            # Save button text, ask for URL
+            context.user_data['new_comp']['btn_text'] = update.message.text
+            context.user_data['awaiting_btn_text'] = False
+            context.user_data['awaiting_btn_url'] = True
+            await update.message.reply_text("🔗 Masukkan **Link URL** button:", parse_mode='Markdown')
+            return
+        
+        if context.user_data.get('awaiting_btn_url'):
+            # Save button URL to company_buttons
+            url = update.message.text
+            if not url.startswith(('http://', 'https://', 't.me/')):
+                await update.message.reply_text("⚠️ URL mesti mula dengan http://, https://, atau t.me/\n\nCuba lagi:")
+                return
+            if url.startswith('t.me/'):
+                url = 'https://' + url
+            
+            data = context.user_data.get('new_comp', {})
+            company_id = data.get('company_id')
+            if company_id:
+                self.db.add_company_button(company_id, data['btn_text'], url)
+                context.user_data['awaiting_btn_url'] = False
+                
+                # Ask for more
+                keyboard = [
+                    [InlineKeyboardButton("➕ Add Another Button", callback_data="add_more_btn")],
+                    [InlineKeyboardButton("✅ Done", callback_data="finish_company")]
+                ]
+                await update.message.reply_text(
+                    f"✅ Button **{data['btn_text']}** added!\n\nAdd another button?",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            return
+        
+        # Handle Add Button to Existing Company (from Manage Buttons)
+        if context.user_data.get('awaiting_co_btn_text'):
+            context.user_data['co_btn_text'] = update.message.text
+            context.user_data['awaiting_co_btn_text'] = False
+            context.user_data['awaiting_co_btn_url'] = True
+            await update.message.reply_text("🔗 Masukkan **Link URL** button:", parse_mode='Markdown')
+            return
+        
+        if context.user_data.get('awaiting_co_btn_url'):
+            url = update.message.text
+            if not url.startswith(('http://', 'https://', 't.me/')):
+                await update.message.reply_text("⚠️ URL mesti mula dengan http://, https://, atau t.me/\n\nCuba lagi:")
+                return
+            if url.startswith('t.me/'):
+                url = 'https://' + url
+            
+            company_id = context.user_data.get('add_btn_company_id')
+            btn_text = context.user_data.get('co_btn_text', 'Button')
+            
+            if company_id:
+                self.db.add_company_button(company_id, btn_text, url)
+                context.user_data['awaiting_co_btn_url'] = False
+                await update.message.reply_text(f"✅ Button **{btn_text}** added!", parse_mode='Markdown')
+                
+                # Show manage buttons again via inline keyboard
+                keyboard = [[InlineKeyboardButton("🔙 Back to Manage Buttons", callback_data=f"manage_co_btns_{company_id}")]]
+                await update.message.reply_text("Tap below to continue:", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
         
         # User -> Admin
         if user_id != owner_id:
