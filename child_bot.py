@@ -450,7 +450,7 @@ class ChildBot:
     
     async def confirm_delete_company(self, update: Update, company_id: int):
         """Delete company from database"""
-        success = self.db.delete_company(company_id)
+        success = self.db.delete_company(company_id, self.bot_id)
         if success:
             await update.callback_query.message.edit_text("✅ Company deleted successfully!")
         else:
