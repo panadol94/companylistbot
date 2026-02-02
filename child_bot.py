@@ -104,16 +104,16 @@ class ChildBot:
         ]
         
         # Add Footer
-        caption += f"\n\n_{DEFAULT_GLOBAL_AD}_"
+        caption += f"\n\n{DEFAULT_GLOBAL_AD}"
 
         if update.callback_query:
             try: await update.callback_query.message.delete()
             except: pass
             
         if bot_data['custom_banner']:
-             await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+             await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
         else:
-             await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+             await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard))
 
     # --- Company Logic ---
     async def show_page(self, update: Update, page: int):
