@@ -13,8 +13,8 @@ MASTER_ADMIN_ID = int(os.getenv("MASTER_ADMIN_ID", "0"))
 # Database File Path
 DB_FILE = os.getenv("DB_FILE", "bot_platform.db")
 
-# Global Ad Footer (Default)
-DEFAULT_GLOBAL_AD = "🔥 Powered by TipsMega Bot Platform"
+# Global Ad Footer (Default - leave empty or customize)
+DEFAULT_GLOBAL_AD = ""
 
 # Webhook Domain (Coolify URL)
 # Example: https://bot-saas.coolify.yourvps.com
