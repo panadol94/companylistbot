@@ -861,10 +861,46 @@ class ChildBot:
 
     # --- Helpers ---
     async def check_subscription(self, update):
-        bot = self.db.get_bot_by_token(self.token)
-        if bot['subscription_end']:
-             expiry = datetime.datetime.strptime(bot['subscription_end'], '%Y-%m-%d %H:%M:%S.%f')
-             if datetime.datetime.now() > expiry:
-                 await update.effective_chat.send_message("⚠️ Service Suspended. Please contact Owner.")
-                 return False
-        return True
+        """Check if bot subscription is active - blocks all operations if expired"""
+        bot_data = self.db.get_bot_by_token(self.token)
+        
+        if not bot_data:
+            return False
+        
+        # Parse expiry date
+        try:
+            expiry = datetime.datetime.fromisoformat(bot_data['subscription_end'])
+            now = datetime.datetime.now()
+            
+            # Check if expired
+            if now > expiry:
+                days_expired = (now - expiry).days
+                
+                # Send expiry notice
+                expiry_msg = (
+                    f"⚠️ **SUBSCRIPTION EXPIRED**\n\n"
+                    f"Bot subscription expired **{days_expired} day(s)** ago.\n\n"
+                    f"📅 Expired on: {expiry.strftime('%Y-%m-%d')}\n\n"
+                    f"Please contact bot owner to renew subscription.\n\n"
+                    f"🔒 Bot is currently **DISABLED**."
+                )
+                
+                await update.effective_chat.send_message(expiry_msg, parse_mode='Markdown')
+                return False  # Block operation
+            
+            # Check if expiring soon (within 3 days)
+            days_left = (expiry - now).days
+            if days_left <= 3 and days_left > 0:
+                # Show warning but allow operation
+                warning_msg = (
+                    f"⚠️ **Subscription Expiring Soon!**\n\n"
+                    f"📅 Expires in: **{days_left} day(s)**\n"
+                    f"Contact owner to extend subscription."
+                )
+                await update.effective_chat.send_message(warning_msg, parse_mode='Markdown')
+            
+            return True  # Allow operation
+            
+        except Exception as e:
+            print(f"Subscription check error: {e}")
+            return True  # Fail open to avoid breaking bots

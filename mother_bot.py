@@ -228,21 +228,41 @@ class MotherBot:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
     
     async def show_bot_management(self, update: Update, bot_id: int):
-        """Show detailed bot management panel"""
-        conn = self.db.get_connection()
-        bot = conn.execute("SELECT * FROM bots WHERE id = ?", (bot_id,)).fetchone()
-        conn.close()
-        
+        """Display management panel for a specific bot"""
+        bot = self.db.get_bot_by_id(bot_id)
         if not bot:
-            await update.callback_query.message.edit_text("❌ Bot not found.")
+            await update.callback_query.message.reply_text("❌ Bot not found.")
             return
         
-        status = "🟢 Active" if bot['is_active'] else "🔴 Stopped"
+        # Check if subscription expired
+        try:
+            expiry = datetime.datetime.fromisoformat(bot['subscription_end'])
+            is_expired = datetime.datetime.now() > expiry
+            days_left = (expiry - datetime.datetime.now()).days
+        except:
+            is_expired = False
+            days_left = 0
+        
+        # Status indicator
+        if is_expired:
+            status = "🔴 Expired"
+            status_detail = f"Expired {abs(days_left)} days ago"
+        elif days_left <= 3:
+            status = "🟡 Expiring Soon"
+            status_detail = f"{days_left} days left"
+        elif bot['is_active']:
+            status = "🟢 Active"
+            status_detail = f"{days_left} days left"
+        else:
+            status = "🔴 Stopped"
+            status_detail = "Manually stopped"
+            
         text = (
             f"🤖 **Bot #{bot['id']} Management**\n\n"
             f"**Status:** {status}\n"
+            f"**Subscription:** {status_detail}\n"
             f"**Token:** `{bot['token'][:15]}...`\n"
-            f"**Subscription:** {bot['subscription_end']}\n"
+            f"**Expires:** {bot['subscription_end'][:10]}\n"
             f"**Created:** {bot['created_at'][:10]}\n"
         )
         
