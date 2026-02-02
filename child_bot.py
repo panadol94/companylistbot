@@ -424,7 +424,7 @@ class ChildBot:
         text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
         keyboard = [
             [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
-            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Edit Welcome", callback_data="edit_welcome")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Edit Start", callback_data="edit_welcome")],
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton("💬 Support Reply", callback_data="admin_support")],
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
