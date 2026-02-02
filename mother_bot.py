@@ -27,7 +27,6 @@ class MotherBot:
         self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("mybots", self.my_bots))
         self.app.add_handler(CommandHandler("help", self.help_command))
-        self.app.add_handler(CommandHandler("clone", self.clone_bot_command))
         
         # Creator Wizard
         create_conv = ConversationHandler(
