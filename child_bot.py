@@ -140,9 +140,7 @@ class ChildBot:
         if referral_enabled:
             keyboard.append([InlineKeyboardButton("💰 DOMPET SAYA", callback_data="wallet")])
             keyboard.append([InlineKeyboardButton("🔗 SHARE LINK", callback_data="share_link")])
-            keyboard.append([InlineKeyboardButton("🏆 LEADERBOARD", callback_data="leaderboard"), InlineKeyboardButton("💬 SUPPORT", callback_data="support_info")])
-        else:
-            keyboard.append([InlineKeyboardButton("💬 SUPPORT", callback_data="support_info")])
+            keyboard.append([InlineKeyboardButton("🏆 LEADERBOARD", callback_data="leaderboard")])
 
         if update.callback_query:
             try: await update.callback_query.message.delete()
@@ -437,7 +435,7 @@ class ChildBot:
         keyboard = [
             [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
             [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Edit Start", callback_data="edit_welcome")],
-            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton("💬 Support Reply", callback_data="admin_support")],
+            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
             [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
@@ -463,8 +461,6 @@ class ChildBot:
             await self.show_share_link(update)
         elif data == "leaderboard":
             await self.show_leaderboard(update, context)
-        elif data == "support_info":
-            await query.message.reply_text("💬 **Live Support**\nSila taip mesej anda terus di sini. Admin akan reply sebentar lagi.")
         
         # Admin Actions
         elif data == "admin_withdrawals": await self.show_withdrawals(update)
@@ -473,7 +469,6 @@ class ChildBot:
         elif data == "admin_del_list": await self.show_delete_company_list(update)
         elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
         elif data == "admin_customize": await self.show_customize_menu(update)
-        elif data == "admin_support": await self.show_support_messages(update)
         elif data == "toggle_referral": await self.toggle_referral_system(update)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
@@ -727,18 +722,6 @@ class ChildBot:
         keyboard = [[InlineKeyboardButton("« Back", callback_data="close_panel")]]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
-    # --- Support Messages Logic ---
-    async def show_support_messages(self, update: Update):
-        """Show pending support messages from users"""
-        text = (
-            "💬 **SUPPORT MESSAGES**\n\n"
-            "All user messages akan forward terus ke sini.\n"
-            "Reply secara manual untuk balas user.\n\n"
-            "📨 _No pending messages at the moment._"
-        )
-        keyboard = [[InlineKeyboardButton("« Back", callback_data="close_panel")]]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    
     async def toggle_referral_system(self, update: Update):
         """Toggle referral system on/off"""
         new_state = self.db.toggle_referral(self.bot_id)
@@ -751,7 +734,7 @@ class ChildBot:
         keyboard = [
             [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
             [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Edit Start", callback_data="edit_welcome")],
-            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton("💬 Support Reply", callback_data="admin_support")],
+            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
             [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
