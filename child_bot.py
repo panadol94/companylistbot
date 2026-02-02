@@ -522,6 +522,7 @@ class ChildBot:
     # --- Edit Company Wizard Functions ---
     async def edit_company_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point for edit company conversation"""
+        await update.callback_query.answer()  # Acknowledge immediately to stop loading
         company_id = int(update.callback_query.data.split("_")[2])
         context.user_data['edit_company_id'] = company_id
         
