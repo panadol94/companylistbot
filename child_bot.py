@@ -150,7 +150,11 @@ class ChildBot:
         keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
 
         if update.callback_query:
-            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            try:
+                await update.callback_query.message.delete()
+            except:
+                pass
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def view_company(self, update: Update, comp_id: int):
         comps = self.db.get_companies(self.bot_id)
@@ -183,7 +187,11 @@ class ChildBot:
             keyboard.append([InlineKeyboardButton("📤 REQUEST WITHDRAWAL", callback_data="req_withdraw")])
         keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
         
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        try:
+            await update.callback_query.message.delete()
+        except:
+            pass
+        await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_uname = context.bot.username
@@ -201,7 +209,11 @@ class ChildBot:
             text += f"{i+1}. ID: `{str(row['telegram_id'])[-4:]}***` - **{row['total_invites']}** Invites\n"
         
         buttons = [[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+        try:
+            await update.callback_query.message.delete()
+        except:
+            pass
+        await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
 
     # --- Admin Dashboard ---
     async def admin_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
