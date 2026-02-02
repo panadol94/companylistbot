@@ -131,6 +131,19 @@ class Database:
                 )
             ''')
 
+            # 8. Company Buttons Table (Multiple buttons per company)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS company_buttons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company_id INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    row_group INTEGER DEFAULT NULL,
+                    position INTEGER DEFAULT 0,
+                    FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE CASCADE
+                )
+            ''')
+
             # Create indexes for better query performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_companies_bot_id ON companies(bot_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_bot_id ON users(bot_id)')
@@ -139,6 +152,7 @@ class Database:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_user_id ON withdrawals(user_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_menu_buttons_bot_id ON menu_buttons(bot_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_company_buttons_company_id ON company_buttons(company_id)')
 
             conn.commit()
             conn.close()
@@ -499,3 +513,54 @@ class Database:
         button = conn.execute("SELECT * FROM menu_buttons WHERE id = ?", (button_id,)).fetchone()
         conn.close()
         return dict(button) if button else None
+
+    # --- Company Buttons ---
+    def add_company_button(self, company_id, text, url):
+        """Add a button to a company"""
+        with self.lock:
+            conn = self.get_connection()
+            # Get next position
+            max_pos = conn.execute("SELECT MAX(position) as max_pos FROM company_buttons WHERE company_id = ?", (company_id,)).fetchone()
+            position = (max_pos['max_pos'] or 0) + 1
+            
+            conn.execute(
+                "INSERT INTO company_buttons (company_id, text, url, position) VALUES (?, ?, ?, ?)",
+                (company_id, text, url, position)
+            )
+            conn.commit()
+            button_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.close()
+            return button_id
+
+    def get_company_buttons(self, company_id):
+        """Get all buttons for a company, ordered for proper display"""
+        conn = self.get_connection()
+        buttons = conn.execute(
+            "SELECT * FROM company_buttons WHERE company_id = ? ORDER BY row_group NULLS LAST, position",
+            (company_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(btn) for btn in buttons]
+
+    def delete_company_buttons(self, company_id):
+        """Delete all buttons for a company"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("DELETE FROM company_buttons WHERE company_id = ?", (company_id,))
+            conn.commit()
+            conn.close()
+
+    def pair_company_buttons(self, btn1_id, btn2_id):
+        """Pair two company buttons to share the same row"""
+        with self.lock:
+            conn = self.get_connection()
+            # Get next row_group number
+            max_group = conn.execute("SELECT MAX(row_group) as max_grp FROM company_buttons").fetchone()
+            new_group = (max_group['max_grp'] or 0) + 1
+            
+            # Update both buttons with same row_group
+            conn.execute("UPDATE company_buttons SET row_group = ? WHERE id = ?", (new_group, btn1_id))
+            conn.execute("UPDATE company_buttons SET row_group = ? WHERE id = ?", (new_group, btn2_id))
+            conn.commit()
+            conn.close()
+            return new_group

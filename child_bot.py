@@ -324,9 +324,37 @@ class ChildBot:
             return
 
         text = f"🏢 *{comp['name']}*\n\n{comp['description']}\n\n_{DEFAULT_GLOBAL_AD}_"
-        keyboard = [
-            [InlineKeyboardButton(comp['button_text'], url=comp['button_url'])],
-        ]
+        
+        # Load buttons from company_buttons table
+        buttons = self.db.get_company_buttons(comp_id)
+        
+        if buttons:
+            # Group buttons by row_group for pairing
+            paired_groups = {}
+            unpaired = []
+            
+            for btn in buttons:
+                if btn['row_group']:
+                    if btn['row_group'] not in paired_groups:
+                        paired_groups[btn['row_group']] = []
+                    paired_groups[btn['row_group']].append(btn)
+                else:
+                    unpaired.append(btn)
+            
+            keyboard = []
+            # Add paired buttons (2 per row)
+            for group_id, btns in paired_groups.items():
+                row = [InlineKeyboardButton(b['text'], url=b['url']) for b in btns[:2]]
+                keyboard.append(row)
+            
+            # Add unpaired buttons (1 per row)
+            for btn in unpaired:
+                keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
+        else:
+            # Fallback to old button_text/button_url from company record
+            keyboard = [
+                [InlineKeyboardButton(comp['button_text'], url=comp['button_url'])],
+            ]
         
         # Add EDIT button for admin only
         bot_data = self.db.get_bot_by_token(self.token)
@@ -519,6 +547,11 @@ class ChildBot:
         elif data.startswith("pair1_"): await self.select_pair_btn_1(update, int(data.split("_")[1]))
         elif data.startswith("pair2_"): await self.select_pair_btn_2(update, int(data.split("_")[1]))
         elif data.startswith("unpair_btn_"): await self.unpair_button(update, int(data.split("_")[2]))
+        # Add Company - More Buttons Flow
+        elif data == "add_more_btn": await self.add_more_company_btn(update, context)
+        elif data == "finish_company": 
+            await query.message.edit_text("✅ Company Berjaya Ditambah!")
+            context.user_data.pop('new_comp', None)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -1071,12 +1104,58 @@ class ChildBot:
 
     async def add_company_btn_url(self, update, context):
         data = context.user_data['new_comp']
-        self.db.add_company(self.bot_id, data['name'], data['desc'], data['media'], data['type'], data['btn_text'], update.message.text)
-        await update.message.reply_text("✅ Company Berjaya Ditambah!")
+        url = update.message.text
+        
+        # Validate URL
+        if not url.startswith(('http://', 'https://', 't.me/')):
+            await update.message.reply_text("⚠️ Invalid URL. Must start with http://, https://, or t.me/\n\nTry again:")
+            return BUTTON_URL
+        
+        # Add t.me prefix if needed
+        if url.startswith('t.me/'):
+            url = 'https://' + url
+        
+        # First button - create company first
+        if 'company_id' not in data:
+            company_id = self.db.add_company(self.bot_id, data['name'], data['desc'], data['media'], data['type'], data['btn_text'], url)
+            data['company_id'] = company_id
+            # Also add first button to company_buttons table
+            self.db.add_company_button(company_id, data['btn_text'], url)
+        else:
+            # Additional buttons
+            self.db.add_company_button(data['company_id'], data['btn_text'], url)
+        
+        # Ask if user wants to add another button
+        keyboard = [
+            [InlineKeyboardButton("➕ Add Another Button", callback_data="add_more_btn")],
+            [InlineKeyboardButton("✅ Done", callback_data="finish_company")]
+        ]
+        await update.message.reply_text(
+            f"✅ Button **{data['btn_text']}** added!\n\n"
+            "Add another button or finish?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
         return ConversationHandler.END
 
+    async def add_more_company_btn(self, update, context):
+        """Continue adding buttons to company"""
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_text(
+            "➕ **ADD ANOTHER BUTTON**\n\n"
+            "Masukkan **Text pada Button**:"
+        )
+        # The next text message will be handled by handle_message with a flag
+        context.user_data['awaiting_btn_text'] = True
+
     async def cancel_op(self, update, context):
-        await update.message.reply_text("❌ Cancelled.")
+        try:
+            await update.message.reply_text("❌ Cancelled.")
+        except:
+            await update.callback_query.message.edit_text("❌ Cancelled.")
+        context.user_data.pop('new_comp', None)
+        context.user_data.pop('awaiting_btn_text', None)
+        context.user_data.pop('awaiting_btn_url', None)
         return ConversationHandler.END
 
     # --- Broadcast Wizard ---
