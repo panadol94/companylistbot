@@ -166,14 +166,29 @@ class Database:
             conn = self.get_connection()
             conn.execute(
                 "INSERT INTO companies (bot_id, name, description, media_file_id, media_type, button_text, button_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                conn = self.get_connection()
-                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+                (bot_id, name, description, media_file_id, media_type, button_text, button_url)
+            )
+            conn.commit()
+            company_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.close()
+            return company_id
+    
+    def delete_company(self, company_id, bot_id):
+        """Delete a company - validates ownership via bot_id"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                result = conn.execute(
+                    "DELETE FROM companies WHERE id = ? AND bot_id = ?",
+                    (company_id, bot_id)
+                )
                 conn.commit()
+                deleted = result.rowcount > 0
                 conn.close()
-            return True
-        except Exception as e:
-            print(f"Error deleting company: {e}")
-            return False
+                return deleted
+            except Exception as e:
+                conn.close()
+                return False
 
     def get_companies(self, bot_id):
         conn = self.get_connection()
@@ -279,50 +294,6 @@ class Database:
         ).fetchone()
         conn.close()
         return rank['rank'] if rank else None
-    
-    def get_user_transactions(self, bot_id, user_id):
-        """Get all transactions for a user (referrals earned + withdrawals)"""
-        conn = self.get_connection()
-        
-        # Get withdrawal history
-        withdrawals = conn.execute(
-            """SELECT amount, status, requested_at as date, 'withdrawal' as type 
-               FROM withdrawals 
-               WHERE bot_id = ? AND user_id = ? 
-               ORDER BY requested_at DESC""",
-            (bot_id, user_id)
-        ).fetchall()
-        
-        # Note: Referral earnings are tracked via total_invites * RM1.00
-        # We can calculate this from user data
-        user = conn.execute(
-            "SELECT total_invites, balance FROM users WHERE bot_id = ? AND telegram_id = ?",
-            (bot_id, user_id)
-        ).fetchone()
-        
-        conn.close()
-        
-        transactions = []
-        
-        # Add withdrawals
-        for w in withdrawals:
-            transactions.append({
-                'type': 'withdrawal',
-                'amount': -float(w['amount']),  # Negative for withdrawals
-                'status': w['status'],
-                'date': w['date']
-            })
-        
-        # Add referral earnings summary (not individual, just total)
-        if user and user['total_invites'] > 0:
-            transactions.insert(0, {
-                'type': 'referral_summary',
-                'amount': float(user['total_invites']),  # RM1 per invite
-                'status': 'completed',
-                'date': None  # Summary item
-            })
-        
-        return transactions
 
     # --- Withdrawal ---
     def request_withdrawal(self, bot_id, user_id, amount):
