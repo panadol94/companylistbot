@@ -115,18 +115,15 @@ class ChildBot:
             [InlineKeyboardButton("🔗 SHARE LINK", callback_data="share_link")],
             [InlineKeyboardButton("🏆 LEADERBOARD", callback_data="leaderboard"), InlineKeyboardButton("💬 SUPPORT", callback_data="support_info")]
         ]
-        
-        # Add Footer
-        caption += f"\n\n{DEFAULT_GLOBAL_AD}"
 
         if update.callback_query:
             try: await update.callback_query.message.delete()
             except: pass
             
         if bot_data['custom_banner']:
-             await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard))
+             await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         else:
-             await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard))
+             await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     # --- Company Logic ---
     async def show_page(self, update: Update, page: int):
@@ -365,10 +362,11 @@ class ChildBot:
         keyboard = [[InlineKeyboardButton("🔙 Back to Settings", callback_data="close_panel")]]
         await update.message.reply_photo(
             photo=banner_file_id,
-            caption=f"✅ **WELCOME MESSAGE UPDATED!**\n\n"
+            caption=f"✅ <b>WELCOME MESSAGE UPDATED!</b>\n\n"
                     f"Preview:\n{caption_text}\n\n"
                     f"Users will see this when they type /start",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
         )
         
         # Clear user data
