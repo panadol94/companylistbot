@@ -170,12 +170,11 @@ class ChildBot:
         ]
         
         await update.callback_query.message.delete()
+        # Use file_id directly, not local file path
         if comp['media_type'] == 'video':
-            with open(comp['media_file_id'], 'rb') as video_file:
-                 await update.effective_chat.send_video(video=video_file, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            await update.effective_chat.send_video(video=comp['media_file_id'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         else:
-            with open(comp['media_file_id'], 'rb') as photo_file:
-                 await update.effective_chat.send_photo(photo=photo_file, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            await update.effective_chat.send_photo(photo=comp['media_file_id'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Wallet & Referral ---
     async def show_wallet(self, update: Update):
@@ -242,8 +241,8 @@ class ChildBot:
         elif data.startswith("list_page_"): await self.show_page(update, int(data.split("_")[2]))
         elif data.startswith("view_"): await self.view_company(update, int(data.split("_")[1]))
         elif data == "wallet": await self.show_wallet(update)
-        elif data == "share_link": await self.share_link(update)
-        elif data == "leaderboard": await self.leaderboard(update)
+        elif data == "share_link": await self.share_link(update, context)
+        elif data == "leaderboard": await self.leaderboard(update, context)
         elif data == "support_info": await query.message.reply_text("💬 **Live Support**\nSila taip mesej anda terus di sini. Admin akan reply sebentar lagi.")
         
         # Admin Actions
