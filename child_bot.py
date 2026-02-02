@@ -144,107 +144,94 @@ class ChildBot:
 
     # --- Company Logic ---
     async def show_page(self, update: Update, page: int):
+        """Display company in CAROUSEL mode - one company at a time with Prev/Next buttons"""
         companies = self.db.get_companies(self.bot_id)
-        per_page = 3  # Show 3 companies per page in gallery mode
-        start = page * per_page
-        end = start + per_page
-        current_batch = companies[start:end]
-
-        # Delete previous message
+        
+        if not companies:
+            text = "📋 **Belum ada company.**"
+            keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
+            
+            if update.callback_query:
+                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            else:
+                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            return
+        
+        # Get current company (page = index)
+        if page >= len(companies):
+            page = len(companies) - 1
+        if page < 0:
+            page = 0
+            
+        comp = companies[page]
+        
+        # Check if user is admin for edit button
+        bot_data = self.db.get_bot_by_token(self.token)
+        is_admin = update.effective_user.id == bot_data['owner_id']
+        
+        # Build caption
+        caption = (
+            f"🏢 **{comp['name']}**\n\n"
+            f"{comp['description']}\n\n"
+            f"📄 Company {page+1} of {len(companies)}"
+        )
+        
+        # Build keyboard
+        keyboard = []
+        
+        # Navigation row
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"list_page_{page-1}"))
+        if page < len(companies) - 1:
+            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"list_page_{page+1}"))
+        if nav_buttons:
+            keyboard.append(nav_buttons)
+        
+        # Action buttons
+        keyboard.append([InlineKeyboardButton("📖 VIEW DETAILS", callback_data=f"view_{comp['id']}")])
+        
+        if is_admin:
+            keyboard.append([InlineKeyboardButton("✏️ EDIT COMPANY", callback_data=f"edit_company_{comp['id']}")])
+        
+        keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
+        
+        # Send or edit message with media
         if update.callback_query:
+            # Delete old message and send new with media (can't edit media type)
             try:
                 await update.callback_query.message.delete()
             except:
                 pass
         
-        if not current_batch and page == 0:
-            await update.effective_chat.send_message("📋 **Belum ada company.**", parse_mode='Markdown')
-            return
-
-        # Check if user is admin for edit buttons
-        bot_data = self.db.get_bot_by_token(self.token)
-        is_admin = update.effective_user.id == bot_data['owner_id']
-        
-        # Send each company as gallery item
-        for comp in current_batch:
-            caption = f"🏢 **{comp['name']}**\n\n{comp['description'][:100]}{'...' if len(comp['description']) > 100 else ''}"
-            
-            # Create buttons for each company
-            keyboard = [
-                [InlineKeyboardButton("📖 VIEW DETAILS", callback_data=f"view_{comp['id']}")],
-            ]
-            
-            # Add edit button if admin
-            if is_admin:
-                keyboard.append([InlineKeyboardButton("✏️ EDIT", callback_data=f"edit_company_{comp['id']}")])
-            
-            # Send media based on type
-            try:
-                if comp['media_type'] == 'video':
-                    await update.effective_chat.send_video(
-                        video=comp['media_file_id'],
-                        caption=caption,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
-                    )
-                elif comp['media_type'] == 'animation':
-                    await update.effective_chat.send_animation(
-                        animation=comp['media_file_id'],
-                        caption=caption,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
-                    )
-                else:  # photo
-                    await update.effective_chat.send_photo(
-                        photo=comp['media_file_id'],
-                        caption=caption,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
-                    )
-            except Exception as e:
-                # If media fails, send text instead
-                await update.effective_chat.send_message(
-                    f"{caption}\n\n_(Media unavailable)_",
+        # Send based on media type
+        try:
+            if comp['media_type'] == 'video':
+                await update.effective_chat.send_video(
+                    video=comp['media_file_id'],
+                    caption=caption,
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode='Markdown'
                 )
-        
-        # Send pagination footer as separate message
-        nav_text = f"📋 **Company List** - Page {page+1}/{(len(companies)-1)//per_page + 1}"
-        nav_keyboard = []
-        nav_buttons = []
-        
-        if page > 0:
-            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"list_page_{page-1}"))
-        if end < len(companies):
-            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"list_page_{page+1}"))
-        
-        if nav_buttons:
-            nav_keyboard.append(nav_buttons)
-        nav_keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
-        
-        # Edit pagination message if exists, otherwise send new
-        if update.callback_query and hasattr(update.callback_query.message, 'message_id'):
-            # Try to find and edit the pagination message
-            # Store message_id in context for next navigation
-            try:
-                nav_msg = await update.effective_chat.send_message(
-                    nav_text,
-                    reply_markup=InlineKeyboardMarkup(nav_keyboard),
+            elif comp['media_type'] == 'animation':
+                await update.effective_chat.send_animation(
+                    animation=comp['media_file_id'],
+                    caption=caption,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode='Markdown'
                 )
-                # Store for future edits
-                context.user_data['nav_msg_id'] = nav_msg.message_id
-            except:
-                await update.effective_chat.send_message(
-                    nav_text,
-                    reply_markup=InlineKeyboardMarkup(nav_keyboard),
+            else:  # photo
+                await update.effective_chat.send_photo(
+                    photo=comp['media_file_id'],
+                    caption=caption,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode='Markdown'
                 )
-        else:
+        except Exception as e:
+            # Fallback to text if media fails
             await update.effective_chat.send_message(
-                nav_text,
-                reply_markup=InlineKeyboardMarkup(nav_keyboard),
+                f"{caption}\n\n_(Media unavailable)_",
+                reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
 
