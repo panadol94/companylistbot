@@ -206,29 +206,46 @@ class ChildBot:
             except:
                 pass
         
-        # Send based on media type
+        # Send based on media type - using LOCAL FILE PATH
         try:
-            if comp['media_type'] == 'video':
-                await update.effective_chat.send_video(
-                    video=comp['media_file_id'],
-                    caption=caption,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
-                )
-            elif comp['media_type'] == 'animation':
-                await update.effective_chat.send_animation(
-                    animation=comp['media_file_id'],
-                    caption=caption,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
-                )
-            else:  # photo
-                await update.effective_chat.send_photo(
-                    photo=comp['media_file_id'],
-                    caption=caption,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
-                )
+            import os
+            media_path = comp['media_file_id']  # This now contains file PATH, not file_id
+            
+            # Check if it's a file path (starts with / or contains path separator)
+            is_local_file = media_path and (media_path.startswith('/') or os.path.sep in media_path)
+            
+            if is_local_file and os.path.exists(media_path):
+                # Read from local file
+                with open(media_path, 'rb') as media_file:
+                    if comp['media_type'] == 'video':
+                        await update.effective_chat.send_video(
+                            video=media_file,
+                            caption=caption,
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            parse_mode='Markdown'
+                        )
+                    elif comp['media_type'] == 'animation':
+                        await update.effective_chat.send_animation(
+                            animation=media_file,
+                            caption=caption,
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            parse_mode='Markdown'
+                        )
+                    else:  # photo
+                        await update.effective_chat.send_photo(
+                            photo=media_file,
+                            caption=caption,
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            parse_mode='Markdown'
+                        )
+            else:
+                # Fallback: Try as Telegram file_id (for old data)
+                if comp['media_type'] == 'video':
+                    await update.effective_chat.send_video(video=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                elif comp['media_type'] == 'animation':
+                    await update.effective_chat.send_animation(animation=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                else:
+                    await update.effective_chat.send_photo(photo=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         except Exception as e:
             # Log the error for debugging
             self.logger.error(f"Media display error: {e}")
@@ -260,13 +277,32 @@ class ChildBot:
         keyboard.append([InlineKeyboardButton("🔙 BACK TO LIST", callback_data="list_page_0")])
         
         await update.callback_query.message.delete()
-        # Use file_id directly, not local file path
-        if comp['media_type'] == 'video':
-            await update.effective_chat.send_video(video=comp['media_file_id'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        elif comp['media_type'] == 'animation':  # GIF support!
-            await update.effective_chat.send_animation(animation=comp['media_file_id'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        else:  # photo
-            await update.effective_chat.send_photo(photo=comp['media_file_id'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        # Handle local file path or file_id
+        import os
+        media_path = comp['media_file_id']
+        is_local_file = media_path and (media_path.startswith('/') or os.path.sep in media_path)
+        
+        try:
+            if is_local_file and os.path.exists(media_path):
+                with open(media_path, 'rb') as media_file:
+                    if comp['media_type'] == 'video':
+                        await update.effective_chat.send_video(video=media_file, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                    elif comp['media_type'] == 'animation':
+                        await update.effective_chat.send_animation(animation=media_file, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                    else:
+                        await update.effective_chat.send_photo(photo=media_file, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            else:
+                # Fallback to file_id
+                if comp['media_type'] == 'video':
+                    await update.effective_chat.send_video(video=media_path, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                elif comp['media_type'] == 'animation':
+                    await update.effective_chat.send_animation(animation=media_path, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                else:
+                    await update.effective_chat.send_photo(photo=media_path, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception as e:
+            self.logger.error(f"View company media error: {e}")
+            await update.effective_chat.send_message(f"{text}\n\n_(Media unavailable)_", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Wallet & Referral ---
     async def show_wallet(self, update: Update):
@@ -637,27 +673,43 @@ class ChildBot:
         return MEDIA
 
     async def add_company_media(self, update, context):
-        """Store media using Telegram's file_id (no local download needed)"""
-        file_id = None
+        """Download and store media locally on VPS persistent storage"""
+        import os
+        
+        # Use persistent volume path
+        media_base = os.environ.get('MEDIA_DIR', '/data/media')
+        media_dir = f"{media_base}/{self.bot_id}"
+        os.makedirs(media_dir, exist_ok=True)
+        
+        timestamp = int(datetime.datetime.now().timestamp())
+        file_obj = None
+        file_ext = ""
         media_type = ""
 
         if update.message.photo:
-            # Get highest resolution photo
-            file_id = update.message.photo[-1].file_id
+            file_obj = await update.message.photo[-1].get_file()
+            file_ext = ".jpg"
             media_type = 'photo'
         elif update.message.video:
-            file_id = update.message.video.file_id
+            file_obj = await update.message.video.get_file()
+            file_ext = ".mp4"
             media_type = 'video'
-        elif update.message.animation:  # GIF support!
-            file_id = update.message.animation.file_id
+        elif update.message.animation:
+            file_obj = await update.message.animation.get_file()
+            file_ext = ".gif"
             media_type = 'animation'
         
-        if not file_id:
+        if not file_obj:
             await update.message.reply_text("❌ Sila hantar gambar, video atau GIF.")
             return MEDIA
         
-        # Store file_id directly - Telegram hosts the file for us!
-        context.user_data['new_comp']['media'] = file_id
+        # Download to local persistent storage
+        file_path = f"{media_dir}/{timestamp}{file_ext}"
+        await file_obj.download_to_drive(file_path)
+        self.logger.info(f"Media saved to: {file_path}")
+        
+        # Store file PATH (not file_id)
+        context.user_data['new_comp']['media'] = file_path
         context.user_data['new_comp']['type'] = media_type
         await update.message.reply_text("Masukkan **Text pada Button** (Contoh: REGISTER NOW):")
         return BUTTON_TEXT
