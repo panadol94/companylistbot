@@ -1364,7 +1364,8 @@ class ChildBot:
         await update.callback_query.answer()
         await update.callback_query.message.edit_text(
             "➕ **ADD ANOTHER BUTTON**\n\n"
-            "Masukkan **Text pada Button**:"
+            "Masukkan **Text pada Button**:",
+            parse_mode='Markdown'
         )
         # The next text message will be handled by handle_message with a flag
         context.user_data['awaiting_btn_text'] = True
