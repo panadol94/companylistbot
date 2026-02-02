@@ -12,6 +12,8 @@ NAME, DESC, MEDIA, BUTTON_TEXT, BUTTON_URL = range(5)
 BROADCAST_CONTENT, BROADCAST_CONFIRM = range(7, 9)
 # States for Edit Welcome
 WELCOME_PHOTO, WELCOME_TEXT = range(11, 13)
+# States for Edit Company
+EDIT_FIELD, EDIT_NAME, EDIT_DESC, EDIT_MEDIA, EDIT_BTN_TEXT, EDIT_BTN_URL = range(15, 21)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -48,7 +50,7 @@ class ChildBot:
             states={
                 NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_company_name)],
                 DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_company_desc)],
-                MEDIA: [MessageHandler(filters.PHOTO | filters.VIDEO, self.add_company_media)],
+                MEDIA: [MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, self.add_company_media)],
                 BUTTON_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_company_btn_text)],
                 BUTTON_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_company_btn_url)],
             },
@@ -77,6 +79,21 @@ class ChildBot:
             fallbacks=[CommandHandler("cancel", self.cancel_welcome)]
         )
         self.app.add_handler(welcome_conv)
+        
+        # Edit Company Wizard
+        edit_company_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.edit_company_start, pattern="^edit_company_\\d+$")],
+            states={
+                EDIT_FIELD: [CallbackQueryHandler(self.edit_company_choose_field)],
+                EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_name)],
+                EDIT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_desc)],
+                EDIT_MEDIA: [MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, self.edit_company_save_media)],
+                EDIT_BTN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_text)],
+                EDIT_BTN_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_url)],
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel_op)]
+        )
+        self.app.add_handler(edit_company_conv)
         
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -128,33 +145,89 @@ class ChildBot:
     # --- Company Logic ---
     async def show_page(self, update: Update, page: int):
         companies = self.db.get_companies(self.bot_id)
-        per_page = 5
+        per_page = 3  # Show 3 companies per page in gallery mode
         start = page * per_page
         end = start + per_page
         current_batch = companies[start:end]
 
-        if not current_batch and page == 0:
-            text = "📋 **Belum ada company.**"
-        else:
-            text = f"📋 **Senarai Company (Page {page+1})**\nSila pilih company:"
-
-        keyboard = []
-        for comp in current_batch:
-            keyboard.append([InlineKeyboardButton(f"🏢 {comp['name']}", callback_data=f"view_{comp['id']}")])
-        
-        nav = []
-        if page > 0: nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"list_page_{page-1}"))
-        if end < len(companies): nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"list_page_{page+1}"))
-        if nav: keyboard.append(nav)
-        
-        keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
-
+        # Delete previous message
         if update.callback_query:
             try:
                 await update.callback_query.message.delete()
             except:
                 pass
-            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        if not current_batch and page == 0:
+            await update.effective_chat.send_message("📋 **Belum ada company.**", parse_mode='Markdown')
+            return
+
+        # Check if user is admin for edit buttons
+        bot_data = self.db.get_bot_by_token(self.token)
+        is_admin = update.effective_user.id == bot_data['owner_id']
+        
+        # Send each company as gallery item
+        for comp in current_batch:
+            caption = f"🏢 **{comp['name']}**\n\n{comp['description'][:100]}{'...' if len(comp['description']) > 100 else ''}"
+            
+            # Create buttons for each company
+            keyboard = [
+                [InlineKeyboardButton("📖 VIEW DETAILS", callback_data=f"view_{comp['id']}")],
+            ]
+            
+            # Add edit button if admin
+            if is_admin:
+                keyboard.append([InlineKeyboardButton("✏️ EDIT", callback_data=f"edit_company_{comp['id']}")])
+            
+            # Send media based on type
+            try:
+                if comp['media_type'] == 'video':
+                    await update.effective_chat.send_video(
+                        video=comp['media_file_id'],
+                        caption=caption,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+                elif comp['media_type'] == 'animation':
+                    await update.effective_chat.send_animation(
+                        animation=comp['media_file_id'],
+                        caption=caption,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+                else:  # photo
+                    await update.effective_chat.send_photo(
+                        photo=comp['media_file_id'],
+                        caption=caption,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+            except Exception as e:
+                # If media fails, send text instead
+                await update.effective_chat.send_message(
+                    f"{caption}\n\n_(Media unavailable)_",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+        
+        # Send pagination footer as separate message
+        nav_text = f"📋 **Company List** - Page {page+1}/{(len(companies)-1)//per_page + 1}"
+        nav_keyboard = []
+        nav_buttons = []
+        
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"list_page_{page-1}"))
+        if end < len(companies):
+            nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"list_page_{page+1}"))
+        
+        if nav_buttons:
+            nav_keyboard.append(nav_buttons)
+        nav_keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
+        
+        await update.effective_chat.send_message(
+            nav_text,
+            reply_markup=InlineKeyboardMarkup(nav_keyboard),
+            parse_mode='Markdown'
+        )
 
     async def view_company(self, update: Update, comp_id: int):
         comps = self.db.get_companies(self.bot_id)
@@ -166,14 +239,22 @@ class ChildBot:
         text = f"🏢 *{comp['name']}*\n\n{comp['description']}\n\n_{DEFAULT_GLOBAL_AD}_"
         keyboard = [
             [InlineKeyboardButton(comp['button_text'], url=comp['button_url'])],
-            [InlineKeyboardButton("🔙 BACK TO LIST", callback_data="list_page_0")]
         ]
+        
+        # Add EDIT button for admin only
+        bot_data = self.db.get_bot_by_token(self.token)
+        if update.effective_user.id == bot_data['owner_id']:
+            keyboard.append([InlineKeyboardButton("✏️ EDIT COMPANY", callback_data=f"edit_company_{comp_id}")])
+        
+        keyboard.append([InlineKeyboardButton("🔙 BACK TO LIST", callback_data="list_page_0")])
         
         await update.callback_query.message.delete()
         # Use file_id directly, not local file path
         if comp['media_type'] == 'video':
             await update.effective_chat.send_video(video=comp['media_file_id'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        else:
+        elif comp['media_type'] == 'animation':  # GIF support!
+            await update.effective_chat.send_animation(animation=comp['media_file_id'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:  # photo
             await update.effective_chat.send_photo(photo=comp['media_file_id'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Wallet & Referral ---
@@ -445,6 +526,10 @@ class ChildBot:
             file_obj = await update.message.video.get_file()
             file_ext = ".mp4"
             media_type = 'video'
+        elif update.message.animation:  # GIF support!
+            file_obj = await update.message.animation.get_file()
+            file_ext = ".gif"
+            media_type = 'animation'
         
         # Download and Save
         file_path = f"{media_dir}/{timestamp}{file_ext}"
@@ -498,6 +583,163 @@ class ChildBot:
             except: pass
         
         await update.callback_query.message.reply_text(f"✅ Broadcast Sent to {sent} users.")
+        return ConversationHandler.END
+
+    # --- Edit Company Wizard Functions ---
+    async def edit_company_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start edit company - show field selection menu"""
+        await update.callback_query.answer()
+        
+        # Extract company_id from callback data
+        company_id = int(update.callback_query.data.split("_")[2])
+        context.user_data['edit_company_id'] = company_id
+        
+        # Get company details
+        comp = next((c for c in self.db.get_companies(self.bot_id) if c['id'] == company_id), None)
+        if not comp:
+            await update.callback_query.message.reply_text("❌ Company not found.")
+            return ConversationHandler.END
+        
+        context.user_data['editing_company'] = comp
+        
+        text = f"✏️ **EDIT COMPANY: {comp['name']}**\n\nChoose what to edit:"
+        keyboard = [
+            [InlineKeyboardButton("📝 Name", callback_data="edit_field_name")],
+            [InlineKeyboardButton("📄 Description", callback_data="edit_field_desc")],
+            [InlineKeyboardButton("🖼️ Media (Photo/Video/GIF)", callback_data="edit_field_media")],
+            [InlineKeyboardButton("🔘 Button Text", callback_data="edit_field_btn_text")],
+            [InlineKeyboardButton("🔗 Button URL", callback_data="edit_field_btn_url")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="edit_field_cancel")]
+        ]
+        
+        await update.callback_query.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return EDIT_FIELD
+    
+    async def edit_company_choose_field(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Route to specific field editor based on choice"""
+        await update.callback_query.answer()
+        choice = update.callback_query.data
+        
+        if choice == "edit_field_cancel":
+            context.user_data.clear()
+            await update.callback_query.message.edit_text("❌ Edit cancelled.")
+            return ConversationHandler.END
+        
+        comp = context.user_data.get('editing_company')
+        
+        if choice == "edit_field_name":
+            await update.callback_query.message.reply_text(
+                f"📝 **Current Name:** {comp['name']}\n\n"
+                f"Enter new company name:\n\n"
+                f"Type /cancel to cancel."
+            )
+            return EDIT_NAME
+        
+        elif choice == "edit_field_desc":
+            await update.callback_query.message.reply_text(
+                f"📄 **Current Description:**\n{comp['description']}\n\n"
+                f"Enter new description:\n\n"
+                f"Type /cancel to cancel."
+            )
+            return EDIT_DESC
+        
+        elif choice == "edit_field_media":
+            await update.callback_query.message.reply_text(
+                f"🖼️ **Upload new media**\n\n"
+                f"Send a Photo, Video, or GIF:\n\n"
+                f"Type /cancel to cancel."
+            )
+            return EDIT_MEDIA
+        
+        elif choice == "edit_field_btn_text":
+            await update.callback_query.message.reply_text(
+                f"🔘 **Current Button Text:** {comp['button_text']}\n\n"
+                f"Enter new button text:\n\n"
+                f"Type /cancel to cancel."
+            )
+            return EDIT_BTN_TEXT
+        
+        elif choice == "edit_field_btn_url":
+            await update.callback_query.message.reply_text(
+                f"🔗 **Current Button URL:**\n{comp['button_url']}\n\n"
+                f"Enter new URL:\n\n"
+                f"Type/cancel to cancel."
+            )
+            return EDIT_BTN_URL
+    
+    async def edit_company_save_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save new company name"""
+        new_name = update.message.text
+        company_id = context.user_data['edit_company_id']
+        
+        self.db.edit_company(company_id, 'name', new_name)
+        await update.message.reply_text(f"✅ Company name updated to: *{new_name}*", parse_mode='Markdown')
+        
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    async def edit_company_save_desc(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save new company description"""
+        new_desc = update.message.text
+        company_id = context.user_data['edit_company_id']
+        
+        self.db.edit_company(company_id, 'description', new_desc)
+        await update.message.reply_text("✅ Description updated successfully!")
+        
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    async def edit_company_save_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save new company media (photo/video/GIF)"""
+        company_id = context.user_data['edit_company_id']
+        
+        # Get file_id and media type
+        file_id = None
+        media_type = None
+        
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+            media_type = 'photo'
+        elif update.message.video:
+            file_id = update.message.video.file_id
+            media_type = 'video'
+        elif update.message.animation:
+            file_id = update.message.animation.file_id
+            media_type = 'animation'
+        
+        # Update database with file_id
+        self.db.edit_company(company_id, 'media_file_id', file_id)
+        self.db.edit_company(company_id, 'media_type', media_type)
+        
+        await update.message.reply_text(f"✅ Media updated! Type: {media_type}")
+        
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    async def edit_company_save_btn_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save new button text"""
+        new_btn_text = update.message.text
+        company_id = context.user_data['edit_company_id']
+        
+        self.db.edit_company(company_id, 'button_text', new_btn_text)
+        await update.message.reply_text(f"✅ Button text updated to: *{new_btn_text}*", parse_mode='Markdown')
+        
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    async def edit_company_save_btn_url(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save new button URL"""
+        new_url = update.message.text
+        company_id = context.user_data['edit_company_id']
+        
+        self.db.edit_company(company_id, 'button_url', new_url)
+        await update.message.reply_text(f"✅ Button URL updated!")
+        
+        context.user_data.clear()
         return ConversationHandler.END
 
     # --- Helpers ---
