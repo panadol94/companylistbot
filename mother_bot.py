@@ -44,6 +44,7 @@ class MotherBot:
         # Admin Commands
         self.app.add_handler(CommandHandler("setglobalad", self.set_global_ad))
         self.app.add_handler(CommandHandler("ban", self.ban_user))
+        self.app.add_handler(CommandHandler("extend", self.extend_subscription))
         self.app.add_handler(CommandHandler("admin", self.admin_help))
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -109,9 +110,27 @@ class MotherBot:
         return ConversationHandler.END
     
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle button clicks (placeholder for Mother Bot)"""
+        """Handle button clicks for Mother Bot"""
         query = update.callback_query
-        await query.answer("This feature is not implemented in Mother Bot.")
+        data = query.data
+        await query.answer()
+        
+        if data.startswith("manage_bot_"):
+            bot_id = int(data.split("_")[2])
+            await self.show_bot_management(update, bot_id)
+        elif data == "new_bot":
+            await query.message.reply_text("Use /createbot to create a new bot.")
+        elif data.startswith("toggle_bot_"):
+            bot_id = int(data.split("_")[2])
+            await self.toggle_bot_status(update, bot_id)
+        elif data.startswith("delete_bot_"):
+            bot_id = int(data.split("_")[2])
+            await self.delete_bot(update, bot_id)
+        elif data.startswith("extend_bot_"):
+            bot_id = int(data.split("_")[2])
+            await query.message.reply_text("⚠️ Contact @YourSupport to extend subscription.")
+        elif data == "close_panel":
+            await query.message.delete()
 
     # --- My Bots ---
     async def my_bots(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,13 +143,95 @@ class MotherBot:
             await update.message.reply_text("You have no bots. /createbot to start.")
             return
 
-        text = "🤖 **Your Bots:**\n\n"
+        text = "🤖 **YOUR BOTS**\n\nClick a bot to manage:"
+        keyboard = []
         for bot in bots:
-            expiry = bot['subscription_end']
-            status = "✅ Active" if bot['is_active'] else "🔴 Stopped"
-            text += f"ID: `{bot['id']}`\nToken: `{bot['token'][:10]}...`\nExpiry: {expiry}\nStatus: {status}\n\n"
+            status_icon = "🟢" if bot['is_active'] else "🔴"
+            expiry = bot['subscription_end'][:10]
+            keyboard.append([InlineKeyboardButton(
+                f"{status_icon} Bot #{bot['id']} (Exp: {expiry})",
+                callback_data=f"manage_bot_{bot['id']}"
+            )])
         
-        await update.message.reply_text(text, parse_mode='Markdown')
+        keyboard.append([InlineKeyboardButton("➕ Create New Bot", callback_data="new_bot")])
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    async def show_bot_management(self, update: Update, bot_id: int):
+        """Show detailed bot management panel"""
+        conn = self.db.get_connection()
+        bot = conn.execute("SELECT * FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        
+        if not bot:
+            await update.callback_query.message.edit_text("❌ Bot not found.")
+            return
+        
+        status = "🟢 Active" if bot['is_active'] else "🔴 Stopped"
+        text = (
+            f"🤖 **Bot #{bot['id']} Management**\n\n"
+            f"**Status:** {status}\n"
+            f"**Token:** `{bot['token'][:15]}...`\n"
+            f"**Subscription:** {bot['subscription_end']}\n"
+            f"**Created:** {bot['created_at'][:10]}\n"
+        )
+        
+        toggle_text = "⏸️ Stop Bot" if bot['is_active'] else "▶️ Start Bot"
+        keyboard = [
+            [InlineKeyboardButton(toggle_text, callback_data=f"toggle_bot_{bot_id}")],
+            [InlineKeyboardButton("📅 Extend Subscription", callback_data=f"extend_bot_{bot_id}")],
+            [InlineKeyboardButton("🗑️ Delete Bot", callback_data=f"delete_bot_{bot_id}")],
+            [InlineKeyboardButton("« Back", callback_data="close_panel")]
+        ]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def toggle_bot_status(self, update: Update, bot_id: int):
+        """Start or stop a bot"""
+        conn = self.db.get_connection()
+        bot = conn.execute("SELECT * FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        
+        if not bot:
+            await update.callback_query.message.edit_text("❌ Bot not found.")
+            conn.close()
+            return
+        
+        new_status = 0 if bot['is_active'] else 1
+        conn.execute("UPDATE bots SET is_active = ? WHERE id = ?", (new_status, bot_id))
+        conn.commit()
+        conn.close()
+        
+        # Reload the management panel
+        if new_status:
+            # Start the bot instance
+            try:
+                await self.manager.spawn_bot(dict(bot))
+                await update.callback_query.answer("✅ Bot started!")
+            except Exception as e:
+                await update.callback_query.answer(f"⚠️ Error: {e}")
+        else:
+            # Stop the bot instance
+            try:
+                await self.manager.stop_bot(bot_id)
+                await update.callback_query.answer("⏸️ Bot stopped!")
+            except Exception as e:
+                await update.callback_query.answer(f"⚠️ Error: {e}")
+        
+        await self.show_bot_management(update, bot_id)
+    
+    async def delete_bot(self, update: Update, bot_id: int):
+        """Delete a bot from the system"""
+        try:
+            # Stop the bot first
+            await self.manager.stop_bot(bot_id)
+            
+            # Delete from database
+            conn = self.db.get_connection()
+            conn.execute("DELETE FROM bots WHERE id = ?", (bot_id,))
+            conn.commit()
+            conn.close()
+            
+            await update.callback_query.message.edit_text("✅ Bot deleted successfully!")
+        except Exception as e:
+            await update.callback_query.message.edit_text(f"❌ Error deleting bot: {e}")
 
     # --- Admin Commands ---
     async def admin_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -139,7 +240,7 @@ class MotherBot:
             "👑 **Master Admin**\n"
             "/setglobalad [text] - Set footer\n"
             "/ban [user_id] - Blacklist\n"
-            "/extend [owner_id] [days] - Give subscription"
+            "/extend [bot_id] [days] - Extend bot subscription"
         )
 
     async def set_global_ad(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -162,3 +263,33 @@ class MotherBot:
         conn.commit()
         conn.close()
         await update.message.reply_text(f"🚫 User {user_id} Banned.")
+    
+    async def extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Extend bot subscription by X days (Admin only)"""
+        if update.effective_user.id != MASTER_ADMIN_ID: return
+        
+        if len(context.args) < 2:
+            await update.message.reply_text("Usage: /extend [bot_id] [days]")
+            return
+        
+        bot_id = int(context.args[0])
+        days = int(context.args[1])
+        
+        conn = self.db.get_connection()
+        bot = conn.execute("SELECT subscription_end FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        
+        if not bot:
+            await update.message.reply_text("❌ Bot not found.")
+            conn.close()
+            return
+        
+        # Extend subscription
+        from datetime import datetime, timedelta
+        current_end = datetime.fromisoformat(bot['subscription_end'])
+        new_end = current_end + timedelta(days=days)
+        
+        conn.execute("UPDATE bots SET subscription_end = ? WHERE id = ?", (new_end.isoformat(), bot_id))
+        conn.commit()
+        conn.close()
+        
+        await update.message.reply_text(f"✅ Bot #{bot_id} subscription extended by {days} days!\nNew expiry: {new_end.strftime('%Y-%m-%d')}")
