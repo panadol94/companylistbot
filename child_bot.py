@@ -356,7 +356,16 @@ class ChildBot:
     async def admin_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         bot_data = self.db.get_bot_by_token(self.token)
-        if user_id != bot_data['owner_id']:
+        
+        if not bot_data:
+            await update.message.reply_text("⛔ Bot data not found.")
+            return
+            
+        # Convert both to int for comparison (owner_id may be stored as string)
+        owner_id = int(bot_data.get('owner_id', 0))
+        
+        if user_id != owner_id:
+            self.logger.warning(f"Access denied: user_id={user_id}, owner_id={owner_id}")
             await update.message.reply_text("⛔ Access Denied.")
             return
 
