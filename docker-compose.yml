@@ -9,5 +9,8 @@ services:
       - MOTHER_TOKEN=${MOTHER_TOKEN}
       - MASTER_ADMIN_ID=${MASTER_ADMIN_ID}
       - DB_FILE=/data/bot_platform.db
+      - DOMAIN_URL=${DOMAIN_URL}
     volumes:
       - ./data:/data
+    ports:
+      - "8081:8000"

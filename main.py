@@ -1,14 +1,21 @@
 import asyncio
 import logging
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, Response
+from telegram import Update
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from database import Database
-from config import MOTHER_TOKEN, DB_FILE
+from config import MOTHER_TOKEN, DB_FILE, DOMAIN_URL
 from mother_bot import MotherBot
 from child_bot import ChildBot
+import uvicorn
 
 # Logging Config
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Global Manager Instance
+bot_manager = None
 
 class BotManager:
     def __init__(self):
@@ -23,8 +30,9 @@ class BotManager:
         
         # 1. Start Mother Bot
         self.mother_bot = MotherBot(MOTHER_TOKEN, self.db, self)
-        await self.mother_bot.start()
-        logger.info("✅ Mother Bot Started.")
+        await self.mother_bot.initialize() # Setup App
+        await self.enable_bot_updates(self.mother_bot.app, MOTHER_TOKEN)
+        logger.info("✅ Mother Bot Ready.")
 
         # 2. Load & Start Child Bots
         bots_data = self.db.get_all_bots()
@@ -32,44 +40,86 @@ class BotManager:
         for bot_data in bots_data:
             await self.spawn_bot(bot_data)
         
-        logger.info("🌟 All systems operational. Waiting for updates...")
-        
-        # Keep alive
-        try:
-            while True:
-                await asyncio.sleep(3600)
-        except asyncio.CancelledError:
-            await self.shutdown()
+        logger.info(f"🌟 Platform Running. Domain: {DOMAIN_URL}")
 
     async def spawn_bot(self, bot_data):
         token = bot_data['token']
-        if token in self.bots:
-            logger.warning(f"⚠️ Bot {token[:10]}... already running.")
-            return
+        if token in self.bots: return
 
         try:
             child = ChildBot(token, bot_data['id'], self.db, self.scheduler)
-            await child.start()
+            await child.initialize() # Setup App
+            await self.enable_bot_updates(child.app, token)
+            
             self.bots[token] = child
-            logger.info(f"🟢 Child Bot Started: {token[:15]}...")
+            logger.info(f"🟢 Child Bot Hooked: {token[:15]}...")
         except Exception as e:
-            logger.error(f"❌ Failed to start bot {token[:15]}...: {e}")
+            logger.error(f"❌ Failed to hook bot {token[:15]}...: {e}")
+
+    async def enable_bot_updates(self, app, token):
+        # Check if localhost
+        if "localhost" in DOMAIN_URL or "127.0.0.1" in DOMAIN_URL:
+            logger.info(f"🔄 Localhost detected. Starting POLLING for {token[:10]}...")
+            await app.updater.start_polling()
+        else:
+            await self.setup_webhook(app, token)
+
+    async def setup_webhook(self, app, token):
+        # Set webhook to our FastAPI endpoint
+        webhook_url = f"{DOMAIN_URL}/webhook/{token}"
+        await app.bot.set_webhook(webhook_url)
+
+    async def process_update(self, token, update_data):
+        # Determine target bot
+        if token == MOTHER_TOKEN:
+            app = self.mother_bot.app
+        elif token in self.bots:
+            app = self.bots[token].app
+        else:
+            logger.warning(f"⚠️ Update received for unknown token: {token}")
+            return
+
+        # Process Update
+        update = Update.de_json(update_data, app.bot)
+        await app.process_update(update)
 
     async def shutdown(self):
         logger.info("🔻 Shutting down platform...")
-        if self.mother_bot: await self.mother_bot.stop()
-        for bot in self.bots.values():
-            await bot.stop()
         self.scheduler.shutdown()
-        logger.info("👋 Goodbye.")
+
+# --- FastAPI Lifecycle ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    global bot_manager
+    bot_manager = BotManager()
+    await bot_manager.start()
+    yield
+    # Shutdown
+    await bot_manager.shutdown()
+
+# --- FastAPI App ---
+app = FastAPI(lifespan=lifespan)
+
+@app.post("/webhook/{token}")
+async def telegram_webhook(token: str, request: Request):
+    try:
+        data = await request.json()
+        if bot_manager:
+            await bot_manager.process_update(token, data)
+        return Response(status_code=200)
+    except Exception as e:
+        logger.error(f"Webhook Error: {e}")
+        return Response(status_code=500)
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "bots_active": len(bot_manager.bots) if bot_manager else 0}
 
 if __name__ == "__main__":
     if not MOTHER_TOKEN:
-        logger.critical("❌ MOTHER_TOKEN not found in env/config.py! Exiting.")
+        logger.critical("❌ MOTHER_TOKEN not found! Exiting.")
         exit(1)
         
-    manager = BotManager()
-    try:
-        asyncio.run(manager.start())
-    except KeyboardInterrupt:
-        pass
+    # Run Uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, log_level="info")

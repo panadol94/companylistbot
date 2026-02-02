@@ -15,3 +15,8 @@ DB_FILE = os.getenv("DB_FILE", "bot_platform.db")
 
 # Global Ad Footer (Default)
 DEFAULT_GLOBAL_AD = "🔥 Powered by TipsMega Bot Platform"
+
+# Webhook Domain (Coolify URL)
+# Example: https://bot-saas.coolify.yourvps.com
+DOMAIN_URL = os.getenv("DOMAIN_URL", "http://localhost:8000")
+

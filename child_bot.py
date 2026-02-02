@@ -21,13 +21,12 @@ class ChildBot:
         self.logger = logging.getLogger(f"Bot_{bot_id}")
         self.setup_handlers()
 
-    async def start(self):
+    async def initialize(self):
+        """Prepare bot application but do not start polling (Webhook mode)"""
         await self.app.initialize()
         await self.app.start()
-        await self.app.updater.start_polling()
 
     async def stop(self):
-        await self.app.updater.stop()
         await self.app.stop()
         await self.app.shutdown()
 

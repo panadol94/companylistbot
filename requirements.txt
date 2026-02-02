@@ -2,3 +2,5 @@ python-telegram-bot
 APScheduler
 pytz
 python-dotenv
+fastapi
+uvicorn

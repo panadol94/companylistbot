@@ -4,7 +4,7 @@ from database import Database
 from config import MASTER_ADMIN_ID, MOTHER_TOKEN
 import logging
 
-TOKEN_INPUT = range(1)
+TOKEN_INPUT = 0
 
 class MotherBot:
     def __init__(self, token, db: Database, bot_manager):
@@ -14,13 +14,12 @@ class MotherBot:
         self.app = Application.builder().token(token).build()
         self.setup_handlers()
 
-    async def start(self):
+    async def initialize(self):
+        """Prepare bot application but do not start polling (Webhook mode)"""
         await self.app.initialize()
         await self.app.start()
-        await self.app.updater.start_polling()
 
     async def stop(self):
-        await self.app.updater.stop()
         await self.app.stop()
         await self.app.shutdown()
 
