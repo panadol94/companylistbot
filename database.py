@@ -250,6 +250,35 @@ class Database:
         user = conn.execute("SELECT * FROM users WHERE bot_id = ? AND telegram_id = ?", (bot_id, telegram_id)).fetchone()
         conn.close()
         return dict(user) if user else None
+    
+    def get_top_referrers(self, bot_id, limit=10):
+        """Get top referrers by invite count for leaderboard"""
+        conn = self.get_connection()
+        top_users = conn.execute(
+            """SELECT telegram_id, total_invites, balance 
+               FROM users 
+               WHERE bot_id = ? AND total_invites > 0
+               ORDER BY total_invites DESC 
+               LIMIT ?""",
+            (bot_id, limit)
+        ).fetchall()
+        conn.close()
+        return [dict(u) for u in top_users]
+    
+    def get_user_rank(self, bot_id, user_id):
+        """Get user's rank in referral leaderboard"""
+        conn = self.get_connection()
+        # Count how many users have more invites
+        rank = conn.execute(
+            """SELECT COUNT(*) + 1 as rank 
+               FROM users 
+               WHERE bot_id = ? AND total_invites > (
+                   SELECT total_invites FROM users WHERE bot_id = ? AND telegram_id = ?
+               )""",
+            (bot_id, bot_id, user_id)
+        ).fetchone()
+        conn.close()
+        return rank['rank'] if rank else None
 
     # --- Withdrawal ---
     def request_withdrawal(self, bot_id, user_id, amount):

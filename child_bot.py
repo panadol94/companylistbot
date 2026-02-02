@@ -384,9 +384,11 @@ class ChildBot:
         elif data == "wallet":
             await self.show_wallet(update)
         elif data == "share_link":
-            await self.share_link(update, context)
-        elif data == "leaderboard": await self.leaderboard(update, context)
-        elif data == "support_info": await query.message.reply_text("💬 **Live Support**\nSila taip mesej anda terus di sini. Admin akan reply sebentar lagi.")
+            await self.show_share_link(update)
+        elif data == "leaderboard":
+            await self.show_leaderboard(update, context)
+        elif data == "support_info":
+            await query.message.reply_text("💬 **Live Support**\nSila taip mesej anda terus di sini. Admin akan reply sebentar lagi.")
         
         # Admin Actions
         elif data == "admin_withdrawals": await self.show_withdrawals(update)
@@ -630,11 +632,6 @@ class ChildBot:
         return BROADCAST_CONFIRM
 
     async def broadcast_confirm(self, update, context):
-        msg = context.user_data['broadcast_msg']
-        await update.callback_query.answer("Sending...")
-        # Get All Users
-        conn = self.db.get_connection()
-        users = conn.execute("SELECT telegram_id FROM users WHERE bot_id = ?", (self.bot_id,)).fetchall()
         conn.close()
         
         sent = 0
@@ -646,6 +643,46 @@ class ChildBot:
         
         await update.callback_query.message.reply_text(f"✅ Broadcast Sent to {sent} users.")
         return ConversationHandler.END
+
+    async def show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Display top referrers leaderboard"""
+        user_id = update.effective_user.id
+        
+        # Get top 10 referrers
+        top_users = self.db.get_top_referrers(self.bot_id, 10)
+        
+        if not top_users:
+            await update.callback_query.message.reply_text(
+                "🏆 **LEADERBOARD**\n\nNo referrals yet. Be the first!",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Build leaderboard text
+        text = "🏆 **TOP REFERRERS**\n\n"
+        
+        medals = ["🥇", "🥈", "🥉"]
+        for idx, user in enumerate(top_users, 1):
+            medal = medals[idx-1] if idx <= 3 else f"{idx}."
+            text += f"{medal} ID `{user['telegram_id']}` - **{user['total_invites']}** invites\n"
+        
+        # Show user's rank if not in top 10
+        user_data = self.db.get_user(self.bot_id, user_id)
+        if user_data:
+            rank = self.db.get_user_rank(self.bot_id, user_id)
+            invites = user_data.get('total_invites', 0)
+            
+            text += f"\n━━━━━━━━━━\n"
+            text += f"**Your Position:** #{rank}\n"
+            text += f"**Your Invites:** {invites}\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]]
+        
+        await update.callback_query.message.reply_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_subscription(update): return
