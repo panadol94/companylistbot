@@ -703,10 +703,15 @@ class ChildBot:
             await update.message.reply_text("❌ Sila hantar gambar, video atau GIF.")
             return MEDIA
         
-        # Download to local persistent storage
+        # Download to local persistent storage with error handling
         file_path = f"{media_dir}/{timestamp}{file_ext}"
-        await file_obj.download_to_drive(file_path)
-        self.logger.info(f"Media saved to: {file_path}")
+        try:
+            await file_obj.download_to_drive(file_path)
+            self.logger.info(f"Media saved to: {file_path}")
+        except Exception as e:
+            self.logger.error(f"Download error: {e}")
+            await update.message.reply_text(f"❌ Gagal simpan media: {str(e)[:100]}")
+            return MEDIA
         
         # Store file PATH (not file_id)
         context.user_data['new_comp']['media'] = file_path
