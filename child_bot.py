@@ -460,24 +460,7 @@ class ChildBot:
         elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
         elif data == "admin_customize": await self.show_customize_menu(update)
         elif data == "admin_support": await self.show_support_messages(update)
-        elif data.startswith("edit_company_"): await self.show_edit_company_menu(update, int(data.split("_")[2]))
-        # Edit Company Field Handlers
-        elif data.startswith("ec_name_"):
-            company_id = int(data.split("_")[2])
-            context.user_data['editing'] = {'company_id': company_id, 'field': 'name'}
-            await query.message.reply_text("📝 Masukkan **NAMA BARU** untuk company:", parse_mode='Markdown')
-        elif data.startswith("ec_desc_"):
-            company_id = int(data.split("_")[2])
-            context.user_data['editing'] = {'company_id': company_id, 'field': 'description'}
-            await query.message.reply_text("📄 Masukkan **DESKRIPSI BARU** untuk company:", parse_mode='Markdown')
-        elif data.startswith("ec_media_"):
-            company_id = int(data.split("_")[2])
-            context.user_data['editing'] = {'company_id': company_id, 'field': 'media'}
-            await query.message.reply_text("🖼️ Hantar **GAMBAR/VIDEO BARU** untuk company:", parse_mode='Markdown')
-        elif data.startswith("ec_btn_"):
-            company_id = int(data.split("_")[2])
-            context.user_data['editing'] = {'company_id': company_id, 'field': 'button_url'}
-            await query.message.reply_text("🔗 Masukkan **URL BARU** untuk button:", parse_mode='Markdown')
+        # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
     # --- Withdrawal Logic ---
