@@ -230,9 +230,12 @@ class ChildBot:
                     parse_mode='Markdown'
                 )
         except Exception as e:
+            # Log the error for debugging
+            self.logger.error(f"Media display error: {e}")
+            self.logger.error(f"media_file_id: {comp.get('media_file_id')}, media_type: {comp.get('media_type')}")
             # Fallback to text if media fails
             await update.effective_chat.send_message(
-                f"{caption}\n\n_(Media unavailable)_",
+                f"{caption}\n\n_(Media unavailable: {str(e)[:50]})_",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
