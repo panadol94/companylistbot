@@ -117,6 +117,20 @@ class Database:
                 )
             ''')
 
+            # 7. Menu Buttons Table (Custom buttons for /start menu)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS menu_buttons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    text TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    row_group INTEGER DEFAULT NULL,
+                    position INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id)
+                )
+            ''')
+
             # Create indexes for better query performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_companies_bot_id ON companies(bot_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_bot_id ON users(bot_id)')
@@ -124,6 +138,7 @@ class Database:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_bot_id ON withdrawals(bot_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_user_id ON withdrawals(user_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_menu_buttons_bot_id ON menu_buttons(bot_id)')
 
             conn.commit()
             conn.close()
@@ -400,3 +415,87 @@ class Database:
         bot = conn.execute("SELECT referral_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
         conn.close()
         return bool(bot['referral_enabled']) if bot else True  # Default True
+
+    # --- Menu Buttons ---
+    def add_menu_button(self, bot_id, text, url):
+        """Add a custom button to the start menu"""
+        with self.lock:
+            conn = self.get_connection()
+            # Get next position
+            max_pos = conn.execute("SELECT MAX(position) as max_pos FROM menu_buttons WHERE bot_id = ?", (bot_id,)).fetchone()
+            position = (max_pos['max_pos'] or 0) + 1
+            
+            conn.execute(
+                "INSERT INTO menu_buttons (bot_id, text, url, position) VALUES (?, ?, ?, ?)",
+                (bot_id, text, url, position)
+            )
+            conn.commit()
+            button_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.close()
+            return button_id
+
+    def get_menu_buttons(self, bot_id):
+        """Get all custom menu buttons for a bot, ordered by position"""
+        conn = self.get_connection()
+        buttons = conn.execute(
+            "SELECT * FROM menu_buttons WHERE bot_id = ? ORDER BY row_group NULLS LAST, position",
+            (bot_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(btn) for btn in buttons]
+
+    def delete_menu_button(self, button_id, bot_id):
+        """Delete a menu button"""
+        with self.lock:
+            conn = self.get_connection()
+            result = conn.execute(
+                "DELETE FROM menu_buttons WHERE id = ? AND bot_id = ?",
+                (button_id, bot_id)
+            )
+            conn.commit()
+            deleted = result.rowcount > 0
+            conn.close()
+            return deleted
+
+    def edit_menu_button(self, button_id, field, value):
+        """Edit a menu button field"""
+        allowed_fields = ['text', 'url']
+        if field not in allowed_fields:
+            return False
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(f"UPDATE menu_buttons SET {field} = ? WHERE id = ?", (value, button_id))
+            conn.commit()
+            conn.close()
+            return True
+
+    def pair_buttons(self, button1_id, button2_id, bot_id):
+        """Pair two buttons to share the same row"""
+        with self.lock:
+            conn = self.get_connection()
+            # Get next row_group number
+            max_group = conn.execute("SELECT MAX(row_group) as max_grp FROM menu_buttons WHERE bot_id = ?", (bot_id,)).fetchone()
+            new_group = (max_group['max_grp'] or 0) + 1
+            
+            # Update both buttons with same row_group
+            conn.execute("UPDATE menu_buttons SET row_group = ? WHERE id = ? AND bot_id = ?", (new_group, button1_id, bot_id))
+            conn.execute("UPDATE menu_buttons SET row_group = ? WHERE id = ? AND bot_id = ?", (new_group, button2_id, bot_id))
+            conn.commit()
+            conn.close()
+            return new_group
+
+    def unpair_button(self, button_id, bot_id):
+        """Unpair a button (set row_group to NULL)"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("UPDATE menu_buttons SET row_group = NULL WHERE id = ? AND bot_id = ?", (button_id, bot_id))
+            conn.commit()
+            conn.close()
+            return True
+
+    def get_menu_button(self, button_id):
+        """Get a single menu button by ID"""
+        conn = self.get_connection()
+        button = conn.execute("SELECT * FROM menu_buttons WHERE id = ?", (button_id,)).fetchone()
+        conn.close()
+        return dict(button) if button else None

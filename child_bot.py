@@ -16,6 +16,10 @@ WELCOME_PHOTO, WELCOME_TEXT = range(11, 13)
 EDIT_FIELD, EDIT_NAME, EDIT_DESC, EDIT_MEDIA, EDIT_BTN_TEXT, EDIT_BTN_URL = range(15, 21)
 # State for Search
 SEARCH = 22
+# States for Menu Button
+MENU_BTN_TEXT, MENU_BTN_URL = range(23, 25)
+# States for Pair Buttons
+PAIR_SELECT_1, PAIR_SELECT_2 = range(26, 28)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -98,6 +102,18 @@ class ChildBot:
         )
         self.app.add_handler(edit_company_conv)
         
+        # Add Menu Button Wizard
+        menu_btn_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.add_menu_btn_start, pattern=r'^menu_add_btn$')],
+            states={
+                MENU_BTN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_menu_btn_text)],
+                MENU_BTN_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_menu_btn_url)],
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern=r'^cancel$')],
+            per_message=False
+        )
+        self.app.add_handler(menu_btn_conv)
+        
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
@@ -141,6 +157,30 @@ class ChildBot:
             keyboard.append([InlineKeyboardButton("💰 DOMPET SAYA", callback_data="wallet")])
             keyboard.append([InlineKeyboardButton("🔗 SHARE LINK", callback_data="share_link")])
             keyboard.append([InlineKeyboardButton("🏆 LEADERBOARD", callback_data="leaderboard")])
+
+        # Add custom buttons from database
+        custom_buttons = self.db.get_menu_buttons(self.bot_id)
+        if custom_buttons:
+            # Group buttons by row_group for pairing
+            paired_groups = {}
+            unpaired = []
+            
+            for btn in custom_buttons:
+                if btn['row_group']:
+                    if btn['row_group'] not in paired_groups:
+                        paired_groups[btn['row_group']] = []
+                    paired_groups[btn['row_group']].append(btn)
+                else:
+                    unpaired.append(btn)
+            
+            # Add paired buttons (2 per row)
+            for group_id, btns in paired_groups.items():
+                row = [InlineKeyboardButton(b['text'], url=b['url']) for b in btns[:2]]
+                keyboard.append(row)
+            
+            # Add unpaired buttons (1 per row)
+            for btn in unpaired:
+                keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
 
         if update.callback_query:
             try: await update.callback_query.message.delete()
@@ -434,7 +474,7 @@ class ChildBot:
         text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
         keyboard = [
             [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
-            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Edit Start", callback_data="edit_welcome")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
             [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
@@ -470,6 +510,15 @@ class ChildBot:
         elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
         elif data == "admin_customize": await self.show_customize_menu(update)
         elif data == "toggle_referral": await self.toggle_referral_system(update)
+        # Customize Menu System
+        elif data == "customize_menu": await self.show_customize_submenu(update)
+        elif data == "edit_welcome": await self.edit_welcome_start(update, context)
+        elif data == "manage_menu_btns": await self.show_manage_buttons(update)
+        elif data.startswith("del_menu_btn_"): await self.delete_menu_button(update, int(data.split("_")[3]))
+        elif data == "pair_menu_btns": await self.start_pair_buttons(update)
+        elif data.startswith("pair1_"): await self.select_pair_btn_1(update, int(data.split("_")[1]))
+        elif data.startswith("pair2_"): await self.select_pair_btn_2(update, int(data.split("_")[1]))
+        elif data.startswith("unpair_btn_"): await self.unpair_button(update, int(data.split("_")[2]))
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -733,12 +782,148 @@ class ChildBot:
         text = f"👑 **ADMIN SETTINGS DASHBOARD**\n\n✅ Referral system is now {status_text}"
         keyboard = [
             [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
-            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("🎨 Edit Start", callback_data="edit_welcome")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
             [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    # --- Customize Menu System ---
+    async def show_customize_submenu(self, update: Update):
+        """Show customize menu sub-menu"""
+        buttons = self.db.get_menu_buttons(self.bot_id)
+        btn_count = len(buttons)
+        
+        text = f"⚙️ **CUSTOMIZE START MENU**\n\nCustom buttons: {btn_count}"
+        keyboard = [
+            [InlineKeyboardButton("🖼️ Edit Banner", callback_data="edit_welcome")],
+            [InlineKeyboardButton("➕ Add Button", callback_data="menu_add_btn")],
+            [InlineKeyboardButton("📋 Manage Buttons", callback_data="manage_menu_btns")],
+            [InlineKeyboardButton("« Back", callback_data="close_panel")]
+        ]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def show_manage_buttons(self, update: Update):
+        """Show list of custom buttons to manage"""
+        buttons = self.db.get_menu_buttons(self.bot_id)
+        
+        if not buttons:
+            text = "📋 **MANAGE BUTTONS**\n\n_No custom buttons yet._\n\nUse ➕ Add Button to create one."
+            keyboard = [[InlineKeyboardButton("« Back", callback_data="customize_menu")]]
+        else:
+            text = "📋 **MANAGE BUTTONS**\n\nYour custom buttons:\n"
+            keyboard = []
+            for btn in buttons:
+                paired = "🔗" if btn['row_group'] else ""
+                keyboard.append([
+                    InlineKeyboardButton(f"{paired} {btn['text']}", callback_data=f"view_menu_btn_{btn['id']}"),
+                    InlineKeyboardButton("🗑️", callback_data=f"del_menu_btn_{btn['id']}")
+                ])
+            keyboard.append([InlineKeyboardButton("🔗 Pair Buttons", callback_data="pair_menu_btns")])
+            keyboard.append([InlineKeyboardButton("« Back", callback_data="customize_menu")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    # --- Add Menu Button Wizard ---
+    async def add_menu_btn_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start Add Menu Button wizard"""
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(
+            "➕ **ADD BUTTON**\n\n"
+            "Step 1: Enter button text\n\n"
+            "Example: 📞 Contact Us\n\n"
+            "Type /cancel to cancel."
+        )
+        return MENU_BTN_TEXT
+
+    async def add_menu_btn_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save button text and ask for URL"""
+        context.user_data['menu_btn_text'] = update.message.text
+        await update.message.reply_text(
+            "🔗 **Step 2: Enter button URL**\n\n"
+            "Example: https://t.me/yourusername\n\n"
+            "Type /cancel to cancel."
+        )
+        return MENU_BTN_URL
+
+    async def add_menu_btn_url(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save button URL and complete"""
+        url = update.message.text
+        text = context.user_data.get('menu_btn_text', 'Button')
+        
+        # Validate URL
+        if not url.startswith(('http://', 'https://', 't.me/')):
+            await update.message.reply_text("⚠️ Invalid URL. Must start with http://, https://, or t.me/\n\nTry again:")
+            return MENU_BTN_URL
+        
+        # Add t.me prefix if missing
+        if url.startswith('t.me/'):
+            url = 'https://' + url
+        
+        self.db.add_menu_button(self.bot_id, text, url)
+        await update.message.reply_text(f"✅ Button **{text}** added successfully!\n\nUse /settings to manage buttons.")
+        return ConversationHandler.END
+
+    # --- Delete Menu Button ---
+    async def delete_menu_button(self, update: Update, button_id: int):
+        """Delete a menu button"""
+        deleted = self.db.delete_menu_button(button_id, self.bot_id)
+        if deleted:
+            await update.callback_query.answer("✅ Button deleted!")
+        else:
+            await update.callback_query.answer("⚠️ Button not found")
+        await self.show_manage_buttons(update)
+
+    # --- Pair Buttons ---
+    async def start_pair_buttons(self, update: Update):
+        """Start button pairing flow"""
+        buttons = self.db.get_menu_buttons(self.bot_id)
+        unpaired = [b for b in buttons if not b['row_group']]
+        
+        if len(unpaired) < 2:
+            await update.callback_query.answer("Need at least 2 unpaired buttons!")
+            return
+        
+        text = "🔗 **PAIR BUTTONS**\n\nSelect first button:"
+        keyboard = []
+        for btn in unpaired:
+            keyboard.append([InlineKeyboardButton(btn['text'], callback_data=f"pair1_{btn['id']}")])
+        keyboard.append([InlineKeyboardButton("« Cancel", callback_data="manage_menu_btns")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def select_pair_btn_1(self, update: Update, btn1_id: int):
+        """First button selected, show second button options"""
+        update.callback_query.data  # Store in context
+        buttons = self.db.get_menu_buttons(self.bot_id)
+        unpaired = [b for b in buttons if not b['row_group'] and b['id'] != btn1_id]
+        
+        text = "🔗 **PAIR BUTTONS**\n\nSelect second button:"
+        keyboard = []
+        for btn in unpaired:
+            keyboard.append([InlineKeyboardButton(btn['text'], callback_data=f"pair2_{btn1_id}_{btn['id']}")])
+        keyboard.append([InlineKeyboardButton("« Cancel", callback_data="manage_menu_btns")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def select_pair_btn_2(self, update: Update, btn2_id: int):
+        """Second button selected, complete pairing"""
+        # Extract btn1_id from callback data
+        data = update.callback_query.data
+        parts = data.split("_")
+        btn1_id = int(parts[1])
+        btn2_id = int(parts[2])
+        
+        self.db.pair_buttons(btn1_id, btn2_id, self.bot_id)
+        await update.callback_query.answer("✅ Buttons paired!")
+        await self.show_manage_buttons(update)
+
+    async def unpair_button(self, update: Update, button_id: int):
+        """Unpair a button"""
+        self.db.unpair_button(button_id, self.bot_id)
+        await update.callback_query.answer("✅ Button unpaired!")
+        await self.show_manage_buttons(update)
     
     # --- Edit Welcome Wizard ---
     async def edit_welcome_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
