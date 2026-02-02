@@ -223,11 +223,30 @@ class ChildBot:
             nav_keyboard.append(nav_buttons)
         nav_keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
         
-        await update.effective_chat.send_message(
-            nav_text,
-            reply_markup=InlineKeyboardMarkup(nav_keyboard),
-            parse_mode='Markdown'
-        )
+        # Edit pagination message if exists, otherwise send new
+        if update.callback_query and hasattr(update.callback_query.message, 'message_id'):
+            # Try to find and edit the pagination message
+            # Store message_id in context for next navigation
+            try:
+                nav_msg = await update.effective_chat.send_message(
+                    nav_text,
+                    reply_markup=InlineKeyboardMarkup(nav_keyboard),
+                    parse_mode='Markdown'
+                )
+                # Store for future edits
+                context.user_data['nav_msg_id'] = nav_msg.message_id
+            except:
+                await update.effective_chat.send_message(
+                    nav_text,
+                    reply_markup=InlineKeyboardMarkup(nav_keyboard),
+                    parse_mode='Markdown'
+                )
+        else:
+            await update.effective_chat.send_message(
+                nav_text,
+                reply_markup=InlineKeyboardMarkup(nav_keyboard),
+                parse_mode='Markdown'
+            )
 
     async def view_company(self, update: Update, comp_id: int):
         comps = self.db.get_companies(self.bot_id)
@@ -318,11 +337,18 @@ class ChildBot:
         data = query.data
         await query.answer()
 
-        if data == "main_menu": await self.main_menu(update, context)
-        elif data.startswith("list_page_"): await self.show_page(update, int(data.split("_")[2]))
-        elif data.startswith("view_"): await self.view_company(update, int(data.split("_")[1]))
-        elif data == "wallet": await self.show_wallet(update)
-        elif data == "share_link": await self.share_link(update, context)
+        if data.startswith("list_page_"):
+            page = int(data.split("_")[2])
+            await self.show_page(update, page)
+        elif data.startswith("view_"):
+            company_id = int(data.split("_")[1])
+            await self.view_company(update, company_id)
+        elif data == "main_menu":
+            await self.main_menu(update, context)
+        elif data == "wallet":
+            await self.show_wallet(update)
+        elif data == "share_link":
+            await self.share_link(update, context)
         elif data == "leaderboard": await self.leaderboard(update, context)
         elif data == "support_info": await query.message.reply_text("💬 **Live Support**\nSila taip mesej anda terus di sini. Admin akan reply sebentar lagi.")
         
@@ -584,6 +610,57 @@ class ChildBot:
         
         await update.callback_query.message.reply_text(f"✅ Broadcast Sent to {sent} users.")
         return ConversationHandler.END
+
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.check_subscription(update): return
+        user_id = update.effective_user.id
+        username = update.effective_user.username or "User"
+        
+        # Register user if new
+        self.db.register_user(self.bot_id, user_id, username, context.args[0] if context.args else None)
+
+        # Get custom welcome or default
+        bot_data = self.db.get_bot_by_token(self.token)
+        
+        # Use custom banner if available
+        if bot_data['custom_banner']:
+            await update.effective_chat.send_photo(
+                photo=bot_data['custom_banner'],
+                caption=bot_data['custom_caption'] or "Welcome!",
+                parse_mode='HTML'
+            )
+        
+        # Show main menu
+        await self.show_main_menu(update)
+    
+    async def show_main_menu(self, update: Update):
+        """Show main menu - edits message if from callback, sends new if from command"""
+        text = "🏠 **MAIN MENU**\nSila pilih:"
+        keyboard = [
+            [InlineKeyboardButton("🏢 LIST COMPANY", callback_data="list_page_0")],
+            [InlineKeyboardButton("💰 WALLET", callback_data="wallet"),
+             InlineKeyboardButton("🔗 REFERRAL", callback_data="referral")],
+            [InlineKeyboardButton("📤 WITHDRAW", callback_data="withdraw")]
+        ]
+        
+        # Check if bot owner for admin button
+        bot_data = self.db.get_bot_by_token(self.token)
+        if update.effective_user.id == bot_data['owner_id']:
+            keyboard.append([InlineKeyboardButton("⚙️ SETTINGS", callback_data="settings")])
+        
+        # Edit if callback, send if command
+        if update.callback_query:
+            await update.callback_query.message.edit_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                text,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
 
     # --- Edit Company Wizard Functions ---
     async def edit_company_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
