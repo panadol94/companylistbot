@@ -146,21 +146,11 @@ class Database:
             conn.close()
 
     # --- Company Management ---
-    def add_company(self, bot_id, name, desc, media, media_type, btn_text, btn_url):
+    def add_company(self, bot_id, name, description, media_file_id, media_type, button_text, button_url):
         with self.lock:
             conn = self.get_connection()
             conn.execute(
                 "INSERT INTO companies (bot_id, name, description, media_file_id, media_type, button_text, button_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (bot_id, name, desc, media, media_type, btn_text, btn_url)
-            )
-            conn.commit()
-            conn.close()
-    
-    
-    def delete_company(self, company_id):
-        """Delete a company by ID"""
-        try:
-            with self.lock:
                 conn = self.get_connection()
                 conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
                 conn.commit()
@@ -186,6 +176,26 @@ class Database:
             )
             conn.commit()
             conn.close()
+
+    def add_withdrawal(self, bot_id, user_id, amount, method, account):
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "INSERT INTO withdrawals (bot_id, user_id, amount, payment_method, payment_account) VALUES (?, ?, ?, ?, ?)",
+                (bot_id, user_id, amount, method, account)
+            )
+            conn.commit()
+            conn.close()
+            
+    def get_last_withdrawal(self, bot_id, user_id):
+        """Get most recent withdrawal for cooldown check"""
+        conn = self.get_connection()
+        withdraw = conn.execute(
+            "SELECT * FROM withdrawals WHERE bot_id = ? AND user_id = ? ORDER BY request_date DESC LIMIT 1",
+            (bot_id, user_id)
+        ).fetchone()
+        conn.close()
+        return dict(withdraw) if withdraw else None
 
     def edit_company(self, company_id, field, value):
         with self.lock:

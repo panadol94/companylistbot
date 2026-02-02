@@ -302,6 +302,55 @@ class ChildBot:
         await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
 
     # --- Admin Dashboard ---
+    async def withdraw_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle withdrawal with validation: min RM10, max RM1000, 24h cooldown"""
+        user_id = update.effective_user.id
+        
+        # Get user current balance
+        user = self.db.get_user(self.bot_id, user_id)
+        balance = user.get('balance', 0) if user else 0
+        
+        # Validation 1: Minimum withdrawal RM10
+        MIN_WITHDRAW = 10.0
+        if balance < MIN_WITHDRAW:
+            await update.message.reply_text(
+                f"❌ **Minimum Withdrawal: RM{MIN_WITHDRAW:.2f}**\n\n"
+                f"Your balance: RM{balance:.2f}\n"
+                f"Need: RM{MIN_WITHDRAW - balance:.2f} more",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Validation 2: Check last withdrawal time (24h cooldown)
+        last_withdraw = self.db.get_last_withdrawal(self.bot_id, user_id)
+        if last_withdraw:
+            last_time = datetime.datetime.fromisoformat(last_withdraw['requested_at'])
+            cooldown = datetime.timedelta(hours=24)
+            time_left = (last_time + cooldown) - datetime.datetime.now()
+            
+            if time_left.total_seconds() > 0:
+                hours = int(time_left.total_seconds() // 3600)
+                minutes = int((time_left.total_seconds() % 3600) // 60)
+                await update.message.reply_text(
+                    f"⏰ **Cooldown Period**\n\n"
+                    f"You can withdraw again in:\n"
+                    f"**{hours}h {minutes}m**",
+                    parse_mode='Markdown'
+                )
+                return
+        
+        # Validation 3: Maximum per transaction RM1000
+        MAX_WITHDRAW = 1000.0
+        max_allowed = min(balance, MAX_WITHDRAW)
+        
+        await update.message.reply_text(
+            f"💰 **WITHDRAW REQUEST**\n\n"
+            f"Balance: RM{balance:.2f}\n"
+            f"Max per request: RM{MAX_WITHDRAW:.2f}\n"
+            f"Min: RM{MIN_WITHDRAW:.2f}\n\n"
+            f"Enter withdrawal amount\n(RM{MIN_WITHDRAW:.2f} - RM{max_allowed:.2f}):",
+            parse_mode='Markdown'
+        )
     async def admin_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         bot_data = self.db.get_bot_by_token(self.token)
