@@ -155,6 +155,19 @@ class Database:
             )
             conn.commit()
             conn.close()
+    
+    def delete_company(self, company_id):
+        """Delete a company by ID"""
+        try:
+            with self.lock:
+                conn = self.get_connection()
+                conn.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+                conn.commit()
+                conn.close()
+            return True
+        except Exception as e:
+            print(f"Error deleting company: {e}")
+            return False
 
     def get_companies(self, bot_id):
         conn = self.get_connection()

@@ -228,6 +228,10 @@ class ChildBot:
         elif data == "admin_withdrawals": await self.show_withdrawals(update)
         elif data.startswith("approve_wd_"): await self.process_withdrawal(update, data, True)
         elif data.startswith("reject_wd_"): await self.process_withdrawal(update, data, False)
+        elif data == "admin_del_list": await self.show_delete_company_list(update)
+        elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
+        elif data == "admin_customize": await self.show_customize_menu(update)
+        elif data == "admin_support": await self.show_support_messages(update)
         elif data == "close_panel": await query.message.delete()
 
     # --- Withdrawal Logic ---
@@ -257,6 +261,58 @@ class ChildBot:
             # To be strict, I should fetch user_id from the just processed WD. 
         else:
             await update.callback_query.message.edit_text("Error processing.")
+    
+    # --- Delete Company Logic ---
+    async def show_delete_company_list(self, update: Update):
+        """Show list of companies with delete buttons"""
+        companies = self.db.get_companies(self.bot_id)
+        if not companies:
+            await update.callback_query.message.reply_text("📭 Tiada company untuk delete.")
+            return
+        
+        text = "🗑️ **DELETE COMPANY**\n\nPilih company untuk delete:"
+        keyboard = []
+        for company in companies:
+            keyboard.append([InlineKeyboardButton(
+                f"❌ {company['name']}", 
+                callback_data=f"delete_company_{company['id']}"
+            )])
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="close_panel")])
+        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    async def confirm_delete_company(self, update: Update, company_id: int):
+        """Delete company from database"""
+        success = self.db.delete_company(company_id)
+        if success:
+            await update.callback_query.message.edit_text("✅ Company deleted successfully!")
+        else:
+            await update.callback_query.message.edit_text("❌ Error deleting company.")
+    
+    # --- Customize Menu Logic ---
+    async def show_customize_menu(self, update: Update):
+        """Show customization options"""
+        text = (
+            "🎨 **CUSTOMIZE BOT**\n\n"
+            "Available customization options:\n\n"
+            "1️⃣ **Welcome Message** - Edit /start message\n"
+            "2️⃣ **Bot Footer** - Custom ad footer\n"
+            "3️⃣ **Referral Amount** - Change reward per referral\n\n"
+            "⚠️ _Feature coming soon! Contact support for custom branding._"
+        )
+        keyboard = [[InlineKeyboardButton("« Back", callback_data="close_panel")]]
+        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    # --- Support Messages Logic ---
+    async def show_support_messages(self, update: Update):
+        """Show pending support messages from users"""
+        text = (
+            "💬 **SUPPORT MESSAGES**\n\n"
+            "All user messages akan forward terus ke sini.\n"
+            "Reply secara manual untuk balas user.\n\n"
+            "📨 _No pending messages at the moment._"
+        )
+        keyboard = [[InlineKeyboardButton("« Back", callback_data="close_panel")]]
+        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
     # --- Support Logic ---
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
