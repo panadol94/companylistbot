@@ -467,7 +467,7 @@ class ChildBot:
     async def show_withdrawals(self, update: Update):
         wds = self.db.get_pending_withdrawals(self.bot_id)
         if not wds:
-            await update.callback_query.message.reply_text("✅ Tiada withdrawal pending.")
+            await update.callback_query.message.edit_text("✅ Tiada withdrawal pending.")
             return
         
         for wd in wds:
@@ -677,7 +677,7 @@ class ChildBot:
         """Show list of companies with delete buttons"""
         companies = self.db.get_companies(self.bot_id)
         if not companies:
-            await update.callback_query.message.reply_text("📭 Tiada company untuk delete.")
+            await update.callback_query.message.edit_text("📭 Tiada company untuk delete.")
             return
         
         text = "🗑️ **DELETE COMPANY**\n\nPilih company untuk delete:"
@@ -688,7 +688,7 @@ class ChildBot:
                 callback_data=f"delete_company_{company['id']}"
             )])
         keyboard.append([InlineKeyboardButton("« Back", callback_data="close_panel")])
-        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     async def confirm_delete_company(self, update: Update, company_id: int):
         """Delete company from database"""
@@ -710,7 +710,7 @@ class ChildBot:
             "⚠️ _Feature coming soon! Contact support for custom branding._"
         )
         keyboard = [[InlineKeyboardButton("« Back", callback_data="close_panel")]]
-        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     # --- Support Messages Logic ---
     async def show_support_messages(self, update: Update):
@@ -722,7 +722,7 @@ class ChildBot:
             "📨 _No pending messages at the moment._"
         )
         keyboard = [[InlineKeyboardButton("« Back", callback_data="close_panel")]]
-        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     # --- Edit Welcome Wizard ---
     async def edit_welcome_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
