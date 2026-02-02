@@ -279,6 +279,50 @@ class Database:
         ).fetchone()
         conn.close()
         return rank['rank'] if rank else None
+    
+    def get_user_transactions(self, bot_id, user_id):
+        """Get all transactions for a user (referrals earned + withdrawals)"""
+        conn = self.get_connection()
+        
+        # Get withdrawal history
+        withdrawals = conn.execute(
+            """SELECT amount, status, requested_at as date, 'withdrawal' as type 
+               FROM withdrawals 
+               WHERE bot_id = ? AND user_id = ? 
+               ORDER BY requested_at DESC""",
+            (bot_id, user_id)
+        ).fetchall()
+        
+        # Note: Referral earnings are tracked via total_invites * RM1.00
+        # We can calculate this from user data
+        user = conn.execute(
+            "SELECT total_invites, balance FROM users WHERE bot_id = ? AND telegram_id = ?",
+            (bot_id, user_id)
+        ).fetchone()
+        
+        conn.close()
+        
+        transactions = []
+        
+        # Add withdrawals
+        for w in withdrawals:
+            transactions.append({
+                'type': 'withdrawal',
+                'amount': -float(w['amount']),  # Negative for withdrawals
+                'status': w['status'],
+                'date': w['date']
+            })
+        
+        # Add referral earnings summary (not individual, just total)
+        if user and user['total_invites'] > 0:
+            transactions.insert(0, {
+                'type': 'referral_summary',
+                'amount': float(user['total_invites']),  # RM1 per invite
+                'status': 'completed',
+                'date': None  # Summary item
+            })
+        
+        return transactions
 
     # --- Withdrawal ---
     def request_withdrawal(self, bot_id, user_id, amount):
