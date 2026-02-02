@@ -844,7 +844,7 @@ class ChildBot:
             [InlineKeyboardButton("🖼️ Edit Banner", callback_data="edit_welcome")],
             [InlineKeyboardButton("➕ Add Button", callback_data="menu_add_btn")],
             [InlineKeyboardButton("📋 Manage Buttons", callback_data="manage_menu_btns")],
-            [InlineKeyboardButton("« Back", callback_data="close_panel")]
+            [InlineKeyboardButton("« Back", callback_data="admin_customize")]
         ]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
