@@ -10,7 +10,9 @@ services:
       - MASTER_ADMIN_ID=${MASTER_ADMIN_ID}
       - DB_FILE=/data/bot_platform.db
       - DOMAIN_URL=${DOMAIN_URL}
+      - MEDIA_DIR=/data/media
     volumes:
       - ./data:/data
+      - ./media:/data/media
     ports:
       - "8085:8000"

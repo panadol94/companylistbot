@@ -575,8 +575,10 @@ class ChildBot:
         return MEDIA
 
     async def add_company_media(self, update, context):
-        # Prepare Storage
-        media_dir = f"data/media/{self.bot_id}"
+        # Prepare Storage - use /data/media for persistent volume storage
+        import os
+        media_base = os.environ.get('MEDIA_DIR', '/data/media')
+        media_dir = f"{media_base}/{self.bot_id}"
         os.makedirs(media_dir, exist_ok=True)
         timestamp = int(datetime.datetime.now().timestamp())
         
