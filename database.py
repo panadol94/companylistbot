@@ -203,6 +203,18 @@ class Database:
         conn.close()
         return [dict(row) for row in rows]
     
+    def edit_company(self, company_id, field, value):
+        """Update a specific field of a company"""
+        allowed_fields = ['name', 'description', 'media_file_id', 'media_type', 'button_text', 'button_url']
+        if field not in allowed_fields:
+            return False
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(f"UPDATE companies SET {field} = ? WHERE id = ?", (value, company_id))
+            conn.commit()
+            conn.close()
+            return True
+    
     def update_welcome_settings(self, bot_id, banner_file_id, caption_text):
         """Update custom banner and caption for a bot"""
         with self.lock:

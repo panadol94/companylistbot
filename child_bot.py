@@ -461,6 +461,23 @@ class ChildBot:
         elif data == "admin_customize": await self.show_customize_menu(update)
         elif data == "admin_support": await self.show_support_messages(update)
         elif data.startswith("edit_company_"): await self.show_edit_company_menu(update, int(data.split("_")[2]))
+        # Edit Company Field Handlers
+        elif data.startswith("ec_name_"):
+            company_id = int(data.split("_")[2])
+            context.user_data['editing'] = {'company_id': company_id, 'field': 'name'}
+            await query.message.reply_text("📝 Masukkan **NAMA BARU** untuk company:", parse_mode='Markdown')
+        elif data.startswith("ec_desc_"):
+            company_id = int(data.split("_")[2])
+            context.user_data['editing'] = {'company_id': company_id, 'field': 'description'}
+            await query.message.reply_text("📄 Masukkan **DESKRIPSI BARU** untuk company:", parse_mode='Markdown')
+        elif data.startswith("ec_media_"):
+            company_id = int(data.split("_")[2])
+            context.user_data['editing'] = {'company_id': company_id, 'field': 'media'}
+            await query.message.reply_text("🖼️ Hantar **GAMBAR/VIDEO BARU** untuk company:", parse_mode='Markdown')
+        elif data.startswith("ec_btn_"):
+            company_id = int(data.split("_")[2])
+            context.user_data['editing'] = {'company_id': company_id, 'field': 'button_url'}
+            await query.message.reply_text("🔗 Masukkan **URL BARU** untuk button:", parse_mode='Markdown')
         elif data == "close_panel": await query.message.delete()
 
     # --- Withdrawal Logic ---
@@ -518,6 +535,108 @@ class ChildBot:
             reply_markup=InlineKeyboardMarkup(keyboard), 
             parse_mode='Markdown'
         )
+    
+    # --- Edit Company Wizard Functions ---
+    async def edit_company_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Entry point for edit company conversation"""
+        company_id = int(update.callback_query.data.split("_")[2])
+        context.user_data['edit_company_id'] = company_id
+        
+        company = next((c for c in self.db.get_companies(self.bot_id) if c['id'] == company_id), None)
+        if not company:
+            await update.callback_query.message.reply_text("❌ Company not found.")
+            return ConversationHandler.END
+        
+        text = f"✏️ **EDIT: {company['name']}**\n\nPilih apa yang nak diedit:"
+        keyboard = [
+            [InlineKeyboardButton("📝 Nama", callback_data="ef_name")],
+            [InlineKeyboardButton("📄 Deskripsi", callback_data="ef_desc")],
+            [InlineKeyboardButton("🖼️ Media", callback_data="ef_media")],
+            [InlineKeyboardButton("🔗 Button Text", callback_data="ef_btn_text")],
+            [InlineKeyboardButton("🌐 Button URL", callback_data="ef_btn_url")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
+        ]
+        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return EDIT_FIELD
+    
+    async def edit_company_choose_field(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle field selection for edit"""
+        data = update.callback_query.data
+        await update.callback_query.answer()
+        
+        if data == "ef_name":
+            await update.callback_query.message.reply_text("📝 Masukkan **NAMA BARU**:", parse_mode='Markdown')
+            return EDIT_NAME
+        elif data == "ef_desc":
+            await update.callback_query.message.reply_text("📄 Masukkan **DESKRIPSI BARU**:", parse_mode='Markdown')
+            return EDIT_DESC
+        elif data == "ef_media":
+            await update.callback_query.message.reply_text("🖼️ Hantar **MEDIA BARU** (Gambar/Video):", parse_mode='Markdown')
+            return EDIT_MEDIA
+        elif data == "ef_btn_text":
+            await update.callback_query.message.reply_text("🔗 Masukkan **BUTTON TEXT BARU**:", parse_mode='Markdown')
+            return EDIT_BTN_TEXT
+        elif data == "ef_btn_url":
+            await update.callback_query.message.reply_text("🌐 Masukkan **BUTTON URL BARU**:", parse_mode='Markdown')
+            return EDIT_BTN_URL
+        elif data == "cancel":
+            await update.callback_query.message.reply_text("❌ Edit cancelled.")
+            return ConversationHandler.END
+    
+    async def edit_company_save_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        company_id = context.user_data.get('edit_company_id')
+        self.db.edit_company(company_id, 'name', update.message.text)
+        await update.message.reply_text("✅ Nama company berjaya dikemaskini!")
+        return ConversationHandler.END
+    
+    async def edit_company_save_desc(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        company_id = context.user_data.get('edit_company_id')
+        self.db.edit_company(company_id, 'description', update.message.text)
+        await update.message.reply_text("✅ Deskripsi company berjaya dikemaskini!")
+        return ConversationHandler.END
+    
+    async def edit_company_save_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        company_id = context.user_data.get('edit_company_id')
+        import os
+        
+        media_base = os.environ.get('MEDIA_DIR', '/data/media')
+        media_dir = f"{media_base}/{self.bot_id}"
+        os.makedirs(media_dir, exist_ok=True)
+        timestamp = int(datetime.datetime.now().timestamp())
+        
+        if update.message.photo:
+            file_obj = await update.message.photo[-1].get_file()
+            file_path = f"{media_dir}/{timestamp}.jpg"
+            media_type = 'photo'
+        elif update.message.video:
+            file_obj = await update.message.video.get_file()
+            file_path = f"{media_dir}/{timestamp}.mp4"
+            media_type = 'video'
+        elif update.message.animation:
+            file_obj = await update.message.animation.get_file()
+            file_path = f"{media_dir}/{timestamp}.gif"
+            media_type = 'animation'
+        else:
+            await update.message.reply_text("❌ Sila hantar gambar, video atau GIF.")
+            return EDIT_MEDIA
+        
+        await file_obj.download_to_drive(file_path)
+        self.db.edit_company(company_id, 'media_file_id', file_path)
+        self.db.edit_company(company_id, 'media_type', media_type)
+        await update.message.reply_text("✅ Media company berjaya dikemaskini!")
+        return ConversationHandler.END
+    
+    async def edit_company_save_btn_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        company_id = context.user_data.get('edit_company_id')
+        self.db.edit_company(company_id, 'button_text', update.message.text)
+        await update.message.reply_text("✅ Button text berjaya dikemaskini!")
+        return ConversationHandler.END
+    
+    async def edit_company_save_btn_url(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        company_id = context.user_data.get('edit_company_id')
+        self.db.edit_company(company_id, 'button_url', update.message.text)
+        await update.message.reply_text("✅ Button URL berjaya dikemaskini!")
+        return ConversationHandler.END
     
     # --- User Wallet & Share Functions ---
     async def show_wallet(self, update: Update):
