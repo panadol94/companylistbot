@@ -87,17 +87,41 @@ class MotherBot:
             await update.message.reply_text("❌ Invalid Token format. Try again or /cancel")
             return TOKEN_INPUT
 
+        # Fetch bot info from Telegram to get username
+        try:
+            from telegram import Bot
+            temp_bot = Bot(token)
+            bot_info = await temp_bot.get_me()
+            bot_username = bot_info.username
+            bot_name = bot_info.first_name
+        except Exception as e:
+            await update.message.reply_text(f"❌ Invalid token or bot not accessible.\n\nError: {str(e)}\n\nTry again or /cancel")
+            return TOKEN_INPUT
+
         # Register in DB
-        success, msg = self.db.create_bot(token, user_id, f"Bot_{user_id}") # Bot username fetched later? I'll use placeholder or fetch real username if I could, but keeping it simple.
+        success, msg = self.db.create_bot(token, user_id, bot_username)
         
         if success:
-            await update.message.reply_text("✅ **Bot Registered!**\nStarting your bot instance...")
+            await update.message.reply_text("✅ **Bot Registered!**\nStarting your bot instance...", parse_mode='Markdown')
             # Start the bot dynamically
             try:
-                # We need to fetch the ID we just inserted? Or use Token.
+                # Fetch the bot data we just inserted
                 bot_data = self.db.get_bot_by_token(token)
                 await self.manager.spawn_bot(bot_data)
-                await update.message.reply_text("🎉 **Bot is ONLINE!**\n\nGo to your bot and type /start.\nDefault Trial: 3 Days.")
+                
+                # Show detailed success message
+                bot_link = f"https://t.me/{bot_username}"
+                success_msg = (
+                    f"🎉 **Bot is ONLINE!**\n\n"
+                    f"**Bot Name:** {bot_name}\n"
+                    f"**Username:** @{bot_username}\n"
+                    f"**Bot Link:** {bot_link}\n"
+                    f"**Bot ID:** #{bot_data['id']}\n\n"
+                    f"**Subscription:** Trial 3 Days\n"
+                    f"**Expires:** {bot_data['subscription_end'][:10]}\n\n"
+                    f"✨ Go to your bot and type /start to begin!"
+                )
+                await update.message.reply_text(success_msg, parse_mode='Markdown')
             except Exception as e:
                 await update.message.reply_text(f"⚠️ Registered but failed to start: {e}")
             return ConversationHandler.END
