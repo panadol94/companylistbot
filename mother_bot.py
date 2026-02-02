@@ -150,6 +150,34 @@ class MotherBot:
             await self.toggle_bot_status(update, bot_id)
         elif data.startswith("delete_bot_"):
             bot_id = int(data.split("_")[2])
+            # Show confirmation dialog
+            bot = self.db.get_bot_by_id(bot_id)
+            
+            # Get stats for confirmation message
+            companies_count = len(self.db.get_companies(bot_id))
+            users = self.db.execute_query(f"SELECT COUNT(*) as count FROM users WHERE bot_id = {bot_id}")
+            users_count = users[0]['count'] if users else 0
+            
+            text = (
+                f"⚠️ **DELETE BOT CONFIRMATION**\n\n"
+                f"Are you sure you want to delete Bot #{bot_id}?\n\n"
+                f"**This will DELETE:**\n"
+                f"❌ All companies ({companies_count} items)\n"
+                f"❌ All user data ({users_count} users)\n"
+                f"❌ All withdrawal requests\n"
+                f"❌ Bot configuration\n\n"
+                f"**⚠️ THIS CANNOT BE UNDONE!**"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("✅ YES, DELETE", callback_data=f"confirm_delete_bot_{bot_id}")],
+                [InlineKeyboardButton("❌ Cancel", callback_data=f"manage_bot_{bot_id}")]
+            ]
+            
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        elif data.startswith("confirm_delete_bot_"):
+            # Actually delete
+            bot_id = int(data.split("_")[3])
             await self.delete_bot(update, bot_id)
         elif data.startswith("extend_bot_"):
             bot_id = int(data.split("_")[2])

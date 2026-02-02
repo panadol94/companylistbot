@@ -12,6 +12,13 @@ class Database:
         conn = sqlite3.connect(self.db_file, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
+    
+    def execute_query(self, query):
+        """Execute a raw SQL query and return results"""
+        conn = self.get_connection()
+        rows = conn.execute(query).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
 
     def init_db(self):
         with self.lock:
