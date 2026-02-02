@@ -14,6 +14,8 @@ BROADCAST_CONTENT, BROADCAST_CONFIRM = range(7, 9)
 WELCOME_PHOTO, WELCOME_TEXT = range(11, 13)
 # States for Edit Company
 EDIT_FIELD, EDIT_NAME, EDIT_DESC, EDIT_MEDIA, EDIT_BTN_TEXT, EDIT_BTN_URL = range(15, 21)
+# State for Search
+SEARCH = 22
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -94,6 +96,16 @@ class ChildBot:
             fallbacks=[CommandHandler("cancel", self.cancel_op)]
         )
         self.app.add_handler(edit_company_conv)
+        
+        # Search Company Wizard
+        search_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.search_company_start, pattern="^search_company$")],
+            states={
+                SEARCH: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.search_company_results)]
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel_op)]
+        )
+        self.app.add_handler(search_conv)
         
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -711,6 +723,7 @@ class ChildBot:
         text = "🏠 **MAIN MENU**\nSila pilih:"
         keyboard = [
             [InlineKeyboardButton("🏢 LIST COMPANY", callback_data="list_page_0")],
+            [InlineKeyboardButton("🔍 SEARCH", callback_data="search_company")],
             [InlineKeyboardButton("💰 WALLET", callback_data="wallet"),
              InlineKeyboardButton("🔗 REFERRAL", callback_data="referral")],
             [InlineKeyboardButton("📤 WITHDRAW", callback_data="withdraw")]
