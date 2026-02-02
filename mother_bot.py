@@ -27,6 +27,7 @@ class MotherBot:
         self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("mybots", self.my_bots))
         self.app.add_handler(CommandHandler("help", self.help_command))
+        self.app.add_handler(CommandHandler("clone", self.clone_bot_command))
         
         # Creator Wizard
         create_conv = ConversationHandler(
@@ -128,7 +129,25 @@ class MotherBot:
             await self.delete_bot(update, bot_id)
         elif data.startswith("extend_bot_"):
             bot_id = int(data.split("_")[2])
-            await query.message.reply_text("⚠️ Contact @YourSupport to extend subscription.")
+            await self.show_extend_options(update, bot_id)
+        elif data.startswith("extend_days_"):
+            # Format: extend_days_BOTID_DAYS
+            parts = data.split("_")
+            bot_id = int(parts[2])
+            days = int(parts[3])
+            await self.extend_bot_days(update, bot_id, days)
+        elif data.startswith("stats_"):
+            bot_id = int(data.split("_")[1])
+            await self.show_bot_stats(update, bot_id)
+        elif data.startswith("users_"):
+            bot_id = int(data.split("_")[1])
+            await self.show_bot_users(update, bot_id)
+        elif data.startswith("analytics_"):
+            bot_id = int(data.split("_")[1])
+            await self.show_bot_analytics(update, bot_id)
+        elif data.startswith("clone_"):
+            bot_id = int(data.split("_")[1])
+            await self.show_clone_options(update, bot_id)
         elif data == "close_panel":
             await query.message.delete()
 
@@ -177,6 +196,10 @@ class MotherBot:
         
         toggle_text = "⏸️ Stop Bot" if bot['is_active'] else "▶️ Start Bot"
         keyboard = [
+            [InlineKeyboardButton("📊 Statistics", callback_data=f"stats_{bot_id}"), 
+             InlineKeyboardButton("👥 Users", callback_data=f"users_{bot_id}")],
+            [InlineKeyboardButton("📈 Analytics", callback_data=f"analytics_{bot_id}"),
+             InlineKeyboardButton("📋 Clone Bot", callback_data=f"clone_{bot_id}")],
             [InlineKeyboardButton(toggle_text, callback_data=f"toggle_bot_{bot_id}")],
             [InlineKeyboardButton("📅 Extend Subscription", callback_data=f"extend_bot_{bot_id}")],
             [InlineKeyboardButton("🗑️ Delete Bot", callback_data=f"delete_bot_{bot_id}")],
@@ -293,3 +316,174 @@ class MotherBot:
         conn.close()
         
         await update.message.reply_text(f"✅ Bot #{bot_id} subscription extended by {days} days!\nNew expiry: {new_end.strftime('%Y-%m-%d')}")
+
+    # --- New Management Functions ---
+    async def show_bot_stats(self, update: Update, bot_id: int):
+        """Show comprehensive bot statistics"""
+        conn = self.db.get_connection()
+        
+        # Get bot info
+        bot = conn.execute("SELECT * FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        
+        # Get stats
+        total_users = conn.execute("SELECT COUNT(*) as count FROM users WHERE bot_id = ?", (bot_id,)).fetchone()['count']
+        total_companies = conn.execute("SELECT COUNT(*) as count FROM companies WHERE bot_id = ?", (bot_id,)).fetchone()['count']
+        total_balance = conn.execute("SELECT SUM(balance) as total FROM users WHERE bot_id = ?", (bot_id,)).fetchone()['total'] or 0
+        total_invites = conn.execute("SELECT SUM(total_invites) as total FROM users WHERE bot_id = ?", (bot_id,)).fetchone()['total'] or 0
+        pending_withdrawals = conn.execute("SELECT COUNT(*) as count FROM withdrawals WHERE bot_id = ? AND status = 'PENDING'", (bot_id,)).fetchone()['count']
+        
+        conn.close()
+        
+        text = (
+            f"📊 **Bot #{bot_id} Statistics**\n\n"
+            f"👥 **Total Users:** {total_users}\n"
+            f"🏢 **Total Companies:** {total_companies}\n"
+            f"💰 **Total Balance:** RM {total_balance:.2f}\n"
+            f"📈 **Total Invites:** {total_invites}\n"
+            f"📤 **Pending Withdrawals:** {pending_withdrawals}\n\n"
+            f"**Status:** {'🟢 Active' if bot['is_active'] else '🔴 Stopped'}\n"
+            f"**Subscription:** {bot['subscription_end'][:10]}"
+        )
+        
+        keyboard = [[InlineKeyboardButton("« Back", callback_data=f"manage_bot_{bot_id}")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def show_bot_users(self, update: Update, bot_id: int):
+        """Show list of users for specific bot"""
+        conn = self.db.get_connection()
+        users = conn.execute(
+            "SELECT telegram_id, balance, total_invites, joined_at FROM users WHERE bot_id = ? ORDER BY joined_at DESC LIMIT 20",
+            (bot_id,)
+        ).fetchall()
+        conn.close()
+        
+        if not users:
+            text = f"👥 **Bot #{bot_id} Users**\n\nNo users yet."
+        else:
+            text = f"👥 **Bot #{bot_id} Users** (Latest 20)\n\n"
+            for user in users:
+                text += f"• ID: `{user['telegram_id']}` | RM {user['balance']:.2f} | {user['total_invites']} invites\n"
+        
+        keyboard = [[InlineKeyboardButton("« Back", callback_data=f"manage_bot_{bot_id}")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def show_bot_analytics(self, update: Update, bot_id: int):
+        """Show analytical data for bot"""
+        conn = self.db.get_connection()
+        
+        # Revenue analytics
+        total_balance = conn.execute("SELECT SUM(balance) as total FROM users WHERE bot_id = ?", (bot_id,)).fetchone()['total'] or 0
+        approved_withdrawals = conn.execute(
+            "SELECT SUM(amount) as total FROM withdrawals WHERE bot_id = ? AND status = 'APPROVED'",
+            (bot_id,)
+        ).fetchone()['total'] or 0
+        pending_withdrawals = conn.execute(
+            "SELECT SUM(amount) as total FROM withdrawals WHERE bot_id = ? AND status = 'PENDING'",
+            (bot_id,)
+        ).fetchone()['total'] or 0
+        
+        # Growth analytics
+        users_today = conn.execute(
+            "SELECT COUNT(*) as count FROM users WHERE bot_id = ? AND DATE(joined_at) = DATE('now')",
+            (bot_id,)
+        ).fetchone()['count']
+        users_this_week = conn.execute(
+            "SELECT COUNT(*) as count FROM users WHERE bot_id = ? AND DATE(joined_at) >= DATE('now', '-7 days')",
+            (bot_id,)
+        ).fetchone()['count']
+        
+        # Top referrers
+        top_referrers = conn.execute(
+            "SELECT telegram_id, total_invites FROM users WHERE bot_id = ? ORDER BY total_invites DESC LIMIT 5",
+            (bot_id,)
+        ).fetchall()
+        
+        conn.close()
+        
+        text = (
+            f"📈 **Bot #{bot_id} Analytics**\n\n"
+            f"💰 **Financial**\n"
+            f"• Current Balance: RM {total_balance:.2f}\n"
+            f"• Paid Out: RM {approved_withdrawals:.2f}\n"
+            f"• Pending: RM {pending_withdrawals:.2f}\n\n"
+            f"📊 **Growth**\n"
+            f"• New Today: {users_today} users\n"
+            f"• This Week: {users_this_week} users\n\n"
+            f"🏆 **Top Referrers**\n"
+        )
+        
+        for i, ref in enumerate(top_referrers, 1):
+            text += f"{i}. ID `{ref['telegram_id']}` - {ref['total_invites']} invites\n"
+        
+        keyboard = [[InlineKeyboardButton("« Back", callback_data=f"manage_bot_{bot_id}")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def show_extend_options(self, update: Update, bot_id: int):
+        """Show subscription extension options"""
+        text = f"📅 **Extend Bot #{bot_id} Subscription**\n\nChoose extension period:"
+        
+        keyboard = [
+            [InlineKeyboardButton("+ 7 Days", callback_data=f"extend_days_{bot_id}_7"),
+             InlineKeyboardButton("+ 30 Days", callback_data=f"extend_days_{bot_id}_30")],
+            [InlineKeyboardButton("+ 90 Days", callback_data=f"extend_days_{bot_id}_90"),
+             InlineKeyboardButton("+ 365 Days", callback_data=f"extend_days_{bot_id}_365")],
+            [InlineKeyboardButton("« Back", callback_data=f"manage_bot_{bot_id}")]
+        ]
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def extend_bot_days(self, update: Update, bot_id: int, days: int):
+        """Extend bot subscription by specified days"""
+        from datetime import datetime, timedelta
+        
+        conn = self.db.get_connection()
+        bot = conn.execute("SELECT subscription_end FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        
+        if not bot:
+            await update.callback_query.answer("❌ Bot not found")
+            return
+        
+        # Extend subscription
+        current_end = datetime.fromisoformat(bot['subscription_end'])
+        new_end = current_end + timedelta(days=days)
+        
+        conn.execute("UPDATE bots SET subscription_end = ? WHERE id = ?", (new_end.isoformat(), bot_id))
+        conn.commit()
+        conn.close()
+        
+        await update.callback_query.answer(f"✅ Extended by {days} days!")
+        
+        # Show updated management panel
+        await self.show_bot_management(update, bot_id)
+    
+    async def show_clone_options(self, update: Update, bot_id: int):
+        """Show bot cloning options"""
+        conn = self.db.get_connection()
+        bot = conn.execute("SELECT * FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        
+        if not bot:
+            await update.callback_query.message.edit_text("❌ Bot not found")
+            conn.close()
+            return
+        
+        # Get all companies from this bot
+        companies_count = conn.execute("SELECT COUNT(*) as count FROM companies WHERE bot_id = ?", (bot_id,)).fetchone()['count']
+        
+        conn.close()
+        
+        text = (
+            f"📋 **Clone Bot #{bot_id}**\n\n"
+            f"This feature will copy:\n"
+            f"✅ Welcome message settings\n"
+            f"✅ All companies ({companies_count} items)\n"
+            f"✅ Custom banner\n\n"
+            f"⚠️ Users and balances will NOT be copied.\n\n"
+            f"To clone this bot:\n"
+            f"1. Create a new bot using /createbot\n"
+            f"2. Note the new Bot ID from /mybots\n"
+            f"3. Use command: `/clone {bot_id} [new_bot_id]`"
+        )
+        
+        keyboard = [[InlineKeyboardButton("« Back", callback_data=f"manage_bot_{bot_id}")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
