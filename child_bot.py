@@ -39,9 +39,6 @@ class ChildBot:
         # Main User Commands
         self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("company", self.main_menu))
-        
-        # User Actions via Callback
-        self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Admin Add Company Wizard
         add_conv = ConversationHandler(
@@ -67,6 +64,9 @@ class ChildBot:
             fallbacks=[CommandHandler("cancel", self.cancel_op)]
         )
         self.app.add_handler(broadcast_conv)
+        
+        # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
+        self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Support System & Text
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
