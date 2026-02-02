@@ -1336,17 +1336,17 @@ class ChildBot:
 
     # --- Add Company Wizard Steps ---
     async def add_company_start(self, update, context):
-        await update.callback_query.message.reply_text("Sila masukkan **NAMA Company**:")
+        await update.callback_query.message.reply_text("Sila masukkan **NAMA Company**:", parse_mode='Markdown')
         return NAME
     
     async def add_company_name(self, update, context):
         context.user_data['new_comp'] = {'name': update.message.text}
-        await update.message.reply_text("Masukkan **Deskripsi Company**:")
+        await update.message.reply_text("Masukkan **Deskripsi Company**:", parse_mode='Markdown')
         return DESC
 
     async def add_company_desc(self, update, context):
         context.user_data['new_comp']['desc'] = update.message.text
-        await update.message.reply_text("Hantar **Gambar/Video** Banner:")
+        await update.message.reply_text("Hantar **Gambar/Video** Banner:", parse_mode='Markdown')
         return MEDIA
 
     async def add_company_media(self, update, context):
@@ -1393,12 +1393,12 @@ class ChildBot:
         # Store file PATH (not file_id)
         context.user_data['new_comp']['media'] = file_path
         context.user_data['new_comp']['type'] = media_type
-        await update.message.reply_text("Masukkan **Text pada Button** (Contoh: REGISTER NOW):")
+        await update.message.reply_text("Masukkan **Text pada Button** (Contoh: REGISTER NOW):", parse_mode='Markdown')
         return BUTTON_TEXT
 
     async def add_company_btn_text(self, update, context):
         context.user_data['new_comp']['btn_text'] = update.message.text
-        await update.message.reply_text("Masukkan **Link URL** destination:")
+        await update.message.reply_text("Masukkan **Link URL** destination:", parse_mode='Markdown')
         return BUTTON_URL
 
     async def add_company_btn_url(self, update, context):
@@ -1471,16 +1471,27 @@ class ChildBot:
         return BROADCAST_CONFIRM
 
     async def broadcast_confirm(self, update, context):
-        conn.close()
+        await update.callback_query.answer()
+        msg = context.user_data.get('broadcast_msg')
+        
+        if not msg:
+            await update.callback_query.message.reply_text("❌ No message to broadcast.")
+            return ConversationHandler.END
+        
+        # Get all users for this bot
+        users = self.db.get_users(self.bot_id)
         
         sent = 0
+        failed = 0
         for u in users:
             try:
                 await msg.copy(chat_id=u['telegram_id'])
                 sent += 1
-            except: pass
+            except:
+                failed += 1
         
-        await update.callback_query.message.reply_text(f"✅ Broadcast Sent to {sent} users.")
+        await update.callback_query.message.reply_text(f"✅ Broadcast selesai!\n\n📤 Sent: {sent}\n❌ Failed: {failed}")
+        context.user_data.pop('broadcast_msg', None)
         return ConversationHandler.END
 
     async def show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):

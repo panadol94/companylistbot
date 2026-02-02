@@ -321,6 +321,13 @@ class Database:
         conn.close()
         return dict(user) if user else None
     
+    def get_users(self, bot_id):
+        """Get all users for a bot (for broadcast)"""
+        conn = self.get_connection()
+        users = conn.execute("SELECT * FROM users WHERE bot_id = ?", (bot_id,)).fetchall()
+        conn.close()
+        return [dict(user) for user in users]
+    
     def get_top_referrers(self, bot_id, limit=10):
         """Get top referrers by invite count for leaderboard"""
         conn = self.get_connection()
