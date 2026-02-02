@@ -652,66 +652,70 @@ class ChildBot:
     # --- Edit Company Wizard Functions ---
     async def edit_company_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start edit company - show field selection menu"""
-        await update.callback_query.answer()
-        
-        # Extract company_id from callback data
-        company_id = int(update.callback_query.data.split("_")[2])
-        context.user_data['edit_company_id'] = company_id
+        query = update.callback_query
+        company_id = int(query.data.split("_")[2])
+        context.user_data['editing_company_id'] = company_id
         
         # Get company details
-        comp = next((c for c in self.db.get_companies(self.bot_id) if c['id'] == company_id), None)
+        companies = self.db.get_companies(self.bot_id)
+        comp = next((c for c in companies if c['id'] == company_id), None)
+        
         if not comp:
-            await update.callback_query.message.reply_text("❌ Company not found.")
+            await query.answer("❌ Company not found!", show_alert=True)
             return ConversationHandler.END
         
-        context.user_data['editing_company'] = comp
+        text = (
+            f"✏️ **Edit Company: {comp['name']}**\n\n"
+            f"Select what to edit:"
+        )
         
-        text = f"✏️ **EDIT COMPANY: {comp['name']}**\n\nChoose what to edit:"
         keyboard = [
-            [InlineKeyboardButton("📝 Name", callback_data="edit_field_name")],
+            [InlineKeyboardButton("📝 Company Name", callback_data="edit_field_name")],
             [InlineKeyboardButton("📄 Description", callback_data="edit_field_desc")],
-            [InlineKeyboardButton("🖼️ Media (Photo/Video/GIF)", callback_data="edit_field_media")],
+            [InlineKeyboardButton("📷 Media (Photo/Video/GIF)", callback_data="edit_field_media")],
             [InlineKeyboardButton("🔘 Button Text", callback_data="edit_field_btn_text")],
             [InlineKeyboardButton("🔗 Button URL", callback_data="edit_field_btn_url")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="edit_field_cancel")]
+            [InlineKeyboardButton("🗑️ DELETE COMPANY", callback_data=f"delete_company_{company_id}")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_edit")]
         ]
         
-        await update.callback_query.message.reply_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return EDIT_FIELD
     
     async def edit_company_choose_field(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Route to specific field editor based on choice"""
-        await update.callback_query.answer()
-        choice = update.callback_query.data
+        """Route to appropriate edit handler based on field selection"""
+        query = update.callback_query
+        await query.answer()
         
-        if choice == "edit_field_cancel":
-            context.user_data.clear()
-            await update.callback_query.message.edit_text("❌ Edit cancelled.")
+        if query.data == "cancel_edit":
+            await query.message.edit_text("✅ Edit cancelled.", parse_mode='Markdown')
             return ConversationHandler.END
-        
-        comp = context.user_data.get('editing_company')
-        
-        if choice == "edit_field_name":
-            await update.callback_query.message.reply_text(
-                f"📝 **Current Name:** {comp['name']}\n\n"
-                f"Enter new company name:\n\n"
-                f"Type /cancel to cancel."
+        elif query.data.startswith("delete_company_"):
+            # Show confirmation
+            company_id = int(query.data.split("_")[2])
+            companies = self.db.get_companies(self.bot_id)
+            comp = next((c for c in companies if c['id'] == company_id), None)
+            
+            text = (
+                f"⚠️ **DELETE CONFIRMATION**\n\n"
+                f"Are you sure you want to delete:\n"
+                f"**{comp['name']}**?\n\n"
+                f"❌ This action CANNOT be undone!"
             )
+            
+            keyboard = [
+                [InlineKeyboardButton("✅ Yes, Delete", callback_data=f"confirm_delete_{company_id}")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_delete")]
+            ]
+            
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            return EDIT_FIELD  # Stay in same state for confirmation
+        elif query.data == "edit_field_name":
+            await query.message.edit_text("📝 Send new **Company Name**:", parse_mode='Markdown')
             return EDIT_NAME
-        
-        elif choice == "edit_field_desc":
-            await update.callback_query.message.reply_text(
-                f"📄 **Current Description:**\n{comp['description']}\n\n"
-                f"Enter new description:\n\n"
-                f"Type /cancel to cancel."
-            )
+        elif query.data == "edit_field_desc":
+            await query.message.edit_text("📄 Send new **Description**:", parse_mode='Markdown')
             return EDIT_DESC
-        
-        elif choice == "edit_field_media":
             await update.callback_query.message.reply_text(
                 f"🖼️ **Upload new media**\n\n"
                 f"Send a Photo, Video, or GIF:\n\n"
