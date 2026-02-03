@@ -28,6 +28,17 @@ class BotManager:
         logger.info("🚀 Starting Bot SaaS Platform...")
         self.scheduler.start()
         
+        # Schedule daily database backup at 3 AM
+        self.scheduler.add_job(
+            self.backup_database,
+            'cron',
+            hour=3,
+            minute=0,
+            id='daily_backup'
+        )
+        # Also backup on startup
+        await self.backup_database()
+        
         # 1. Start Mother Bot
         self.mother_bot = MotherBot(MOTHER_TOKEN, self.db, self)
         await self.mother_bot.initialize() # Setup App
@@ -41,6 +52,33 @@ class BotManager:
             await self.spawn_bot(bot_data)
         
         logger.info(f"🌟 Platform Running. Domain: {DOMAIN_URL}")
+
+    async def backup_database(self):
+        """Create backup of database file"""
+        import shutil
+        import os
+        from datetime import datetime
+        
+        try:
+            backup_dir = "/data/backups"
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            # Create timestamped backup
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_file = f"{backup_dir}/bot_platform_{timestamp}.db"
+            
+            shutil.copy2(DB_FILE, backup_file)
+            logger.info(f"💾 Database backup created: {backup_file}")
+            
+            # Keep only last 7 backups
+            backups = sorted([f for f in os.listdir(backup_dir) if f.endswith('.db')])
+            while len(backups) > 7:
+                oldest = backups.pop(0)
+                os.remove(f"{backup_dir}/{oldest}")
+                logger.info(f"🗑️ Deleted old backup: {oldest}")
+                
+        except Exception as e:
+            logger.error(f"❌ Backup failed: {e}")
 
     async def spawn_bot(self, bot_data):
         token = bot_data['token']
