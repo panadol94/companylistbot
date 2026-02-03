@@ -208,7 +208,17 @@ class MotherBot:
             bot_id = int(data.split("_")[1])
             await self.show_clone_options(update, bot_id)
         elif data == "close_panel":
-            await query.message.delete()
+            # Carousel style - edit to show main menu instead of delete
+            text = (
+                "🤖 **MASUK10 ROBOT**\n\n"
+                "Use commands below:\n"
+                "/mybots - Manage your bots\n"
+                "/createbot - Create new bot\n"
+                "/help - Show help"
+            )
+            await query.message.edit_text(text, parse_mode='Markdown')
+        elif data == "my_bots_panel":
+            await self.my_bots_panel(update)
 
     # --- My Bots ---
     async def my_bots(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -232,7 +242,32 @@ class MotherBot:
             )])
         
         keyboard.append([InlineKeyboardButton("➕ Create New Bot", callback_data="new_bot")])
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def my_bots_panel(self, update: Update):
+        """Carousel-style my bots - edit existing message instead of new"""
+        user_id = update.effective_user.id
+        conn = self.db.get_connection()
+        bots = conn.execute("SELECT * FROM bots WHERE owner_id = ?", (user_id,)).fetchall()
+        conn.close()
+
+        if not bots:
+            await update.callback_query.message.edit_text("You have no bots. Use /createbot to start.")
+            return
+
+        text = "🤖 **YOUR BOTS**\n\nClick a bot to manage:"
+        keyboard = []
+        for bot in bots:
+            status_icon = "🟢" if bot['is_active'] else "🔴"
+            expiry = bot['subscription_end'][:10]
+            keyboard.append([InlineKeyboardButton(
+                f"{status_icon} Bot #{bot['id']} (Exp: {expiry})",
+                callback_data=f"manage_bot_{bot['id']}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("➕ Create New Bot", callback_data="new_bot")])
+        keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_panel")])
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     async def show_bot_management(self, update: Update, bot_id: int):
         """Display management panel for a specific bot"""
@@ -282,7 +317,7 @@ class MotherBot:
             [InlineKeyboardButton(toggle_text, callback_data=f"toggle_bot_{bot_id}")],
             [InlineKeyboardButton("📅 Extend Subscription", callback_data=f"extend_bot_{bot_id}")],
             [InlineKeyboardButton("🗑️ Delete Bot", callback_data=f"delete_bot_{bot_id}")],
-            [InlineKeyboardButton("« Back", callback_data="close_panel")]
+            [InlineKeyboardButton("« Back to My Bots", callback_data="my_bots_panel")]
         ]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
