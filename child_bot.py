@@ -538,6 +538,7 @@ class ChildBot:
         elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
         elif data == "admin_customize": await self.show_customize_menu(update)
         elif data == "toggle_referral": await self.toggle_referral_system(update)
+        elif data == "admin_settings": await self.show_admin_settings(update)
         # Customize Menu System
         elif data == "customize_menu": await self.show_customize_submenu(update)
         elif data == "edit_welcome": await self.edit_welcome_start(update, context)
@@ -790,7 +791,7 @@ class ChildBot:
                 f"❌ {company['name']}", 
                 callback_data=f"delete_company_{company['id']}"
             )])
-        keyboard.append([InlineKeyboardButton("« Back", callback_data="close_panel")])
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     async def confirm_delete_company(self, update: Update, company_id: int):
@@ -812,7 +813,7 @@ class ChildBot:
             "3️⃣ **Referral Amount** - Change reward per referral\n\n"
             "⚠️ _Feature coming soon! Contact support for custom branding._"
         )
-        keyboard = [[InlineKeyboardButton("« Back", callback_data="close_panel")]]
+        keyboard = [[InlineKeyboardButton("« Back", callback_data="admin_settings")]]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     async def toggle_referral_system(self, update: Update):
@@ -833,6 +834,29 @@ class ChildBot:
         ]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
+    async def show_admin_settings(self, update: Update):
+        """Show admin settings dashboard (called from back buttons)"""
+        try:
+            self.logger.info(f"show_admin_settings called by user {update.effective_user.id}")
+            # Check referral status for toggle button
+            referral_enabled = self.db.is_referral_enabled(self.bot_id)
+            referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
+
+            text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
+            keyboard = [
+                [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
+                [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
+                [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
+                [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
+                [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
+            ]
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            self.logger.info("show_admin_settings completed successfully")
+        except Exception as e:
+            self.logger.error(f"Error in show_admin_settings: {e}")
+            # Fallback: send new message if edit fails
+            await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
     # --- Customize Menu System ---
     async def show_customize_submenu(self, update: Update):
         """Show customize menu sub-menu"""
@@ -844,7 +868,7 @@ class ChildBot:
             [InlineKeyboardButton("🖼️ Edit Banner", callback_data="edit_welcome")],
             [InlineKeyboardButton("➕ Add Button", callback_data="menu_add_btn")],
             [InlineKeyboardButton("📋 Manage Buttons", callback_data="manage_menu_btns")],
-            [InlineKeyboardButton("« Back", callback_data="admin_customize")]
+            [InlineKeyboardButton("« Back", callback_data="admin_settings")]
         ]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
@@ -1149,7 +1173,7 @@ class ChildBot:
         self.db.update_welcome_settings(bot_data['id'], banner_file_id, caption_text)
         
         # Show preview
-        keyboard = [[InlineKeyboardButton("🔙 Back to Settings", callback_data="close_panel")]]
+        keyboard = [[InlineKeyboardButton("🔙 Back to Settings", callback_data="customize_menu")]]
         await update.message.reply_photo(
             photo=banner_file_id,
             caption=f"✅ <b>WELCOME MESSAGE UPDATED!</b>\n\n"
