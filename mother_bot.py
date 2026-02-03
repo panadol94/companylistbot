@@ -560,15 +560,21 @@ class MotherBot:
         # Extend subscription
         current_end = datetime.fromisoformat(bot['subscription_end'])
         new_end = current_end + timedelta(days=days)
+        new_days_left = (new_end - datetime.now()).days
         
         conn.execute("UPDATE bots SET subscription_end = ? WHERE id = ?", (new_end.isoformat(), bot_id))
         conn.commit()
         conn.close()
         
-        await update.callback_query.answer(f"✅ Extended by {days} days!")
-        
-        # Show updated management panel
-        await self.show_bot_management(update, bot_id)
+        # Show success message with new expiry
+        text = (
+            f"✅ **Subscription Extended!**\n\n"
+            f"➕ Added: **{days} days**\n"
+            f"📅 New Expiry: **{new_end.strftime('%d/%m/%Y')}**\n"
+            f"⏳ Days Left: **{new_days_left} days**"
+        )
+        keyboard = [[InlineKeyboardButton("« Back to Bot", callback_data=f"manage_bot_{bot_id}")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     async def show_clone_options(self, update: Update, bot_id: int):
         """Show bot cloning options"""
