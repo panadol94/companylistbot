@@ -596,3 +596,66 @@ class Database:
             conn.commit()
             conn.close()
             return new_group
+
+    # --- Scheduled Broadcasts ---
+    def save_scheduled_broadcast(self, bot_id, message, media_file_id, media_type, scheduled_time):
+        """Save a scheduled broadcast"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "INSERT INTO broadcasts (bot_id, message, media_file_id, media_type, status, scheduled_time) VALUES (?, ?, ?, ?, 'PENDING', ?)",
+                (bot_id, message, media_file_id, media_type, scheduled_time)
+            )
+            conn.commit()
+            broadcast_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.close()
+            return broadcast_id
+
+    def get_pending_broadcasts(self, bot_id=None):
+        """Get all pending scheduled broadcasts, optionally filtered by bot_id"""
+        conn = self.get_connection()
+        if bot_id:
+            rows = conn.execute(
+                "SELECT * FROM broadcasts WHERE bot_id = ? AND status = 'PENDING' ORDER BY scheduled_time",
+                (bot_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM broadcasts WHERE status = 'PENDING' ORDER BY scheduled_time"
+            ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def mark_broadcast_sent(self, broadcast_id):
+        """Mark a broadcast as sent"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("UPDATE broadcasts SET status = 'SENT' WHERE id = ?", (broadcast_id,))
+            conn.commit()
+            conn.close()
+
+    def delete_scheduled_broadcast(self, broadcast_id, bot_id):
+        """Delete a scheduled broadcast"""
+        with self.lock:
+            conn = self.get_connection()
+            result = conn.execute(
+                "DELETE FROM broadcasts WHERE id = ? AND bot_id = ? AND status = 'PENDING'",
+                (broadcast_id, bot_id)
+            )
+            conn.commit()
+            deleted = result.rowcount > 0
+            conn.close()
+            return deleted
+
+    def delete_all_scheduled_broadcasts(self, bot_id):
+        """Delete all pending scheduled broadcasts for a bot"""
+        with self.lock:
+            conn = self.get_connection()
+            result = conn.execute(
+                "DELETE FROM broadcasts WHERE bot_id = ? AND status = 'PENDING'",
+                (bot_id,)
+            )
+            conn.commit()
+            deleted = result.rowcount
+            conn.close()
+            return deleted

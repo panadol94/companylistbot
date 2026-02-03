@@ -10,6 +10,8 @@ from config import DEFAULT_GLOBAL_AD
 NAME, DESC, MEDIA, BUTTON_TEXT, BUTTON_URL = range(5)
 # States for Broadcast
 BROADCAST_CONTENT, BROADCAST_CONFIRM = range(7, 9)
+# States for Schedule Broadcast
+SCHEDULE_TIME = 30
 # States for Edit Welcome
 WELCOME_PHOTO, WELCOME_TEXT = range(11, 13)
 # States for Edit Company
@@ -69,7 +71,8 @@ class ChildBot:
             entry_points=[CallbackQueryHandler(self.broadcast_start, pattern="^admin_broadcast$")],
             states={
                 BROADCAST_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, self.broadcast_content)],
-                BROADCAST_CONFIRM: [CallbackQueryHandler(self.broadcast_confirm)]
+                BROADCAST_CONFIRM: [CallbackQueryHandler(self.broadcast_confirm)],
+                SCHEDULE_TIME: [CallbackQueryHandler(self.broadcast_confirm)]
             },
             fallbacks=[CommandHandler("cancel", self.cancel_op)]
         )
@@ -502,12 +505,16 @@ class ChildBot:
         # Check livegram status for toggle button
         livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
         livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
+        
+        # Check pending schedules
+        pending = self.db.get_pending_broadcasts(self.bot_id)
+        schedule_text = f"🔄 Reset Schedule ({len(pending)})" if pending else "📅 No Schedules"
 
         text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
         keyboard = [
             [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
             [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
-            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
+            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
             [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
@@ -543,6 +550,8 @@ class ChildBot:
         elif data == "admin_customize": await self.show_customize_menu(update)
         elif data == "toggle_referral": await self.toggle_referral_system(update)
         elif data == "toggle_livegram": await self.toggle_livegram_system(update)
+        elif data == "reset_schedule": await self.show_reset_schedule(update)
+        elif data == "confirm_reset_schedule": await self.confirm_reset_schedule(update)
         elif data == "admin_settings": await self.show_admin_settings(update)
         # Customize Menu System
         elif data == "customize_menu": await self.show_customize_submenu(update)
@@ -850,12 +859,16 @@ class ChildBot:
             # Check livegram status for toggle button
             livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
             livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
+            
+            # Check pending schedules
+            pending = self.db.get_pending_broadcasts(self.bot_id)
+            schedule_text = f"🔄 Reset Schedule ({len(pending)})" if pending else "📅 No Schedules"
 
             text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
             keyboard = [
                 [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
                 [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
-                [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
+                [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
                 [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
                 [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
             ]
@@ -885,6 +898,48 @@ class ChildBot:
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def show_reset_schedule(self, update: Update):
+        """Show pending scheduled broadcasts for reset"""
+        pending = self.db.get_pending_broadcasts(self.bot_id)
+        
+        if not pending:
+            await update.callback_query.answer("📅 Tiada schedule yang pending", show_alert=True)
+            return
+        
+        # List all pending broadcasts
+        text = "📅 **SCHEDULED BROADCASTS**\n\n"
+        for b in pending:
+            scheduled = b.get('scheduled_time', 'Unknown')
+            text += f"🆔 `{b['id']}` | ⏰ {scheduled}\n"
+            if b.get('message'):
+                preview = b['message'][:30] + "..." if len(b['message']) > 30 else b['message']
+                text += f"   └ _{preview}_\n"
+        
+        text += f"\n**Total: {len(pending)} pending**"
+        
+        keyboard = [
+            [InlineKeyboardButton("🗑️ Reset All", callback_data="confirm_reset_schedule")],
+            [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+        ]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def confirm_reset_schedule(self, update: Update):
+        """Cancel all scheduled broadcasts"""
+        # Remove scheduler jobs
+        pending = self.db.get_pending_broadcasts(self.bot_id)
+        for b in pending:
+            job_id = f"broadcast_{b['id']}"
+            try:
+                self.scheduler.remove_job(job_id)
+            except:
+                pass  # Job might not exist
+        
+        # Delete from database
+        deleted = self.db.delete_all_scheduled_broadcasts(self.bot_id)
+        
+        await update.callback_query.answer(f"✅ {deleted} schedule(s) deleted!", show_alert=True)
+        await self.show_admin_settings(update)
     
     # --- Customize Menu System ---
     async def show_customize_submenu(self, update: Update):
@@ -1527,35 +1582,192 @@ class ChildBot:
         return BROADCAST_CONTENT
     
     async def broadcast_content(self, update, context):
-        # Save msg
-        context.user_data['broadcast_msg'] = update.message
-        keyboard = [[InlineKeyboardButton("✅ CONFIRM SEND", callback_data="confirm_broadcast")]]
-        await update.message.reply_text("Mesej diterima. Tekan untuk hantar.", reply_markup=InlineKeyboardMarkup(keyboard))
+        # Save msg details for later use
+        msg = update.message
+        context.user_data['broadcast_data'] = {
+            'text': msg.text or msg.caption,
+            'photo': msg.photo[-1].file_id if msg.photo else None,
+            'video': msg.video.file_id if msg.video else None,
+            'document': msg.document.file_id if msg.document else None,
+            'message': msg  # Keep original for instant send
+        }
+        
+        # Show Send Now vs Schedule options
+        keyboard = [
+            [InlineKeyboardButton("📤 Send Now", callback_data="broadcast_now")],
+            [InlineKeyboardButton("⏰ Schedule", callback_data="broadcast_schedule")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
+        ]
+        await update.message.reply_text(
+            "✅ **Mesej diterima!**\n\nPilih option:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
         return BROADCAST_CONFIRM
 
     async def broadcast_confirm(self, update, context):
         await update.callback_query.answer()
-        msg = context.user_data.get('broadcast_msg')
+        action = update.callback_query.data
         
-        if not msg:
-            await update.callback_query.message.reply_text("❌ No message to broadcast.")
+        if action == "broadcast_cancel":
+            context.user_data.pop('broadcast_data', None)
+            await update.callback_query.message.edit_text("❌ Broadcast dibatalkan.")
             return ConversationHandler.END
         
-        # Get all users for this bot
-        users = self.db.get_users(self.bot_id)
+        if action == "broadcast_now":
+            # Instant send
+            data = context.user_data.get('broadcast_data')
+            if not data or not data.get('message'):
+                await update.callback_query.message.reply_text("❌ No message to broadcast.")
+                return ConversationHandler.END
+            
+            msg = data['message']
+            users = self.db.get_users(self.bot_id)
+            
+            await update.callback_query.message.edit_text("⏳ Broadcasting...")
+            
+            sent = 0
+            failed = 0
+            for u in users:
+                try:
+                    await msg.copy(chat_id=u['telegram_id'])
+                    sent += 1
+                except:
+                    failed += 1
+            
+            await update.callback_query.message.reply_text(f"✅ Broadcast selesai!\n\n📤 Sent: {sent}\n❌ Failed: {failed}")
+            context.user_data.pop('broadcast_data', None)
+            return ConversationHandler.END
         
-        sent = 0
-        failed = 0
-        for u in users:
-            try:
-                await msg.copy(chat_id=u['telegram_id'])
-                sent += 1
-            except:
-                failed += 1
+        if action == "broadcast_schedule":
+            # Show time picker
+            keyboard = [
+                [InlineKeyboardButton("1 Jam", callback_data="sched_1h"), InlineKeyboardButton("3 Jam", callback_data="sched_3h")],
+                [InlineKeyboardButton("6 Jam", callback_data="sched_6h"), InlineKeyboardButton("12 Jam", callback_data="sched_12h")],
+                [InlineKeyboardButton("24 Jam", callback_data="sched_24h"), InlineKeyboardButton("48 Jam", callback_data="sched_48h")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
+            ]
+            await update.callback_query.message.edit_text(
+                "⏰ **SCHEDULE BROADCAST**\n\nPilih bila nak hantar:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return SCHEDULE_TIME
         
-        await update.callback_query.message.reply_text(f"✅ Broadcast selesai!\n\n📤 Sent: {sent}\n❌ Failed: {failed}")
-        context.user_data.pop('broadcast_msg', None)
-        return ConversationHandler.END
+        # Handle schedule time selection
+        if action.startswith("sched_"):
+            hours_map = {"sched_1h": 1, "sched_3h": 3, "sched_6h": 6, "sched_12h": 12, "sched_24h": 24, "sched_48h": 48}
+            hours = hours_map.get(action, 1)
+            
+            scheduled_time = datetime.datetime.now() + datetime.timedelta(hours=hours)
+            data = context.user_data.get('broadcast_data', {})
+            
+            # Determine media type
+            media_type = None
+            media_file_id = None
+            if data.get('photo'):
+                media_type = 'photo'
+                media_file_id = data['photo']
+            elif data.get('video'):
+                media_type = 'video'
+                media_file_id = data['video']
+            elif data.get('document'):
+                media_type = 'document'
+                media_file_id = data['document']
+            
+            # Save to database
+            broadcast_id = self.db.save_scheduled_broadcast(
+                self.bot_id,
+                data.get('text', ''),
+                media_file_id,
+                media_type,
+                scheduled_time.strftime('%Y-%m-%d %H:%M:%S')
+            )
+            
+            # Schedule the job
+            self.scheduler.add_job(
+                self.execute_scheduled_broadcast,
+                'date',
+                run_date=scheduled_time,
+                args=[broadcast_id],
+                id=f"broadcast_{broadcast_id}"
+            )
+            
+            await update.callback_query.message.edit_text(
+                f"✅ **Broadcast Scheduled!**\n\n"
+                f"📅 Akan dihantar: **{scheduled_time.strftime('%d/%m/%Y %H:%M')}**\n"
+                f"🆔 Broadcast ID: `{broadcast_id}`\n\n"
+                f"💡 Guna `/settings` → Reset Schedule untuk batalkan",
+                parse_mode='Markdown'
+            )
+            context.user_data.pop('broadcast_data', None)
+            return ConversationHandler.END
+        
+        return BROADCAST_CONFIRM
+
+    async def execute_scheduled_broadcast(self, broadcast_id):
+        """Execute a scheduled broadcast"""
+        try:
+            # Get broadcast details
+            broadcasts = self.db.get_pending_broadcasts(self.bot_id)
+            broadcast = next((b for b in broadcasts if b['id'] == broadcast_id), None)
+            
+            if not broadcast:
+                self.logger.warning(f"Broadcast {broadcast_id} not found or already sent")
+                return
+            
+            users = self.db.get_users(self.bot_id)
+            sent = 0
+            failed = 0
+            
+            for u in users:
+                try:
+                    if broadcast['media_type'] == 'photo' and broadcast['media_file_id']:
+                        await self.app.bot.send_photo(
+                            chat_id=u['telegram_id'],
+                            photo=broadcast['media_file_id'],
+                            caption=broadcast['message'] or ''
+                        )
+                    elif broadcast['media_type'] == 'video' and broadcast['media_file_id']:
+                        await self.app.bot.send_video(
+                            chat_id=u['telegram_id'],
+                            video=broadcast['media_file_id'],
+                            caption=broadcast['message'] or ''
+                        )
+                    elif broadcast['media_type'] == 'document' and broadcast['media_file_id']:
+                        await self.app.bot.send_document(
+                            chat_id=u['telegram_id'],
+                            document=broadcast['media_file_id'],
+                            caption=broadcast['message'] or ''
+                        )
+                    elif broadcast['message']:
+                        await self.app.bot.send_message(
+                            chat_id=u['telegram_id'],
+                            text=broadcast['message']
+                        )
+                    sent += 1
+                except Exception as e:
+                    failed += 1
+            
+            # Mark as sent
+            self.db.mark_broadcast_sent(broadcast_id)
+            
+            # Notify owner
+            bot_data = self.db.get_bot_by_token(self.token)
+            if bot_data:
+                try:
+                    await self.app.bot.send_message(
+                        chat_id=bot_data['owner_id'],
+                        text=f"✅ **Scheduled Broadcast Complete!**\n\n📤 Sent: {sent}\n❌ Failed: {failed}",
+                        parse_mode='Markdown'
+                    )
+                except:
+                    pass
+            
+            self.logger.info(f"Scheduled broadcast {broadcast_id} completed: {sent} sent, {failed} failed")
+        except Exception as e:
+            self.logger.error(f"Error executing scheduled broadcast {broadcast_id}: {e}")
+
 
     async def show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Display top referrers leaderboard"""
