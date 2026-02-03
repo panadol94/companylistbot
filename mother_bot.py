@@ -1,7 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 from database import Database
-from config import MASTER_ADMIN_ID, MOTHER_TOKEN
+from config import MASTER_ADMIN_ID, MASTER_ADMIN_IDS, MOTHER_TOKEN
 import logging
 
 TOKEN_INPUT = 0
@@ -372,7 +372,7 @@ class MotherBot:
 
     # --- Admin Commands ---
     async def admin_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != MASTER_ADMIN_ID: return
+        if update.effective_user.id not in MASTER_ADMIN_IDS: return
         await update.message.reply_text(
             "👑 **Master Admin**\n"
             "/setglobalad [text] - Set footer\n"
@@ -381,7 +381,7 @@ class MotherBot:
         )
 
     async def set_global_ad(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != MASTER_ADMIN_ID: return
+        if update.effective_user.id not in MASTER_ADMIN_IDS: return
         # Logic to update config file or DB? 
         # For simplicity, we just replied "Updated" but functionally we rely on `config.DEFAULT_GLOBAL_AD`. 
         # Ideally, `DEFAULT_GLOBAL_AD` should be in DB. `settings` table. 
@@ -392,7 +392,7 @@ class MotherBot:
         await update.message.reply_text("⚠️ To change Global Ad, please update `config.py` in the server.")
 
     async def ban_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != MASTER_ADMIN_ID: return
+        if update.effective_user.id not in MASTER_ADMIN_IDS: return
         # Ban logic
         user_id = int(context.args[0])
         conn = self.db.get_connection()
@@ -403,7 +403,7 @@ class MotherBot:
     
     async def extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Extend bot subscription by X days (Admin only)"""
-        if update.effective_user.id != MASTER_ADMIN_ID: return
+        if update.effective_user.id not in MASTER_ADMIN_IDS: return
         
         if len(context.args) < 2:
             await update.message.reply_text("Usage: /extend [bot_id] [days]")
