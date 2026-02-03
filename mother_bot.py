@@ -46,6 +46,7 @@ class MotherBot:
         self.app.add_handler(CommandHandler("ban", self.ban_user))
         self.app.add_handler(CommandHandler("extend", self.extend_subscription))
         self.app.add_handler(CommandHandler("admin", self.admin_help))
+        self.app.add_handler(CommandHandler("allbots", self.all_bots))
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
@@ -374,10 +375,12 @@ class MotherBot:
     async def admin_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id not in MASTER_ADMIN_IDS: return
         await update.message.reply_text(
-            "👑 **Master Admin**\n"
-            "/setglobalad [text] - Set footer\n"
-            "/ban [user_id] - Blacklist\n"
-            "/extend [bot_id] [days] - Extend bot subscription"
+            "👑 **Master Admin Commands**\n\n"
+            "/allbots - View all bots from all users\n"
+            "/extend [bot_id] [days] - Extend subscription\n"
+            "/ban [user_id] - Blacklist user\n"
+            "/setglobalad [text] - Set global ad footer",
+            parse_mode='Markdown'
         )
 
     async def set_global_ad(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -430,6 +433,47 @@ class MotherBot:
         conn.close()
         
         await update.message.reply_text(f"✅ Bot #{bot_id} subscription extended by {days} days!\nNew expiry: {new_end.strftime('%Y-%m-%d')}")
+
+    async def all_bots(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """View all bots from all users (Platform owner only)"""
+        if update.effective_user.id not in MASTER_ADMIN_IDS: 
+            await update.message.reply_text("⛔ Access Denied.")
+            return
+        
+        conn = self.db.get_connection()
+        bots = conn.execute("""
+            SELECT b.*, 
+                   (SELECT COUNT(*) FROM users WHERE bot_id = b.id) as user_count
+            FROM bots b 
+            ORDER BY b.created_at DESC
+        """).fetchall()
+        conn.close()
+        
+        if not bots:
+            await update.message.reply_text("📭 No bots registered yet.")
+            return
+        
+        # Build message with pagination (max 10 per message)
+        text = f"📊 **ALL BOTS** ({len(bots)} total)\n\n"
+        
+        for i, bot in enumerate(bots, 1):
+            status = "🟢" if bot['is_active'] else "🔴"
+            expiry = bot['subscription_end'][:10] if bot['subscription_end'] else "N/A"
+            text += (
+                f"**{i}. Bot #{bot['id']}** {status}\n"
+                f"   👤 Owner: `{bot['owner_id']}`\n"
+                f"   📅 Exp: {expiry}\n"
+                f"   👥 Users: {bot['user_count']}\n\n"
+            )
+            
+            # Split message if too long
+            if i % 10 == 0 and i < len(bots):
+                await update.message.reply_text(text, parse_mode='Markdown')
+                text = ""
+        
+        if text:
+            text += "_Use /extend [bot_id] [days] to extend subscription_"
+            await update.message.reply_text(text, parse_mode='Markdown')
 
     # --- New Management Functions ---
     async def show_bot_stats(self, update: Update, bot_id: int):
