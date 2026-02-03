@@ -9,10 +9,10 @@ MOTHER_TOKEN = os.getenv("MOTHER_TOKEN", "8297991145:AAEptyoDK1NU9Y_6n5lq0KUcIcW
 # Master Admin IDs (Comma-separated list of owners/partners)
 # Example: 123456789,987654321
 # You can find your Telegram ID by messaging @userinfobot
-_admin_ids = os.getenv("MASTER_ADMIN_IDS", os.getenv("MASTER_ADMIN_ID", "0"))
+_admin_ids = os.getenv("MASTER_ADMIN_IDS", os.getenv("MASTER_ADMIN_ID", "5925622731"))
 MASTER_ADMIN_IDS = [int(x.strip()) for x in _admin_ids.split(",") if x.strip().isdigit()]
 # Legacy support - single ID
-MASTER_ADMIN_ID = MASTER_ADMIN_IDS[0] if MASTER_ADMIN_IDS else 0 
+MASTER_ADMIN_ID = MASTER_ADMIN_IDS[0] if MASTER_ADMIN_IDS else 5925622731 
 
 # Database File Path
 DB_FILE = os.getenv("DB_FILE", "bot_platform.db")
