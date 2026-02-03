@@ -81,7 +81,8 @@ class MotherBot:
             "1. Go to @BotFather\n"
             "2. Create a new bot (`/newbot`)\n"
             "3. Copy the **API TOKEN**\n\n"
-            "Paste the API TOKEN here:"
+            "Paste the API TOKEN here:",
+            parse_mode='Markdown'
         )
         return TOKEN_INPUT
 
@@ -443,7 +444,7 @@ class MotherBot:
         conn.commit()
         conn.close()
         
-        await update.message.reply_text(f"✅ Bot #{bot_id} subscription extended by {days} days!\nNew expiry: {new_end.strftime('%Y-%m-%d')}")
+        await update.message.reply_text(f"✅ **Bot #{bot_id}** subscription extended by {days} days!\nNew expiry: {new_end.strftime('%Y-%m-%d')}", parse_mode='Markdown')
 
     async def all_bots(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """View all bots from all users (Platform owner only)"""
