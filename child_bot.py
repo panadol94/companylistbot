@@ -150,10 +150,26 @@ class ChildBot:
         # Register user
         is_new = self.db.add_user(self.bot_id, user.id, referrer_id)
         if is_new and referrer_id:
-            # Notify referrer
+            # Notify referrer with fancy notification
             try:
-                await context.bot.send_message(chat_id=referrer_id, text=f"🎉 New Referral! {user.first_name} joined. You earned RM1.00")
-            except: pass # Referrer might have blocked bot
+                # Get referrer's updated stats
+                referrer_data = self.db.get_user(self.bot_id, referrer_id)
+                total_invites = referrer_data.get('total_invites', 1) if referrer_data else 1
+                new_balance = referrer_data.get('balance', 1.0) if referrer_data else 1.0
+                
+                notification = (
+                    f"🎉 **REFERRAL BERJAYA!**\n\n"
+                    f"━━━━━━━━━━━━━━━━━\n"
+                    f"👤 **{user.first_name}** baru join!\n"
+                    f"💰 Anda dapat: **+RM1.00**\n"
+                    f"━━━━━━━━━━━━━━━━━\n\n"
+                    f"📊 **Stats Anda:**\n"
+                    f"👥 Total Referral: **{total_invites}**\n"
+                    f"💵 Baki Semasa: **RM{new_balance:.2f}**\n\n"
+                    f"🔥 Teruskan share link anda!"
+                )
+                await context.bot.send_message(chat_id=referrer_id, text=notification, parse_mode='Markdown')
+            except: pass  # Referrer might have blocked bot
             
         await self.main_menu(update, context)
 
