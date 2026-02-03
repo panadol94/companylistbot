@@ -498,16 +498,20 @@ class ChildBot:
         # Check referral status for toggle button
         referral_enabled = self.db.is_referral_enabled(self.bot_id)
         referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
+        
+        # Check livegram status for toggle button
+        livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
+        livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
 
         text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
         keyboard = [
             [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
             [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
-            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
+            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Callbacks ---
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -538,6 +542,7 @@ class ChildBot:
         elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
         elif data == "admin_customize": await self.show_customize_menu(update)
         elif data == "toggle_referral": await self.toggle_referral_system(update)
+        elif data == "toggle_livegram": await self.toggle_livegram_system(update)
         elif data == "admin_settings": await self.show_admin_settings(update)
         # Customize Menu System
         elif data == "customize_menu": await self.show_customize_submenu(update)
@@ -841,13 +846,17 @@ class ChildBot:
             # Check referral status for toggle button
             referral_enabled = self.db.is_referral_enabled(self.bot_id)
             referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
+            
+            # Check livegram status for toggle button
+            livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
+            livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
 
             text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
             keyboard = [
                 [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
                 [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
                 [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
-                [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
+                [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
                 [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
             ]
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
@@ -856,6 +865,26 @@ class ChildBot:
             self.logger.error(f"Error in show_admin_settings: {e}")
             # Fallback: send new message if edit fails
             await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def toggle_livegram_system(self, update: Update):
+        """Toggle livegram system on/off"""
+        new_state = self.db.toggle_livegram(self.bot_id)
+        status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
+        
+        # Update the admin panel with new button states
+        referral_enabled = self.db.is_referral_enabled(self.bot_id)
+        referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
+        livegram_btn_text = "🟢 Livegram: ON" if new_state else "🔴 Livegram: OFF"
+        
+        text = f"👑 **ADMIN SETTINGS DASHBOARD**\n\n✅ Livegram system is now {status_text}"
+        keyboard = [
+            [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
+            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
+            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
+            [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
+        ]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     # --- Customize Menu System ---
     async def show_customize_submenu(self, update: Update):
@@ -1320,7 +1349,8 @@ class ChildBot:
                 return
         
         # User -> Admin (forward message and store mapping)
-        if user_id != owner_id:
+        # Only forward if livegram is enabled
+        if user_id != owner_id and self.db.is_livegram_enabled(self.bot_id):
             # Forward message to admin
             forwarded = await context.bot.forward_message(
                 chat_id=owner_id, 

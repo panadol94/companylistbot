@@ -46,6 +46,12 @@ class Database:
                 cursor.execute("ALTER TABLE bots ADD COLUMN referral_enabled BOOLEAN DEFAULT 1")
             except:
                 pass  # Column already exists
+            
+            # Migration: Add livegram_enabled column if missing
+            try:
+                cursor.execute("ALTER TABLE bots ADD COLUMN livegram_enabled BOOLEAN DEFAULT 1")
+            except:
+                pass  # Column already exists
 
             # 2. Companies Table (Content for each bot)
             cursor.execute('''
@@ -436,6 +442,25 @@ class Database:
         bot = conn.execute("SELECT referral_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
         conn.close()
         return bool(bot['referral_enabled']) if bot else True  # Default True
+
+    def toggle_livegram(self, bot_id):
+        """Toggle livegram system on/off for a bot"""
+        with self.lock:
+            conn = self.get_connection()
+            # Get current state
+            current = conn.execute("SELECT livegram_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+            new_state = 0 if current and current['livegram_enabled'] else 1
+            conn.execute("UPDATE bots SET livegram_enabled = ? WHERE id = ?", (new_state, bot_id))
+            conn.commit()
+            conn.close()
+            return new_state  # Returns new state (1=ON, 0=OFF)
+
+    def is_livegram_enabled(self, bot_id):
+        """Check if livegram system is enabled for a bot"""
+        conn = self.get_connection()
+        bot = conn.execute("SELECT livegram_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        return bool(bot['livegram_enabled']) if bot and 'livegram_enabled' in bot.keys() else True  # Default True
 
     # --- Menu Buttons ---
     def add_menu_button(self, bot_id, text, url):
