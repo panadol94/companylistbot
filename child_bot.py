@@ -224,8 +224,7 @@ class ChildBot:
         # Build caption
         caption = (
             f"🏢 **{comp['name']}**\n\n"
-            f"{comp['description']}\n\n"
-            f"📄 Company {page+1} of {len(companies)}"
+            f"{comp['description']}"
         )
         
         # Build keyboard
