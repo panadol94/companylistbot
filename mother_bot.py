@@ -47,6 +47,10 @@ class MotherBot:
         self.app.add_handler(CommandHandler("extend", self.extend_subscription))
         self.app.add_handler(CommandHandler("admin", self.admin_help))
         self.app.add_handler(CommandHandler("allbots", self.all_bots))
+        # Owner Management
+        self.app.add_handler(CommandHandler("addowner", self.add_owner))
+        self.app.add_handler(CommandHandler("removeowner", self.remove_owner))
+        self.app.add_handler(CommandHandler("owners", self.list_owners))
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
@@ -373,18 +377,25 @@ class MotherBot:
 
     # --- Admin Commands ---
     async def admin_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id not in MASTER_ADMIN_IDS: return
+        if not self.is_owner(update.effective_user.id): return
         await update.message.reply_text(
-            "👑 **Master Admin Commands**\n\n"
-            "/allbots - View all bots from all users\n"
-            "/extend [bot_id] [days] - Extend subscription\n"
-            "/ban [user_id] - Blacklist user\n"
-            "/setglobalad [text] - Set global ad footer",
+            "👑 **Owner Commands**\n\n"
+            "**View & Manage Bots:**\n"
+            "/allbots - View all bots\n"
+            "/extend [bot_id] [days] - Extend subscription\n\n"
+            "**User Management:**\n"
+            "/ban [user_id] - Blacklist user\n\n"
+            "**Owner Management:**\n"
+            "/owners - List platform owners\n"
+            "/addowner [id] - Add owner\n"
+            "/removeowner [id] - Remove owner\n\n"
+            "**Config:**\n"
+            "/setglobalad [text] - Set global ad",
             parse_mode='Markdown'
         )
 
     async def set_global_ad(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id not in MASTER_ADMIN_IDS: return
+        if not self.is_owner(update.effective_user.id): return
         # Logic to update config file or DB? 
         # For simplicity, we just replied "Updated" but functionally we rely on `config.DEFAULT_GLOBAL_AD`. 
         # Ideally, `DEFAULT_GLOBAL_AD` should be in DB. `settings` table. 
@@ -395,7 +406,7 @@ class MotherBot:
         await update.message.reply_text("⚠️ To change Global Ad, please update `config.py` in the server.")
 
     async def ban_user(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id not in MASTER_ADMIN_IDS: return
+        if not self.is_owner(update.effective_user.id): return
         # Ban logic
         user_id = int(context.args[0])
         conn = self.db.get_connection()
@@ -406,7 +417,7 @@ class MotherBot:
     
     async def extend_subscription(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Extend bot subscription by X days (Admin only)"""
-        if update.effective_user.id not in MASTER_ADMIN_IDS: return
+        if not self.is_owner(update.effective_user.id): return
         
         if len(context.args) < 2:
             await update.message.reply_text("Usage: /extend [bot_id] [days]")
@@ -436,7 +447,7 @@ class MotherBot:
 
     async def all_bots(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """View all bots from all users (Platform owner only)"""
-        if update.effective_user.id not in MASTER_ADMIN_IDS: 
+        if not self.is_owner(update.effective_user.id): 
             await update.message.reply_text("⛔ Access Denied.")
             return
         
@@ -474,6 +485,92 @@ class MotherBot:
         if text:
             text += "_Use /extend [bot_id] [days] to extend subscription_"
             await update.message.reply_text(text, parse_mode='Markdown')
+
+    # --- Owner Management ---
+    def is_owner(self, user_id):
+        """Check if user is platform owner (env + database)"""
+        # Check env variable first
+        if user_id == MASTER_ADMIN_ID or user_id in MASTER_ADMIN_IDS:
+            return True
+        # Check database
+        return self.db.is_platform_owner(user_id, MASTER_ADMIN_ID)
+    
+    async def add_owner(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Add a platform owner /addowner [telegram_id]"""
+        # Only master admin (from env) can add owners
+        if update.effective_user.id != MASTER_ADMIN_ID:
+            await update.message.reply_text("⛔ Only the master admin can add owners.")
+            return
+        
+        if not context.args:
+            await update.message.reply_text("Usage: /addowner [telegram_id]\n\nExample: /addowner 123456789")
+            return
+        
+        try:
+            new_owner_id = int(context.args[0])
+        except ValueError:
+            await update.message.reply_text("⚠️ Invalid Telegram ID")
+            return
+        
+        success = self.db.add_platform_owner(new_owner_id, update.effective_user.id)
+        
+        if success:
+            await update.message.reply_text(
+                f"✅ **Owner Added!**\n\n"
+                f"👤 Telegram ID: `{new_owner_id}`\n\n"
+                f"User now has full access to all admin commands.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("⚠️ User is already an owner.")
+    
+    async def remove_owner(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Remove a platform owner /removeowner [telegram_id]"""
+        # Only master admin can remove owners
+        if update.effective_user.id != MASTER_ADMIN_ID:
+            await update.message.reply_text("⛔ Only the master admin can remove owners.")
+            return
+        
+        if not context.args:
+            await update.message.reply_text("Usage: /removeowner [telegram_id]")
+            return
+        
+        try:
+            owner_id = int(context.args[0])
+        except ValueError:
+            await update.message.reply_text("⚠️ Invalid Telegram ID")
+            return
+        
+        # Cannot remove master admin
+        if owner_id == MASTER_ADMIN_ID:
+            await update.message.reply_text("⚠️ Cannot remove the master admin.")
+            return
+        
+        success = self.db.remove_platform_owner(owner_id)
+        
+        if success:
+            await update.message.reply_text(f"✅ Owner `{owner_id}` removed!", parse_mode='Markdown')
+        else:
+            await update.message.reply_text("⚠️ Owner not found.")
+    
+    async def list_owners(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List all platform owners"""
+        if not self.is_owner(update.effective_user.id):
+            return
+        
+        owners = self.db.get_platform_owners()
+        
+        text = f"👑 **PLATFORM OWNERS**\n\n"
+        text += f"**Master Admin:** `{MASTER_ADMIN_ID}` (from env)\n\n"
+        
+        if owners:
+            text += "**Added Owners:**\n"
+            for i, owner in enumerate(owners, 1):
+                text += f"{i}. `{owner['telegram_id']}`\n"
+        else:
+            text += "_No additional owners added_"
+        
+        await update.message.reply_text(text, parse_mode='Markdown')
 
     # --- New Management Functions ---
     async def show_bot_stats(self, update: Update, bot_id: int):

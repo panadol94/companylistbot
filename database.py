@@ -163,6 +163,16 @@ class Database:
                 )
             ''')
 
+            # 10. Platform Owners Table (Dynamic owners for mother bot)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS platform_owners (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_id INTEGER UNIQUE NOT NULL,
+                    added_by INTEGER NOT NULL,
+                    added_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+
             # Create indexes for better query performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_companies_bot_id ON companies(bot_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_bot_id ON users(bot_id)')
@@ -728,3 +738,55 @@ class Database:
         ).fetchone()
         conn.close()
         return admin is not None
+
+    # ==================== PLATFORM OWNERS ====================
+    
+    def add_platform_owner(self, telegram_id, added_by):
+        """Add a platform owner (for mother bot)"""
+        conn = self.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO platform_owners (telegram_id, added_by) VALUES (?, ?)",
+                (telegram_id, added_by)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False  # Already owner
+        finally:
+            conn.close()
+    
+    def remove_platform_owner(self, telegram_id):
+        """Remove a platform owner"""
+        conn = self.get_connection()
+        result = conn.execute(
+            "DELETE FROM platform_owners WHERE telegram_id = ?",
+            (telegram_id,)
+        )
+        conn.commit()
+        deleted = result.rowcount > 0
+        conn.close()
+        return deleted
+    
+    def get_platform_owners(self):
+        """Get all platform owners"""
+        conn = self.get_connection()
+        owners = conn.execute(
+            "SELECT * FROM platform_owners ORDER BY added_at"
+        ).fetchall()
+        conn.close()
+        return [dict(o) for o in owners]
+    
+    def is_platform_owner(self, telegram_id, master_admin_id=None):
+        """Check if user is platform owner (includes master admin from env)"""
+        # Check if master admin from env variable
+        if master_admin_id and telegram_id == master_admin_id:
+            return True
+        # Check in database
+        conn = self.get_connection()
+        owner = conn.execute(
+            "SELECT id FROM platform_owners WHERE telegram_id = ?",
+            (telegram_id,)
+        ).fetchone()
+        conn.close()
+        return owner is not None
