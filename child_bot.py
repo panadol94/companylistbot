@@ -1514,7 +1514,16 @@ class ChildBot:
 
     # --- Broadcast Wizard ---
     async def broadcast_start(self, update, context):
-        await update.callback_query.message.reply_text("📢 **BROADCAST MODE**\nSila hantar mesej (Text/Gambar/Video) yang nak disebarkan:")
+        # Security check - only owner can broadcast
+        user_id = update.effective_user.id
+        bot_data = self.db.get_bot_by_token(self.token)
+        owner_id = int(bot_data.get('owner_id', 0)) if bot_data else 0
+        
+        if user_id != owner_id:
+            await update.callback_query.answer("⛔ Access Denied", show_alert=True)
+            return ConversationHandler.END
+        
+        await update.callback_query.message.reply_text("📢 **BROADCAST MODE**\nSila hantar mesej (Text/Gambar/Video) yang nak disebarkan:", parse_mode='Markdown')
         return BROADCAST_CONTENT
     
     async def broadcast_content(self, update, context):
