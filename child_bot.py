@@ -542,8 +542,10 @@ class ChildBot:
             
         # Convert both to int for comparison (owner_id may be stored as string)
         owner_id = int(bot_data.get('owner_id', 0))
+        is_owner = user_id == owner_id
+        is_admin = self.db.is_bot_admin(self.bot_id, user_id)
         
-        if user_id != owner_id:
+        if not is_admin:
             self.logger.warning(f"Access denied: user_id={user_id}, owner_id={owner_id}")
             await update.message.reply_text("⛔ Access Denied.")
             return
@@ -559,6 +561,10 @@ class ChildBot:
         # Check pending schedules
         pending = self.db.get_pending_broadcasts(self.bot_id)
         schedule_text = f"🔄 Reset Schedule ({len(pending)})" if pending else "📅 No Schedules"
+        
+        # Count admins for button
+        admins = self.db.get_admins(self.bot_id)
+        admin_count = len(admins)
 
         text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
         keyboard = [
@@ -566,8 +572,11 @@ class ChildBot:
             [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
             [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
-            [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
+        # Only owner can manage admins
+        if is_owner:
+            keyboard.append([InlineKeyboardButton(f"👥 Manage Admins ({admin_count})", callback_data="manage_admins")])
+        keyboard.append([InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")])
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Callbacks ---
@@ -603,6 +612,10 @@ class ChildBot:
         elif data == "reset_schedule": await self.show_reset_schedule(update)
         elif data == "confirm_reset_schedule": await self.confirm_reset_schedule(update)
         elif data == "admin_settings": await self.show_admin_settings(update)
+        # Admin Management
+        elif data == "manage_admins": await self.show_manage_admins(update)
+        elif data == "add_admin_start": await self.add_admin_start(update, context)
+        elif data.startswith("delete_admin_"): await self.delete_admin(update, int(data.split("_")[2]))
         # Customize Menu System
         elif data == "customize_menu": await self.show_customize_submenu(update)
         elif data == "edit_welcome": await self.edit_welcome_start(update, context)
@@ -948,6 +961,113 @@ class ChildBot:
             [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
         ]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    # --- Admin Management ---
+    async def show_manage_admins(self, update: Update):
+        """Show list of admins with add/remove options"""
+        # Only owner can access
+        bot_data = self.db.get_bot_by_token(self.token)
+        if update.effective_user.id != bot_data.get('owner_id'):
+            await update.callback_query.answer("⛔ Only bot owner can manage admins", show_alert=True)
+            return
+        
+        admins = self.db.get_admins(self.bot_id)
+        
+        if not admins:
+            text = (
+                "👥 **MANAGE ADMINS**\n\n"
+                "📝 Tiada admin lagi.\n\n"
+                "Admin boleh:\n"
+                "• Add/Edit/Delete Companies\n"
+                "• Broadcast messages\n"
+                "• Manage withdrawals\n"
+                "• Access all settings"
+            )
+        else:
+            text = f"👥 **MANAGE ADMINS** ({len(admins)})\n\n"
+            for i, admin in enumerate(admins, 1):
+                text += f"**{i}.** `{admin['telegram_id']}`\n"
+        
+        keyboard = []
+        # Delete buttons for each admin
+        for admin in admins:
+            keyboard.append([InlineKeyboardButton(f"🗑️ Remove {admin['telegram_id']}", callback_data=f"delete_admin_{admin['telegram_id']}")])
+        
+        keyboard.append([InlineKeyboardButton("➕ Add Admin", callback_data="add_admin_start")])
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def add_admin_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start add admin flow - ask for Telegram ID"""
+        context.user_data['waiting_admin_id'] = True
+        await update.callback_query.message.edit_text(
+            "👥 **ADD NEW ADMIN**\n\n"
+            "Sila taip **Telegram ID** user yang nak dijadikan admin:\n\n"
+            "_Contoh: 123456789_\n\n"
+            "Untuk cancel, taip /cancel",
+            parse_mode='Markdown'
+        )
+    
+    async def add_admin_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle admin ID input"""
+        if not context.user_data.get('waiting_admin_id'):
+            return False
+        
+        # Cancel command
+        if update.message.text == '/cancel':
+            context.user_data.pop('waiting_admin_id', None)
+            await update.message.reply_text("❌ Cancelled")
+            return True
+        
+        # Validate input
+        try:
+            new_admin_id = int(update.message.text.strip())
+        except ValueError:
+            await update.message.reply_text("⚠️ Sila masukkan nombor Telegram ID yang sah.\n\nContoh: 123456789")
+            return True
+        
+        # Check if already admin
+        if self.db.is_bot_admin(self.bot_id, new_admin_id):
+            await update.message.reply_text("⚠️ User ini sudah menjadi admin.")
+            context.user_data.pop('waiting_admin_id', None)
+            return True
+        
+        # Add admin
+        owner_id = update.effective_user.id
+        success = self.db.add_admin(self.bot_id, new_admin_id, owner_id)
+        
+        context.user_data.pop('waiting_admin_id', None)
+        
+        if success:
+            await update.message.reply_text(
+                f"✅ **Admin Berjaya Ditambah!**\n\n"
+                f"👤 Telegram ID: `{new_admin_id}`\n\n"
+                f"User boleh access /settings sekarang.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ Gagal menambah admin. Sila cuba lagi.")
+        
+        return True
+    
+    async def delete_admin(self, update: Update, admin_telegram_id: int):
+        """Remove an admin"""
+        # Only owner can remove
+        bot_data = self.db.get_bot_by_token(self.token)
+        if update.effective_user.id != bot_data.get('owner_id'):
+            await update.callback_query.answer("⛔ Only bot owner can remove admins", show_alert=True)
+            return
+        
+        success = self.db.remove_admin(self.bot_id, admin_telegram_id)
+        
+        if success:
+            await update.callback_query.answer(f"✅ Admin {admin_telegram_id} removed!", show_alert=True)
+        else:
+            await update.callback_query.answer("❌ Failed to remove admin", show_alert=True)
+        
+        # Refresh admin list
+        await self.show_manage_admins(update)
     
     async def show_reset_schedule(self, update: Update):
         """Show pending scheduled broadcasts for reset"""
@@ -1332,6 +1452,10 @@ class ChildBot:
         bot_data = self.db.get_bot_by_token(self.token)
         owner_id = bot_data['owner_id']
         user_id = update.effective_user.id
+        
+        # Handle Add Admin flow
+        if await self.add_admin_handler(update, context):
+            return
         
         # Handle Add Company Button flows (awaiting text/url after callback)
         if context.user_data.get('awaiting_btn_text'):

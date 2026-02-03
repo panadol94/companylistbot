@@ -150,6 +150,19 @@ class Database:
                 )
             ''')
 
+            # 9. Bot Admins Table (Multiple admins per bot)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS bot_admins (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    telegram_id INTEGER NOT NULL,
+                    added_by INTEGER NOT NULL,
+                    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE,
+                    UNIQUE(bot_id, telegram_id)
+                )
+            ''')
+
             # Create indexes for better query performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_companies_bot_id ON companies(bot_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_bot_id ON users(bot_id)')
@@ -158,6 +171,7 @@ class Database:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_withdrawals_user_id ON withdrawals(user_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_menu_buttons_bot_id ON menu_buttons(bot_id)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_bot_admins_bot_id ON bot_admins(bot_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_company_buttons_company_id ON company_buttons(company_id)')
 
             conn.commit()
@@ -659,3 +673,58 @@ class Database:
             deleted = result.rowcount
             conn.close()
             return deleted
+
+    # ==================== BOT ADMINS ====================
+    
+    def add_admin(self, bot_id, telegram_id, added_by):
+        """Add an admin to a bot"""
+        conn = self.get_connection()
+        try:
+            conn.execute(
+                "INSERT INTO bot_admins (bot_id, telegram_id, added_by) VALUES (?, ?, ?)",
+                (bot_id, telegram_id, added_by)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False  # Already admin
+        finally:
+            conn.close()
+    
+    def remove_admin(self, bot_id, telegram_id):
+        """Remove an admin from a bot"""
+        conn = self.get_connection()
+        result = conn.execute(
+            "DELETE FROM bot_admins WHERE bot_id = ? AND telegram_id = ?",
+            (bot_id, telegram_id)
+        )
+        conn.commit()
+        deleted = result.rowcount > 0
+        conn.close()
+        return deleted
+    
+    def get_admins(self, bot_id):
+        """Get all admins for a bot"""
+        conn = self.get_connection()
+        admins = conn.execute(
+            "SELECT * FROM bot_admins WHERE bot_id = ? ORDER BY added_at",
+            (bot_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(a) for a in admins]
+    
+    def is_bot_admin(self, bot_id, telegram_id):
+        """Check if user is admin of a bot (includes owner)"""
+        conn = self.get_connection()
+        # Check if owner
+        bot = conn.execute("SELECT owner_id FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        if bot and bot['owner_id'] == telegram_id:
+            conn.close()
+            return True
+        # Check if in admins table
+        admin = conn.execute(
+            "SELECT id FROM bot_admins WHERE bot_id = ? AND telegram_id = ?",
+            (bot_id, telegram_id)
+        ).fetchone()
+        conn.close()
+        return admin is not None
