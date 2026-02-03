@@ -128,10 +128,25 @@ class ChildBot:
         # Handle Referral
         args = context.args
         referrer_id = None
-        if args and args[0].isdigit():
-            referrer_id = int(args[0])
+        
+        if args:
+            arg = args[0]
+            # Handle ref_123456 format
+            if arg.startswith("ref_"):
+                try:
+                    referrer_id = int(arg.replace("ref_", ""))
+                except:
+                    pass
+            # Also handle direct ID format (legacy)
+            elif arg.isdigit():
+                referrer_id = int(arg)
         
         user = update.effective_user
+        
+        # Don't allow self-referral
+        if referrer_id == user.id:
+            referrer_id = None
+        
         # Register user
         is_new = self.db.add_user(self.bot_id, user.id, referrer_id)
         if is_new and referrer_id:
