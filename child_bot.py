@@ -186,13 +186,33 @@ class ChildBot:
                 keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
 
         if update.callback_query:
-            try: await update.callback_query.message.delete()
-            except: pass
-            
-        if bot_data['custom_banner']:
-             await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            # Carousel style - edit existing message instead of delete+send
+            try:
+                if bot_data['custom_banner']:
+                    await update.callback_query.message.edit_media(
+                        media=InputMediaPhoto(media=bot_data['custom_banner'], caption=caption, parse_mode='HTML'),
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    await update.callback_query.message.edit_text(
+                        caption,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='HTML'
+                    )
+            except Exception as e:
+                # Fallback: send new message if edit fails (e.g., different media type)
+                try: await update.callback_query.message.delete()
+                except: pass
+                if bot_data['custom_banner']:
+                    await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                else:
+                    await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         else:
-             await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            # Fresh /start command - send new message
+            if bot_data['custom_banner']:
+                await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            else:
+                await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     # --- Company Logic ---
     async def show_page(self, update: Update, page: int):
