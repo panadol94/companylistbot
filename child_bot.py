@@ -3181,18 +3181,36 @@ class ChildBot:
         """Save source channel from forwarded message or ID"""
         context.user_data.pop('waiting_forwarder_source', None)
         
+        channel_id = None
+        channel_name = None
+        
+        # Try forward_from_chat first (older but more reliable)
         if update.message.forward_from_chat:
-            # Got forwarded message
             channel = update.message.forward_from_chat
             channel_id = channel.id
             channel_name = channel.title or channel.username or str(channel_id)
-        else:
-            # Try to parse as channel ID
+        # Try forward_origin (newer API)
+        elif hasattr(update.message, 'forward_origin') and update.message.forward_origin:
+            origin = update.message.forward_origin
+            if hasattr(origin, 'chat'):
+                channel_id = origin.chat.id
+                channel_name = origin.chat.title or origin.chat.username or str(channel_id)
+            elif hasattr(origin, 'sender_chat'):
+                channel_id = origin.sender_chat.id
+                channel_name = origin.sender_chat.title or origin.sender_chat.username or str(channel_id)
+        
+        # If still no channel, try to parse as ID from text
+        if not channel_id:
             try:
                 channel_id = int(update.message.text.strip())
                 channel_name = str(channel_id)
-            except ValueError:
-                await update.message.reply_text("❌ ID tidak sah. Hantar ID bermula dengan `-100`")
+            except (ValueError, AttributeError):
+                await update.message.reply_text(
+                    "❌ Tidak dapat detect channel dari forward.\n\n"
+                    "Cuba hantar Channel ID secara manual (contoh: `-1001234567890`)\n\n"
+                    "_Pastikan bot adalah admin di channel tersebut._",
+                    parse_mode='Markdown'
+                )
                 return
         
         # Get existing config or create placeholder for target
@@ -3235,18 +3253,36 @@ class ChildBot:
         """Save target group from forwarded message or ID"""
         context.user_data.pop('waiting_forwarder_target', None)
         
+        group_id = None
+        group_name = None
+        
+        # Try forward_from_chat first (older but more reliable)
         if update.message.forward_from_chat:
-            # Got forwarded message
             group = update.message.forward_from_chat
             group_id = group.id
             group_name = group.title or group.username or str(group_id)
-        else:
-            # Try to parse as group ID
+        # Try forward_origin (newer API)
+        elif hasattr(update.message, 'forward_origin') and update.message.forward_origin:
+            origin = update.message.forward_origin
+            if hasattr(origin, 'chat'):
+                group_id = origin.chat.id
+                group_name = origin.chat.title or origin.chat.username or str(group_id)
+            elif hasattr(origin, 'sender_chat'):
+                group_id = origin.sender_chat.id
+                group_name = origin.sender_chat.title or origin.sender_chat.username or str(group_id)
+        
+        # If still no group, try to parse as ID from text
+        if not group_id:
             try:
                 group_id = int(update.message.text.strip())
                 group_name = str(group_id)
-            except ValueError:
-                await update.message.reply_text("❌ ID tidak sah. Hantar ID bermula dengan `-100`")
+            except (ValueError, AttributeError):
+                await update.message.reply_text(
+                    "❌ Tidak dapat detect group dari forward.\n\n"
+                    "Cuba hantar Group ID secara manual (contoh: `-1001234567890`)\n\n"
+                    "_Pastikan bot adalah admin di group tersebut._",
+                    parse_mode='Markdown'
+                )
                 return
         
         # Get existing config
