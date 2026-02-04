@@ -291,6 +291,10 @@ class MotherBot:
             conn.commit()
             conn.close()
             
+            # Get bot username for notification
+            bot_username = bot.get('bot_username') or f"Bot #{bot_id}"
+            owner_id = bot.get('owner_id')
+            
             await query.message.edit_text(
                 f"✅ **Subscription Extended!**\n\n"
                 f"**Bot:** #{bot_id}\n"
@@ -299,6 +303,26 @@ class MotherBot:
                 f"Use /mybots to see updated info.",
                 parse_mode='Markdown'
             )
+            
+            # Notify bot owner
+            if owner_id and owner_id != update.effective_user.id:
+                try:
+                    days_left = (new_expiry - datetime.datetime.now()).days
+                    notify_text = (
+                        f"🎉 **SUBSCRIPTION EXTENDED!**\n\n"
+                        f"🤖 **Bot:** @{bot_username}\n"
+                        f"➕ **Added:** {days} days\n"
+                        f"📅 **New Expiry:** {new_expiry.strftime('%Y-%m-%d')}\n"
+                        f"⏳ **Days Left:** {days_left} days\n\n"
+                        f"_Terima kasih! Bot anda sekarang aktif._"
+                    )
+                    await self.app.bot.send_message(
+                        chat_id=owner_id,
+                        text=notify_text,
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    logging.error(f"Failed to notify owner {owner_id}: {e}")
         elif data == "close_panel":
             # Carousel style - edit to show main menu instead of delete
             text = (
@@ -621,7 +645,7 @@ class MotherBot:
         days = int(context.args[1])
         
         conn = self.db.get_connection()
-        bot = conn.execute("SELECT subscription_end FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        bot = conn.execute("SELECT * FROM bots WHERE id = ?", (bot_id,)).fetchone()
         
         if not bot:
             await update.message.reply_text("❌ Bot not found.")
@@ -631,13 +655,40 @@ class MotherBot:
         # Extend subscription
         from datetime import datetime, timedelta
         current_end = datetime.fromisoformat(bot['subscription_end'])
+        # If expired, start from now
+        if current_end < datetime.now():
+            current_end = datetime.now()
         new_end = current_end + timedelta(days=days)
         
         conn.execute("UPDATE bots SET subscription_end = ? WHERE id = ?", (new_end.isoformat(), bot_id))
         conn.commit()
         conn.close()
         
+        days_left = (new_end - datetime.now()).days
+        
         await update.message.reply_text(f"✅ **Bot #{bot_id}** subscription extended by {days} days!\nNew expiry: {new_end.strftime('%Y-%m-%d')}", parse_mode='Markdown')
+        
+        # Notify bot owner
+        owner_id = bot['owner_id']
+        bot_username = bot['bot_username'] if bot['bot_username'] else f"Bot #{bot_id}"
+        
+        if owner_id and owner_id != update.effective_user.id:
+            try:
+                notify_text = (
+                    f"🎉 **SUBSCRIPTION EXTENDED!**\n\n"
+                    f"🤖 **Bot:** @{bot_username}\n"
+                    f"➕ **Added:** {days} days\n"
+                    f"📅 **New Expiry:** {new_end.strftime('%Y-%m-%d')}\n"
+                    f"⏳ **Days Left:** {days_left} days\n\n"
+                    f"_Terima kasih! Bot anda sekarang aktif._"
+                )
+                await self.app.bot.send_message(
+                    chat_id=owner_id,
+                    text=notify_text,
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                logging.error(f"Failed to notify owner {owner_id}: {e}")
 
     async def all_bots(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """View all bots from all users (Platform owner only)"""
