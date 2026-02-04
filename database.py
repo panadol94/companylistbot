@@ -163,12 +163,32 @@ class Database:
                 cursor.execute("ALTER TABLE forwarder_config ADD COLUMN source_channel_name TEXT")
             except:
                 pass
+            # Migration: Add target_group_name column if missing
             try:
                 cursor.execute("ALTER TABLE forwarder_config ADD COLUMN target_group_name TEXT")
             except:
                 pass
+            # Migration: Add forwarder_mode column if missing
+            try:
+                cursor.execute("ALTER TABLE forwarder_config ADD COLUMN forwarder_mode TEXT DEFAULT 'SINGLE'")
+            except:
+                pass
 
-            # 7. Menu Buttons Table (Custom buttons for /start menu)
+            # 7. Known Groups Table (For Broadcast Mode)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS bot_known_groups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    group_id INTEGER NOT NULL,
+                    group_name TEXT,
+                    joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    is_active BOOLEAN DEFAULT 1,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE,
+                    UNIQUE(bot_id, group_id)
+                )
+            ''')
+
+            # 8. Menu Buttons Table (Custom buttons for /start menu)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS menu_buttons (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1044,6 +1064,73 @@ class Database:
         ).fetchall()
         conn.close()
         return [dict(c) for c in configs]
+
+    # ==================== KNOWN GROUPS (BROADCAST MODE) ====================
+
+    def upsert_known_group(self, bot_id, group_id, group_name):
+        """Add or update a known group for the bot"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                # Update if exists, otherwise Insert
+                conn.execute(
+                    """INSERT INTO bot_known_groups (bot_id, group_id, group_name, is_active, joined_at)
+                       VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+                       ON CONFLICT(bot_id, group_id) 
+                       DO UPDATE SET group_name = ?, is_active = 1, joined_at = CURRENT_TIMESTAMP""",
+                    (bot_id, group_id, group_name, group_name)
+                )
+                conn.commit()
+                return True
+            except Exception as e:
+                print(f"Error upserting known group: {e}")
+                return False
+            finally:
+                conn.close()
+
+    def get_known_groups(self, bot_id):
+        """Get all active known groups for a bot"""
+        conn = self.get_connection()
+        groups = conn.execute(
+            "SELECT * FROM bot_known_groups WHERE bot_id = ? AND is_active = 1 ORDER BY joined_at DESC",
+            (bot_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(g) for g in groups]
+
+    def set_group_inactive(self, bot_id, group_id):
+        """Mark a group as inactive (bot kicked/left)"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "UPDATE bot_known_groups SET is_active = 0 WHERE bot_id = ? AND group_id = ?",
+                (bot_id, group_id)
+            )
+            conn.commit()
+            conn.close()
+
+    def toggle_forwarder_mode(self, bot_id):
+        """Toggle forwarder mode between SINGLE and BROADCAST"""
+        with self.lock:
+            conn = self.get_connection()
+            current = conn.execute(
+                "SELECT forwarder_mode FROM forwarder_config WHERE bot_id = ?", (bot_id,)
+            ).fetchone()
+            
+            if not current:
+                conn.close()
+                return None
+            
+            current_mode = current['forwarder_mode'] or 'SINGLE'
+            new_mode = 'BROADCAST' if current_mode == 'SINGLE' else 'SINGLE'
+            
+            conn.execute(
+                "UPDATE forwarder_config SET forwarder_mode = ? WHERE bot_id = ?",
+                (new_mode, bot_id)
+            )
+            conn.commit()
+            conn.close()
+            return new_mode
 
     # ==================== CLONE BOT ====================
     

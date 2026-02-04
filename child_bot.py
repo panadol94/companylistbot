@@ -9,6 +9,7 @@ from config import DEFAULT_GLOBAL_AD
 # States for Admin Add/Edit Company
 NAME, DESC, MEDIA, BUTTON_TEXT, BUTTON_URL = range(5)
 # States for Broadcast
+BROADCAST_TARGET = 6
 BROADCAST_CONTENT, BROADCAST_CONFIRM = range(7, 9)
 # States for Schedule Broadcast
 SCHEDULE_TIME = 30
@@ -90,6 +91,7 @@ class ChildBot:
         broadcast_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.broadcast_start, pattern="^admin_broadcast$")],
             states={
+                BROADCAST_TARGET: [CallbackQueryHandler(self.broadcast_choose_target)],
                 BROADCAST_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, self.broadcast_content)],
                 BROADCAST_CONFIRM: [CallbackQueryHandler(self.broadcast_confirm)],
                 SCHEDULE_TIME: [CallbackQueryHandler(self.broadcast_confirm)],
@@ -837,6 +839,7 @@ class ChildBot:
         # Forwarder Menu
         elif data == "forwarder_menu": await self.show_forwarder_menu(update)
         elif data == "forwarder_toggle": await self.toggle_forwarder(update)
+        elif data == "forwarder_toggle_mode": await self.toggle_forwarder_mode_handler(update, context)
         elif data == "forwarder_set_source": await self.forwarder_set_source_start(update, context)
         elif data == "forwarder_set_target": await self.forwarder_set_target_start(update, context)
         elif data == "forwarder_set_this_group": await self.set_current_forwarder_target_group(update, context)
@@ -2253,7 +2256,12 @@ class ChildBot:
         bot_data = self.db.get_bot_by_token(self.token)
         owner_id = bot_data['owner_id']
         user_id = update.effective_user.id
-        
+        chat = update.effective_chat
+
+        # --- AUTO-DISCOVERY: REGISTER KNOWN GROUPS ---
+        if chat.type in ['group', 'supergroup']:
+            self.db.upsert_known_group(self.bot_id, chat.id, chat.title)
+
         # Handle Add Admin flow
         if await self.add_admin_handler(update, context):
             return
@@ -2553,7 +2561,40 @@ class ChildBot:
             await update.callback_query.answer("⛔ Access Denied", show_alert=True)
             return ConversationHandler.END
         
-        await update.callback_query.message.reply_text("📢 **BROADCAST MODE**\nSila hantar mesej (Text/Gambar/Video) yang nak disebarkan:", parse_mode='Markdown')
+        # Ask for target type
+        keyboard = [
+            [InlineKeyboardButton("👤 All Users", callback_data="target_users")],
+            [InlineKeyboardButton("👥 All Known Groups", callback_data="target_groups")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
+        ]
+        
+        await update.callback_query.message.reply_text(
+            "📢 **BROADCAST MODE**\n\nSila pilih target penerima:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return BROADCAST_TARGET
+
+    async def broadcast_choose_target(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle target selection"""
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        
+        if data == "broadcast_cancel":
+            await query.message.edit_text("❌ Broadcast dibatalkan.")
+            return ConversationHandler.END
+        
+        target_type = "users" if data == "target_users" else "groups"
+        context.user_data['broadcast_target_type'] = target_type
+        
+        target_display = "👤 All Users" if target_type == "users" else "👥 All Known Groups"
+        
+        await query.message.reply_text(
+            f"🎯 Target: **{target_display}**\n\n"
+            "Sila hantar mesej (Text/Gambar/Video) yang nak disebarkan:",
+            parse_mode='Markdown'
+        )
         return BROADCAST_CONTENT
     
     async def broadcast_content(self, update, context):
@@ -2598,15 +2639,26 @@ class ChildBot:
                 return ConversationHandler.END
             
             msg = data['message']
-            users = self.db.get_users(self.bot_id)
             
-            await update.callback_query.message.edit_text("⏳ Broadcasting...")
+            # Determine targets
+            target_type = context.user_data.get('broadcast_target_type', 'users')
+            
+            if target_type == 'groups':
+                targets = self.db.get_known_groups(self.bot_id)
+                target_ids = [t['group_id'] for t in targets]
+                target_name = "Groups"
+            else:
+                users = self.db.get_users(self.bot_id)
+                target_ids = [u['telegram_id'] for u in users]
+                target_name = "Users"
+            
+            await update.callback_query.message.edit_text(f"⏳ Broadcasting to {len(target_ids)} {target_name}...")
             
             sent = 0
             failed = 0
-            for u in users:
+            for tid in target_ids:
                 try:
-                    await msg.copy(chat_id=u['telegram_id'])
+                    await msg.copy(chat_id=tid)
                     sent += 1
                 except:
                     failed += 1
@@ -3146,17 +3198,26 @@ class ChildBot:
             target_name = config.get('target_group_name') or config.get('target_group_id') or 'Not Set'
             filter_keywords = config.get('filter_keywords') or 'None (All messages)'
             is_active = config.get('is_active')
+            forwarder_mode = config.get('forwarder_mode', 'SINGLE')
             status = "🟢 ACTIVE" if is_active else "🔴 INACTIVE"
         else:
             source_name = "Not Set"
             target_name = "Not Set"
             filter_keywords = "None"
+            forwarder_mode = "SINGLE"
             status = "🔴 INACTIVE"
         
+        # Adjust display based on mode
+        if forwarder_mode == 'BROADCAST':
+            target_display = "📡 All Known Groups (Auto)"
+        else:
+            target_display = target_name
+
         text = (
             "📡 **CHANNEL FORWARDER**\n\n"
             f"📢 Source: `{source_name}`\n"
-            f"💬 Target: `{target_name}`\n"
+            f"💬 Target: `{target_display}`\n"
+            f"📡 Mode: `{forwarder_mode}`\n"
             f"🔍 Filter: {filter_keywords}\n"
             f"📊 Status: {status}\n\n"
         )
@@ -3173,12 +3234,17 @@ class ChildBot:
         # Source is usually set from DM or by forwarding
         keyboard.append([InlineKeyboardButton("📢 Set Source Channel", callback_data="forwarder_set_source")])
         
-        if is_group:
-            # Smart Feature: Set CURRENT group as target
-            keyboard.append([InlineKeyboardButton("🎯 Set THIS Group as Target", callback_data="forwarder_set_this_group")])
-        else:
-            # Private chat: Allow manual setting
-            keyboard.append([InlineKeyboardButton("💬 Set Target Group", callback_data="forwarder_set_target")])
+        # Mode Toggle
+        mode_btn_text = f"🔄 Mode: {forwarder_mode}"
+        keyboard.append([InlineKeyboardButton(mode_btn_text, callback_data="forwarder_toggle_mode")])
+
+        if forwarder_mode == 'SINGLE':
+            if is_group:
+                # Smart Feature: Set CURRENT group as target
+                keyboard.append([InlineKeyboardButton("🎯 Set THIS Group as Target", callback_data="forwarder_set_this_group")])
+            else:
+                # Private chat: Allow manual setting
+                keyboard.append([InlineKeyboardButton("💬 Set Target Group", callback_data="forwarder_set_target")])
             
         keyboard.append([InlineKeyboardButton("🔍 Set Filter Keywords", callback_data="forwarder_set_filter")])
         
@@ -3194,6 +3260,15 @@ class ChildBot:
              keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_panel")])
         else:
              keyboard.append([InlineKeyboardButton("« Back", callback_data="forwarder_back")])
+    
+    async def toggle_forwarder_mode_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle mode toggle callback"""
+        new_mode = self.db.toggle_forwarder_mode(self.bot_id)
+        if new_mode:
+            await update.callback_query.answer(f"Mode changed to: {new_mode}")
+            await self.show_forwarder_menu(update)
+        else:
+            await update.callback_query.answer("❌ Error changing mode", show_alert=True)
         
         try:
             if update.callback_query:
@@ -3567,9 +3642,22 @@ class ChildBot:
             source_channel_id = config.get('source_channel_id')
             target_group_id = config.get('target_group_id')
             filter_keywords = config.get('filter_keywords')
+            forwarder_mode = config.get('forwarder_mode', 'SINGLE')
             
-            if not source_channel_id or not target_group_id:
-                self.logger.warning("⚠️ Forwarder incomplete config")
+            # Determine targets
+            target_ids = []
+            if forwarder_mode == 'BROADCAST':
+                # Get all known active groups
+                known_groups = self.db.get_known_groups(self.bot_id)
+                target_ids = [g['group_id'] for g in known_groups]
+                self.logger.info(f"📡 Broadcast Mode: Found {len(target_ids)} target groups")
+            else:
+                # Single Mode
+                if target_group_id:
+                    target_ids = [target_group_id]
+            
+            if not source_channel_id or not target_ids:
+                self.logger.warning("⚠️ Forwarder incomplete config (No Source or No Targets)")
                 return  # Not properly configured
             
             # Check if message is from source channel
@@ -3590,77 +3678,82 @@ class ChildBot:
                     self.logger.info(f"✋ Message filtered out - no matching keywords in '{message_text[:20]}...'")
                     return  # Message doesn't match filter
             
-            # Forward message content (copy, not forward) to target group
-            try:
-                if message.text:
-                    # Text-only message
-                    await context.bot.send_message(
-                        chat_id=target_group_id,
-                        text=message.text,
-                        entities=message.entities,
-                        parse_mode=None  # Use entities instead
-                    )
-                elif message.photo:
-                    # Photo message
-                    await context.bot.send_photo(
-                        chat_id=target_group_id,
-                        photo=message.photo[-1].file_id,  # Largest photo
-                        caption=message.caption,
-                        caption_entities=message.caption_entities
-                    )
-                elif message.video:
-                    # Video message
-                    await context.bot.send_video(
-                        chat_id=target_group_id,
-                        video=message.video.file_id,
-                        caption=message.caption,
-                        caption_entities=message.caption_entities
-                    )
-                elif message.document:
-                    # Document message
-                    await context.bot.send_document(
-                        chat_id=target_group_id,
-                        document=message.document.file_id,
-                        caption=message.caption,
-                        caption_entities=message.caption_entities
-                    )
-                elif message.animation:
-                    # GIF/Animation message
-                    await context.bot.send_animation(
-                        chat_id=target_group_id,
-                        animation=message.animation.file_id,
-                        caption=message.caption,
-                        caption_entities=message.caption_entities
-                    )
-                elif message.audio:
-                    # Audio message
-                    await context.bot.send_audio(
-                        chat_id=target_group_id,
-                        audio=message.audio.file_id,
-                        caption=message.caption,
-                        caption_entities=message.caption_entities
-                    )
-                elif message.voice:
-                    # Voice message
-                    await context.bot.send_voice(
-                        chat_id=target_group_id,
-                        voice=message.voice.file_id,
-                        caption=message.caption
-                    )
-                elif message.sticker:
-                    # Sticker
-                    await context.bot.send_sticker(
-                        chat_id=target_group_id,
-                        sticker=message.sticker.file_id
-                    )
-                else:
-                    # Fallback - try to copy message
-                    await message.copy(chat_id=target_group_id)
-                
-                self.logger.info(f"🚀 SUCCESS: Forwarded message to Group {target_group_id}")
-                
-            except Exception as e:
-                self.logger.error(f"❌ Failed to forward message: {e}")
+            # Forward message content to ALL targets
+            success_count = 0
+            
+            for tid in target_ids:
+                try:
+                    if message.text:
+                        # Text-only message
+                        await context.bot.send_message(
+                            chat_id=tid,
+                            text=message.text,
+                            entities=message.entities,
+                            parse_mode=None
+                        )
+                    elif message.photo:
+                        # Photo message
+                        await context.bot.send_photo(
+                            chat_id=tid,
+                            photo=message.photo[-1].file_id,  # Largest photo
+                            caption=message.caption,
+                            caption_entities=message.caption_entities
+                        )
+                    elif message.video:
+                        # Video message
+                        await context.bot.send_video(
+                            chat_id=tid,
+                            video=message.video.file_id,
+                            caption=message.caption,
+                            caption_entities=message.caption_entities
+                        )
+                    elif message.document:
+                        # Document message
+                        await context.bot.send_document(
+                            chat_id=tid,
+                            document=message.document.file_id,
+                            caption=message.caption,
+                            caption_entities=message.caption_entities
+                        )
+                    elif message.animation:
+                        # GIF/Animation message
+                        await context.bot.send_animation(
+                            chat_id=tid,
+                            animation=message.animation.file_id,
+                            caption=message.caption,
+                            caption_entities=message.caption_entities
+                        )
+                    elif message.audio:
+                        # Audio message
+                        await context.bot.send_audio(
+                            chat_id=tid,
+                            audio=message.audio.file_id,
+                            caption=message.caption,
+                            caption_entities=message.caption_entities
+                        )
+                    elif message.voice:
+                        # Voice message
+                        await context.bot.send_voice(
+                            chat_id=tid,
+                            voice=message.voice.file_id,
+                            caption=message.caption
+                        )
+                    elif message.sticker:
+                        # Sticker
+                        await context.bot.send_sticker(
+                            chat_id=tid,
+                            sticker=message.sticker.file_id
+                        )
+                    else:
+                        # Fallback - try to copy message
+                        await message.copy(chat_id=tid)
+                    
+                    success_count += 1
+                    
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to forward to {tid}: {e}")
+            
+            self.logger.info(f"🚀 Forwarding Complete. Sent to {success_count}/{len(target_ids)} groups.")
                 
         except Exception as e:
             self.logger.error(f"❌ Channel post handler error: {e}")
@@ -3698,6 +3791,13 @@ class ChildBot:
             
             chat_title = chat.title or chat.username or "Unknown"
             chat_id = chat.id
+
+            # --- AUTO-DISCOVERY: TRACK GROUP MEMBERSHIP ---
+            if chat.type in ['group', 'supergroup']:
+                if new_status in ['member', 'administrator', 'creator']:
+                    self.db.upsert_known_group(self.bot_id, chat_id, chat_title)
+                elif new_status in ['left', 'kicked']:
+                    self.db.set_group_inactive(self.bot_id, chat_id)
             
             # Check if bot was promoted to admin
             admin_statuses = ['administrator', 'creator']
