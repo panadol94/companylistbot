@@ -889,7 +889,14 @@ class ChildBot:
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         data = query.data
-        await query.answer()
+        
+        # Defensive answer (ignore if too old)
+        try:
+            await query.answer()
+        except:
+            pass
+            
+        self.logger.info(f"🔘 Callback received: {data}")
 
         if data.startswith("list_page_"):
             page = int(data.split("_")[2])
