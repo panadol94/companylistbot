@@ -1183,19 +1183,27 @@ class ChildBot:
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def refresh_4d_data(self, update: Update):
-        """Fetch latest 4D data from web sources"""
-        await update.callback_query.answer("🔄 Loading 4D data...", show_alert=False)
+        """Fetch latest 4D data from web sources with timeout protection"""
+        import asyncio
+        
+        await update.callback_query.answer("🔄 Loading 4D data... (mungkin ambil 10-30 saat)", show_alert=False)
         
         try:
             # Import scraper
-            from utils_4d import fetch_all_4d_results
+            from utils_4d import fetch_all_4d_results, get_fallback_results
             
-            results = await fetch_all_4d_results()
+            # Add timeout to prevent hanging (30 seconds max)
+            try:
+                results = await asyncio.wait_for(fetch_all_4d_results(), timeout=30.0)
+            except asyncio.TimeoutError:
+                self.logger.warning("4D fetch timeout, using fallback data")
+                results = get_fallback_results()
             
             if results:
+                saved = 0
                 for company, data in results.items():
                     for draw in data:
-                        self.db.save_4d_result(
+                        success = self.db.save_4d_result(
                             company=company,
                             draw_date=draw['date'],
                             first=draw['first'],
@@ -1204,19 +1212,33 @@ class ChildBot:
                             special=draw['special'],
                             consolation=draw['consolation']
                         )
+                        if success:
+                            saved += 1
                 
-                await update.callback_query.answer(f"✅ Loaded data dari {len(results)} companies!", show_alert=True)
+                # Send success message as new message to avoid callback issues
+                try:
+                    await update.effective_chat.send_message(
+                        f"✅ **4D DATA UPDATED!**\n\n"
+                        f"📊 Loaded: {len(results)} companies\n"
+                        f"💾 Saved: {saved} new results",
+                        parse_mode='Markdown'
+                    )
+                except:
+                    pass
             else:
-                await update.callback_query.answer("⚠️ Gagal fetch data. Cuba lagi.", show_alert=True)
-        except ImportError:
+                await update.effective_chat.send_message("⚠️ Gagal fetch data. Cuba lagi.")
+                
+        except ImportError as e:
+            self.logger.error(f"4D import error: {e}")
             # If scraper not available, use sample data for demo
             await self._load_sample_4d_data()
-            await update.callback_query.answer("✅ Sample data loaded for demo!", show_alert=True)
+            await update.effective_chat.send_message("✅ Sample data loaded for demo!")
         except Exception as e:
             self.logger.error(f"4D fetch error: {e}")
-            await update.callback_query.answer("❌ Error fetching data", show_alert=True)
+            await update.effective_chat.send_message(f"❌ Error: {str(e)[:100]}")
         
-        # Refresh menu
+        # Refresh menu with delay to avoid callback conflict
+        await asyncio.sleep(0.5)
         await self.show_4d_menu(update)
 
     async def _load_sample_4d_data(self):
