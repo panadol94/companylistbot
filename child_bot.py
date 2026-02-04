@@ -588,6 +588,7 @@ class ChildBot:
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
             [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
             [InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring")],
+            [InlineKeyboardButton("📊 Analytics", callback_data="show_analytics"), InlineKeyboardButton("📥 Export Data", callback_data="export_data")],
         ]
         # Only owner can manage admins
         if is_owner:
@@ -629,6 +630,10 @@ class ChildBot:
         elif data == "confirm_reset_schedule": await self.confirm_reset_schedule(update)
         elif data == "manage_recurring": await self.show_manage_recurring(update)
         elif data.startswith("stop_recurring_"): await self.stop_recurring(update, int(data.split("_")[2]))
+        elif data == "show_analytics": await self.show_analytics(update)
+        elif data == "export_data": await self.show_export_menu(update)
+        elif data == "export_users": await self.export_users_csv(update)
+        elif data == "export_companies": await self.export_companies_csv(update)
         elif data == "admin_settings": await self.show_admin_settings(update)
         # Admin Management
         elif data == "manage_admins": await self.show_manage_admins(update)
@@ -1198,6 +1203,107 @@ class ChildBot:
         
         # Refresh list
         await self.show_manage_recurring(update)
+
+    async def show_analytics(self, update: Update):
+        """Show bot analytics dashboard"""
+        analytics = self.db.get_bot_analytics(self.bot_id)
+        
+        text = (
+            "📊 **BOT ANALYTICS**\n\n"
+            f"👥 **Users**\n"
+            f"• Total: {analytics['total_users']}\n"
+            f"• Today: {analytics['users_today']}\n"
+            f"• This Week: {analytics['users_week']}\n"
+            f"• This Month: {analytics['users_month']}\n\n"
+            f"📈 **Referrals**\n"
+            f"• From Referral: {analytics['total_referred']}\n"
+            f"• Organic: {analytics['total_users'] - analytics['total_referred']}\n\n"
+            f"🏢 **Content**\n"
+            f"• Companies: {analytics['total_companies']}\n\n"
+        )
+        
+        if analytics['top_referrers']:
+            text += "🏆 **Top Referrers**\n"
+            for i, ref in enumerate(analytics['top_referrers'][:5], 1):
+                username = ref.get('username') or 'Unknown'
+                count = ref.get('referral_count') or 0
+                text += f"{i}. @{username} - {count} referrals\n"
+        
+        keyboard = [[InlineKeyboardButton("« Back", callback_data="admin_settings")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def show_export_menu(self, update: Update):
+        """Show export options menu"""
+        users = self.db.export_users(self.bot_id)
+        companies = self.db.export_companies(self.bot_id)
+        
+        text = (
+            "📥 **EXPORT DATA**\n\n"
+            f"👥 Users: {len(users)} records\n"
+            f"🏢 Companies: {len(companies)} records\n\n"
+            "Pilih data untuk export:"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton(f"📥 Export Users ({len(users)})", callback_data="export_users")],
+            [InlineKeyboardButton(f"📥 Export Companies ({len(companies)})", callback_data="export_companies")],
+            [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+        ]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def export_users_csv(self, update: Update):
+        """Export users to CSV and send as document"""
+        import csv
+        import io
+        
+        users = self.db.export_users(self.bot_id)
+        
+        if not users:
+            await update.callback_query.answer("Tiada users untuk export!", show_alert=True)
+            return
+        
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=['telegram_id', 'username', 'first_name', 'balance', 'referred_by', 'joined_at'])
+        writer.writeheader()
+        writer.writerows(users)
+        
+        # Convert to bytes
+        csv_bytes = io.BytesIO(output.getvalue().encode('utf-8'))
+        csv_bytes.name = f"users_export_{self.bot_id}.csv"
+        
+        await update.callback_query.message.reply_document(
+            document=csv_bytes,
+            caption=f"✅ Exported {len(users)} users"
+        )
+        await update.callback_query.answer("✅ Export selesai!")
+
+    async def export_companies_csv(self, update: Update):
+        """Export companies to CSV and send as document"""
+        import csv
+        import io
+        
+        companies = self.db.export_companies(self.bot_id)
+        
+        if not companies:
+            await update.callback_query.answer("Tiada companies untuk export!", show_alert=True)
+            return
+        
+        # Create CSV in memory
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=['id', 'name', 'description', 'category', 'created_at'])
+        writer.writeheader()
+        writer.writerows(companies)
+        
+        # Convert to bytes
+        csv_bytes = io.BytesIO(output.getvalue().encode('utf-8'))
+        csv_bytes.name = f"companies_export_{self.bot_id}.csv"
+        
+        await update.callback_query.message.reply_document(
+            document=csv_bytes,
+            caption=f"✅ Exported {len(companies)} companies"
+        )
+        await update.callback_query.answer("✅ Export selesai!")
     
     # --- Customize Menu System ---
     async def show_customize_submenu(self, update: Update):

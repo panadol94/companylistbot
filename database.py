@@ -211,6 +211,36 @@ class Database:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_bot_admins_bot_id ON bot_admins(bot_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_company_buttons_company_id ON company_buttons(company_id)')
 
+            # Migration: Add category column to companies
+            try:
+                cursor.execute("ALTER TABLE companies ADD COLUMN category TEXT")
+            except:
+                pass  # Column already exists
+            
+            # Migration: Add required channel columns to bots
+            try:
+                cursor.execute("ALTER TABLE bots ADD COLUMN required_channel_id INTEGER")
+            except:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE bots ADD COLUMN required_channel_username TEXT")
+            except:
+                pass  # Column already exists
+            
+            # Migration: Add username/first_name to users if missing
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
+            except:
+                pass
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN first_name TEXT")
+            except:
+                pass
+            try:
+                cursor.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
+            except:
+                pass
+
             conn.commit()
             conn.close()
 
@@ -875,3 +905,291 @@ class Database:
         ).fetchone()
         conn.close()
         return owner is not None
+
+    # ==================== CLONE BOT ====================
+    
+    def clone_bot_data(self, source_bot_id, target_bot_id):
+        """Clone all data from source bot to target bot (companies, buttons, settings)"""
+        conn = self.get_connection()
+        try:
+            # Clone companies
+            companies = conn.execute(
+                "SELECT name, description, media_file_id, media_type FROM companies WHERE bot_id = ?",
+                (source_bot_id,)
+            ).fetchall()
+            
+            for c in companies:
+                cursor = conn.execute(
+                    "INSERT INTO companies (bot_id, name, description, media_file_id, media_type) VALUES (?, ?, ?, ?, ?)",
+                    (target_bot_id, c['name'], c['description'], c['media_file_id'], c['media_type'])
+                )
+                new_company_id = cursor.lastrowid
+                
+                # Clone company buttons
+                old_company_id = conn.execute(
+                    "SELECT id FROM companies WHERE bot_id = ? AND name = ?",
+                    (source_bot_id, c['name'])
+                ).fetchone()
+                
+                if old_company_id:
+                    buttons = conn.execute(
+                        "SELECT button_text, button_url, pair_group FROM company_buttons WHERE company_id = ?",
+                        (old_company_id['id'],)
+                    ).fetchall()
+                    for btn in buttons:
+                        conn.execute(
+                            "INSERT INTO company_buttons (company_id, button_text, button_url, pair_group) VALUES (?, ?, ?, ?)",
+                            (new_company_id, btn['button_text'], btn['button_url'], btn['pair_group'])
+                        )
+            
+            # Clone menu buttons
+            menu_btns = conn.execute(
+                "SELECT button_text, button_url, pair_group FROM menu_buttons WHERE bot_id = ?",
+                (source_bot_id,)
+            ).fetchall()
+            for btn in menu_btns:
+                conn.execute(
+                    "INSERT INTO menu_buttons (bot_id, button_text, button_url, pair_group) VALUES (?, ?, ?, ?)",
+                    (target_bot_id, btn['button_text'], btn['button_url'], btn['pair_group'])
+                )
+            
+            # Clone bot settings (welcome, banner, etc.)
+            source_bot = conn.execute("SELECT * FROM bots WHERE id = ?", (source_bot_id,)).fetchone()
+            if source_bot:
+                conn.execute(
+                    """UPDATE bots SET 
+                       custom_banner = ?, custom_caption = ?, 
+                       referral_enabled = ?, livegram_enabled = ?
+                       WHERE id = ?""",
+                    (source_bot['custom_banner'], source_bot['custom_caption'],
+                     source_bot['referral_enabled'], source_bot['livegram_enabled'], target_bot_id)
+                )
+            
+            conn.commit()
+            return True
+        except Exception as e:
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
+    # ==================== ANALYTICS ====================
+    
+    def get_bot_analytics(self, bot_id):
+        """Get comprehensive analytics for a bot"""
+        conn = self.get_connection()
+        
+        # User stats
+        total_users = conn.execute("SELECT COUNT(*) FROM users WHERE bot_id = ?", (bot_id,)).fetchone()[0]
+        users_today = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE bot_id = ? AND DATE(joined_at) = DATE('now')", (bot_id,)
+        ).fetchone()[0]
+        users_week = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE bot_id = ? AND DATE(joined_at) >= DATE('now', '-7 days')", (bot_id,)
+        ).fetchone()[0]
+        users_month = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE bot_id = ? AND DATE(joined_at) >= DATE('now', '-30 days')", (bot_id,)
+        ).fetchone()[0]
+        
+        # Referral stats
+        total_referred = conn.execute("SELECT COUNT(*) FROM users WHERE bot_id = ? AND referred_by IS NOT NULL", (bot_id,)).fetchone()[0]
+        
+        # Company stats
+        total_companies = conn.execute("SELECT COUNT(*) FROM companies WHERE bot_id = ?", (bot_id,)).fetchone()[0]
+        
+        # Top referrers
+        top_referrers = conn.execute(
+            """SELECT u.telegram_id, u.username, COUNT(r.id) as referral_count, SUM(u.balance) as earnings
+               FROM users u LEFT JOIN users r ON r.referred_by = u.telegram_id AND r.bot_id = u.bot_id
+               WHERE u.bot_id = ? GROUP BY u.telegram_id ORDER BY referral_count DESC LIMIT 10""",
+            (bot_id,)
+        ).fetchall()
+        
+        conn.close()
+        
+        return {
+            'total_users': total_users,
+            'users_today': users_today,
+            'users_week': users_week,
+            'users_month': users_month,
+            'total_referred': total_referred,
+            'total_companies': total_companies,
+            'top_referrers': [dict(r) for r in top_referrers]
+        }
+
+    def get_user_growth(self, bot_id, days=30):
+        """Get daily user growth for chart"""
+        conn = self.get_connection()
+        growth = conn.execute(
+            """SELECT DATE(joined_at) as date, COUNT(*) as count 
+               FROM users WHERE bot_id = ? AND DATE(joined_at) >= DATE('now', ?)
+               GROUP BY DATE(joined_at) ORDER BY date""",
+            (bot_id, f'-{days} days')
+        ).fetchall()
+        conn.close()
+        return [dict(g) for g in growth]
+
+    # ==================== EXPORT DATA ====================
+    
+    def export_users(self, bot_id):
+        """Export all users for a bot"""
+        conn = self.get_connection()
+        users = conn.execute(
+            """SELECT telegram_id, username, first_name, balance, referred_by, joined_at 
+               FROM users WHERE bot_id = ? ORDER BY joined_at""",
+            (bot_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(u) for u in users]
+
+    def export_companies(self, bot_id):
+        """Export all companies for a bot"""
+        conn = self.get_connection()
+        companies = conn.execute(
+            "SELECT id, name, description, category, created_at FROM companies WHERE bot_id = ? ORDER BY id",
+            (bot_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(c) for c in companies]
+
+    # ==================== COMPANY CATEGORIES ====================
+    
+    def get_categories(self, bot_id):
+        """Get distinct categories for a bot"""
+        conn = self.get_connection()
+        categories = conn.execute(
+            "SELECT DISTINCT category FROM companies WHERE bot_id = ? AND category IS NOT NULL ORDER BY category",
+            (bot_id,)
+        ).fetchall()
+        conn.close()
+        return [c['category'] for c in categories]
+
+    def get_companies_by_category(self, bot_id, category):
+        """Get companies filtered by category"""
+        conn = self.get_connection()
+        companies = conn.execute(
+            "SELECT * FROM companies WHERE bot_id = ? AND category = ? ORDER BY id",
+            (bot_id, category)
+        ).fetchall()
+        conn.close()
+        return companies
+
+    def update_company_category(self, company_id, category):
+        """Update company category"""
+        conn = self.get_connection()
+        conn.execute("UPDATE companies SET category = ? WHERE id = ?", (category, company_id))
+        conn.commit()
+        conn.close()
+
+    # ==================== TARGETED BROADCAST ====================
+    
+    def get_users_by_filter(self, bot_id, filter_type, filter_value=None):
+        """Get users filtered by criteria for targeted broadcast"""
+        conn = self.get_connection()
+        
+        if filter_type == "all":
+            users = conn.execute("SELECT * FROM users WHERE bot_id = ?", (bot_id,)).fetchall()
+        elif filter_type == "today":
+            users = conn.execute(
+                "SELECT * FROM users WHERE bot_id = ? AND DATE(joined_at) = DATE('now')", (bot_id,)
+            ).fetchall()
+        elif filter_type == "week":
+            users = conn.execute(
+                "SELECT * FROM users WHERE bot_id = ? AND DATE(joined_at) >= DATE('now', '-7 days')", (bot_id,)
+            ).fetchall()
+        elif filter_type == "month":
+            users = conn.execute(
+                "SELECT * FROM users WHERE bot_id = ? AND DATE(joined_at) >= DATE('now', '-30 days')", (bot_id,)
+            ).fetchall()
+        elif filter_type == "referred":
+            users = conn.execute(
+                "SELECT * FROM users WHERE bot_id = ? AND referred_by IS NOT NULL", (bot_id,)
+            ).fetchall()
+        elif filter_type == "organic":
+            users = conn.execute(
+                "SELECT * FROM users WHERE bot_id = ? AND referred_by IS NULL", (bot_id,)
+            ).fetchall()
+        elif filter_type == "with_balance":
+            users = conn.execute(
+                "SELECT * FROM users WHERE bot_id = ? AND balance > 0", (bot_id,)
+            ).fetchall()
+        else:
+            users = []
+        
+        conn.close()
+        return users
+
+    # ==================== EXPIRING BOTS ====================
+    
+    def get_expiring_bots(self, days=3):
+        """Get bots expiring within X days"""
+        conn = self.get_connection()
+        bots = conn.execute(
+            """SELECT * FROM bots 
+               WHERE DATE(subscription_end) BETWEEN DATE('now') AND DATE('now', ?)
+               AND is_active = 1""",
+            (f'+{days} days',)
+        ).fetchall()
+        conn.close()
+        return bots
+
+    def get_expired_bots(self):
+        """Get all expired bots"""
+        conn = self.get_connection()
+        bots = conn.execute(
+            "SELECT * FROM bots WHERE DATE(subscription_end) < DATE('now') AND is_active = 1"
+        ).fetchall()
+        conn.close()
+        return bots
+
+    # ==================== USER VERIFICATION ====================
+    
+    def set_required_channel(self, bot_id, channel_id, channel_username):
+        """Set required channel for bot"""
+        conn = self.get_connection()
+        conn.execute(
+            "UPDATE bots SET required_channel_id = ?, required_channel_username = ? WHERE id = ?",
+            (channel_id, channel_username, bot_id)
+        )
+        conn.commit()
+        conn.close()
+
+    def get_required_channel(self, bot_id):
+        """Get required channel for bot"""
+        conn = self.get_connection()
+        bot = conn.execute(
+            "SELECT required_channel_id, required_channel_username FROM bots WHERE id = ?",
+            (bot_id,)
+        ).fetchone()
+        conn.close()
+        return dict(bot) if bot else None
+
+    # ==================== LEADERBOARD ====================
+    
+    def get_top_referrers(self, bot_id, limit=10):
+        """Get top referrers for a bot"""
+        conn = self.get_connection()
+        referrers = conn.execute(
+            """SELECT u.telegram_id, u.username, u.first_name, 
+                      COUNT(r.id) as referral_count, u.balance
+               FROM users u 
+               JOIN users r ON r.referred_by = u.telegram_id AND r.bot_id = u.bot_id
+               WHERE u.bot_id = ?
+               GROUP BY u.telegram_id 
+               ORDER BY referral_count DESC 
+               LIMIT ?""",
+            (bot_id, limit)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in referrers]
+
+    def add_bonus_to_user(self, bot_id, telegram_id, amount, reason="bonus"):
+        """Add bonus to user balance"""
+        conn = self.get_connection()
+        conn.execute(
+            "UPDATE users SET balance = balance + ? WHERE bot_id = ? AND telegram_id = ?",
+            (amount, bot_id, telegram_id)
+        )
+        conn.commit()
+        conn.close()
+

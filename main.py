@@ -36,6 +36,16 @@ class BotManager:
             minute=0,
             id='daily_backup'
         )
+        
+        # Schedule expiry reminder check at 9 AM daily
+        self.scheduler.add_job(
+            self.check_expiring_bots,
+            'cron',
+            hour=9,
+            minute=0,
+            id='expiry_reminder'
+        )
+        
         # Also backup on startup
         await self.backup_database()
         
@@ -79,6 +89,48 @@ class BotManager:
                 
         except Exception as e:
             logger.error(f"❌ Backup failed: {e}")
+
+    async def check_expiring_bots(self):
+        """Check and notify owners of expiring bots"""
+        from telegram import Bot
+        
+        try:
+            # Get bots expiring in 3 days
+            expiring_bots = self.db.get_expiring_bots(days=3)
+            
+            if not expiring_bots:
+                logger.info("📫 No expiring bots to notify")
+                return
+            
+            mother = Bot(token=MOTHER_TOKEN)
+            
+            for bot in expiring_bots:
+                try:
+                    # Parse expiry date
+                    import datetime
+                    expiry = datetime.datetime.fromisoformat(bot['subscription_end'])
+                    days_left = (expiry - datetime.datetime.now()).days
+                    
+                    # Send reminder to owner
+                    message = (
+                        f"⚠️ **SUBSCRIPTION EXPIRING SOON**\n\n"
+                        f"Bot #{bot['id']} akan tamat dalam **{days_left} hari**!\n"
+                        f"Expiry: {expiry.strftime('%Y-%m-%d')}\n\n"
+                        f"Sila hubungi admin untuk renew subscription."
+                    )
+                    
+                    await mother.send_message(
+                        chat_id=bot['owner_id'],
+                        text=message,
+                        parse_mode='Markdown'
+                    )
+                    logger.info(f"📧 Sent expiry reminder to {bot['owner_id']} for bot #{bot['id']}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to send expiry reminder for bot #{bot['id']}: {e}")
+            
+        except Exception as e:
+            logger.error(f"❌ Expiry check failed: {e}")
 
     async def spawn_bot(self, bot_data):
         token = bot_data['token']

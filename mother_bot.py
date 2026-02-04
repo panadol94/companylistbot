@@ -6,6 +6,7 @@ import logging
 import datetime
 
 TOKEN_INPUT = 0
+CLONE_TOKEN = 1
 
 class MotherBot:
     def __init__(self, token, db: Database, bot_manager):
@@ -38,6 +39,12 @@ class MotherBot:
             fallbacks=[CommandHandler("cancel", self.cancel)]
         )
         self.app.add_handler(create_conv)
+        
+        # Clone Bot Wizard (handle token input for cloning)
+        self.app.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+            self.handle_clone_token
+        ))
         
         # Callback Handler for buttons
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -200,6 +207,27 @@ class MotherBot:
         elif data.startswith("analytics_"):
             bot_id = int(data.split("_")[1])
             await self.show_bot_analytics(update, bot_id)
+        elif data.startswith("clone_bot_"):
+            # Start clone wizard
+            bot_id = int(data.split("_")[2])
+            context.user_data['clone_source_bot'] = bot_id
+            
+            text = (
+                f"🧬 **CLONE BOT #{bot_id}**\n\n"
+                f"Clone akan copy semua:\n"
+                f"✅ Companies & buttons\n"
+                f"✅ Menu buttons\n"
+                f"✅ Bot settings\n\n"
+                f"⚠️ **TIDAK termasuk:**\n"
+                f"❌ User data\n"
+                f"❌ Balance/Referrals\n\n"
+                f"📌 **Sila hantar token bot BARU:**\n"
+                f"_(Boleh create bot baru di @BotFather)_"
+            )
+            
+            keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data=f"manage_bot_{bot_id}")]]
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            return  # Wait for token input
         elif data.startswith("extend_sub_"):
             # Show extend subscription options
             bot_id = int(data.split("_")[2])
@@ -479,6 +507,7 @@ class MotherBot:
             [InlineKeyboardButton("📊 Statistics", callback_data=f"stats_{bot_id}"), 
              InlineKeyboardButton("👥 Users", callback_data=f"users_{bot_id}")],
             [InlineKeyboardButton("📈 Analytics", callback_data=f"analytics_{bot_id}")],
+            [InlineKeyboardButton("🧬 Clone Bot", callback_data=f"clone_bot_{bot_id}")],
             [InlineKeyboardButton(toggle_text, callback_data=f"toggle_bot_{bot_id}")],
         ]
         
@@ -838,3 +867,93 @@ class MotherBot:
         keyboard = [[InlineKeyboardButton("« Back", callback_data=f"manage_bot_{bot_id}")]]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
+    async def handle_clone_token(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle token input for cloning a bot"""
+        source_bot_id = context.user_data.get('clone_source_bot')
+        
+        if not source_bot_id:
+            return  # Not in clone mode, ignore
+        
+        token = update.message.text.strip()
+        user_id = update.effective_user.id
+        
+        # Validate token format
+        if ':' not in token:
+            await update.message.reply_text(
+                "❌ Format token tidak sah!\n\n"
+                "Token mesti ada format: `123456789:ABCdefGHI...`\n\n"
+                "Sila dapatkan token dari @BotFather",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Delete the token message for security
+        try:
+            await update.message.delete()
+        except:
+            pass
+        
+        # Verify token with Telegram
+        try:
+            from telegram import Bot
+            test_bot = Bot(token=token)
+            bot_info = await test_bot.get_me()
+            new_username = bot_info.username
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Token tidak valid!\n\n"
+                f"Error: {str(e)}\n\n"
+                f"Sila pastikan token betul dari @BotFather"
+            )
+            return
+        
+        # Check if bot already registered
+        existing = self.db.get_bot_by_token(token)
+        if existing:
+            await update.message.reply_text(
+                f"❌ Bot @{new_username} sudah didaftarkan!\n\n"
+                f"Sila gunakan token bot lain.",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Register new bot
+        success, message = self.db.create_bot(token, user_id, new_username)
+        if not success:
+            await update.message.reply_text(f"❌ Gagal mendaftar bot: {message}")
+            return
+        
+        # Get new bot ID
+        new_bot = self.db.get_bot_by_token(token)
+        new_bot_id = new_bot['id']
+        
+        # Clone data from source to target
+        clone_success = self.db.clone_bot_data(source_bot_id, new_bot_id)
+        
+        # Clear clone mode
+        context.user_data.pop('clone_source_bot', None)
+        
+        if clone_success:
+            # Start the new bot
+            try:
+                await self.manager.start_child_bot(new_bot)
+            except Exception as e:
+                logging.error(f"Failed to start cloned bot: {e}")
+            
+            await update.message.reply_text(
+                f"✅ **BOT BERJAYA DICLONE!**\n\n"
+                f"**Source:** Bot #{source_bot_id}\n"
+                f"**New Bot:** @{new_username}\n"
+                f"**Bot ID:** #{new_bot_id}\n\n"
+                f"✅ Semua companies & settings telah dicopy!\n\n"
+                f"Gunakan /mybots untuk manage bot baru.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                f"⚠️ **BOT DIDAFTARKAN TETAPI CLONE GAGAL**\n\n"
+                f"Bot @{new_username} telah didaftarkan tetapi "
+                f"data dari source bot gagal dicopy.\n\n"
+                f"Sila tambah content secara manual.",
+                parse_mode='Markdown'
+            )
