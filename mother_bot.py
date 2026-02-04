@@ -335,8 +335,11 @@ class MotherBot:
             # Status
             status = "🟢 ACTIVE" if bot['is_active'] else "🔴 STOPPED"
             
-            # Bot info line
-            bot_name = bot.get('bot_username') or f"Bot #{bot['id']}"
+            # Bot info line - sqlite3.Row doesn't support .get()
+            try:
+                bot_name = bot['bot_username'] if bot['bot_username'] else f"Bot #{bot['id']}"
+            except:
+                bot_name = f"Bot #{bot['id']}"
             text += f"**{bot_name}** {status}\n"
             text += f"👥 Users: {user_count} | 🏢 Companies: {company_count}\n"
             
@@ -407,8 +410,11 @@ class MotherBot:
             # Status
             status = "🟢 ACTIVE" if bot['is_active'] else "🔴 STOPPED"
             
-            # Bot info line
-            bot_name = bot.get('bot_username') or f"Bot #{bot['id']}"
+            # Bot info line - sqlite3.Row doesn't support .get()
+            try:
+                bot_name = bot['bot_username'] if bot['bot_username'] else f"Bot #{bot['id']}"
+            except:
+                bot_name = f"Bot #{bot['id']}"
             text += f"**{bot_name}** {status}\n"
             text += f"👥 Users: {user_count} | 🏢 Companies: {company_count}\n"
             
