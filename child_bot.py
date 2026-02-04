@@ -1782,7 +1782,7 @@ class ChildBot:
             
             keyboard.append([InlineKeyboardButton(f"🛑 Stop #{b['id']}", callback_data=f"stop_recurring_{b['id']}")])
         
-        keyboard.append([InlineKeyboardButton("« Back", callback_data="show_admin_dashboard")])
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="forwarder_back")])
         
         await update.callback_query.message.edit_text(
             text, 
