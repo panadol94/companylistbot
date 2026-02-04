@@ -143,19 +143,30 @@ class ChildBot:
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
-        # Support System & Text (handles both regular and forwarded messages)
-        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
-        
-        # Media Message Handler (for forwarded media - photos, videos, etc)
-        self.app.add_handler(MessageHandler(
-            (filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.Document.ALL) & ~filters.COMMAND, 
-            self.handle_media_message
-        ))
-        
+        # --- REORDERED: Channel Post Handler MUST be checked first! ---
         # Channel Post Handler (for forwarder)
         self.app.add_handler(MessageHandler(
             filters.ChatType.CHANNEL, 
             self.handle_channel_post
+        ))
+
+        # Support System & Text (handles both regular and forwarded messages)
+        # Exclude channels to avoid double handling or crashes
+        self.app.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & ~filters.ChatType.CHANNEL, 
+            self.handle_message
+        ))
+        
+        # Media Message Handler (for forwarded media - photos, videos, etc)
+        self.app.add_handler(MessageHandler(
+            (filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.Document.ALL) & ~filters.COMMAND & ~filters.ChatType.CHANNEL, 
+            self.handle_media_message
+        ))
+        
+        # Bot Status Change Handler (detect when bot becomes admin)
+        self.app.add_handler(ChatMemberHandler(
+            self.handle_bot_status_change,
+            ChatMemberHandler.MY_CHAT_MEMBER
         ))
         
         # Bot Status Change Handler (detect when bot becomes admin)
@@ -3127,6 +3138,9 @@ class ChildBot:
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages"""
+        if not update.message:
+            return
+            
         msg_text = update.message.text[:50] if update.message.text else 'No text'
         
         # Safe forwarded check for PTB v20+
