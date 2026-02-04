@@ -829,6 +829,7 @@ class ChildBot:
         elif data == "forwarder_set_target": await self.forwarder_set_target_start(update, context)
         elif data == "forwarder_set_filter": await self.forwarder_set_filter_start(update, context)
         elif data == "forwarder_clear_filter": await self.forwarder_clear_filter(update)
+        elif data == "forwarder_back": await self.forwarder_back_to_admin(update, context)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -3116,7 +3117,7 @@ class ChildBot:
             [InlineKeyboardButton("🔍 Set Filter Keywords", callback_data="forwarder_set_filter")],
             [InlineKeyboardButton("🗑️ Clear Filter", callback_data="forwarder_clear_filter")],
             [InlineKeyboardButton(f"Toggle {toggle_text}", callback_data="forwarder_toggle")],
-            [InlineKeyboardButton("« Back", callback_data="close_panel")]
+            [InlineKeyboardButton("« Back", callback_data="forwarder_back")]
         ]
         
         try:
@@ -3278,6 +3279,50 @@ class ChildBot:
             await update.callback_query.answer("❌ Gagal clear filter", show_alert=True)
         
         await self.show_forwarder_menu(update)
+    
+    async def forwarder_back_to_admin(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Go back to admin dashboard from forwarder menu"""
+        # Show admin dashboard
+        user_id = update.effective_user.id
+        bot_data = self.db.get_bot_by_token(self.token)
+        
+        if not bot_data:
+            await update.callback_query.message.delete()
+            return
+        
+        owner_id = int(bot_data.get('owner_id', 0))
+        is_owner = user_id == owner_id
+        
+        # Check referral status for toggle button
+        referral_enabled = self.db.is_referral_enabled(self.bot_id)
+        referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
+        
+        # Check livegram status for toggle button
+        livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
+        livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
+        
+        # Check pending schedules
+        pending = self.db.get_pending_broadcasts(self.bot_id)
+        schedule_text = f"🔄 Reset Schedule ({len(pending)})" if pending else "📅 No Schedules"
+        
+        # Count admins for button
+        admins = self.db.get_admins(self.bot_id)
+        admin_count = len(admins)
+
+        text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
+        keyboard = [
+            [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
+            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
+            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
+            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
+            [InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring"), InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu")],
+            [InlineKeyboardButton("📊 Analytics", callback_data="show_analytics"), InlineKeyboardButton("📥 Export Data", callback_data="export_data")],
+        ]
+        if is_owner:
+            keyboard.append([InlineKeyboardButton(f"👥 Manage Admins ({admin_count})", callback_data="manage_admins")])
+        keyboard.append([InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def handle_channel_post(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle channel posts for forwarding to target group"""
