@@ -845,7 +845,7 @@ class ChildBot:
         elif data == "forwarder_set_this_group": await self.set_current_forwarder_target_group(update, context)
         elif data == "forwarder_set_filter": await self.forwarder_set_filter_start(update, context)
         elif data == "forwarder_clear_filter": await self.forwarder_clear_filter(update)
-        elif data == "forwarder_back": await self.forwarder_back_to_admin(update, context)
+        elif data == "forwarder_back": await self.show_admin_settings(update)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -1531,23 +1531,20 @@ class ChildBot:
         new_state = self.db.toggle_referral(self.bot_id)
         status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
         
-        # Update the admin panel with new button state
-        referral_btn_text = "🟢 Referral: ON" if new_state else "🔴 Referral: OFF"
-        
-        text = f"👑 **ADMIN SETTINGS DASHBOARD**\n\n✅ Referral system is now {status_text}"
-        keyboard = [
-            [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
-            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
-            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
-            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
-            [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
-        ]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await update.callback_query.answer(f"Referral system is now {status_text}")
+        await self.show_admin_settings(update)
     
     async def show_admin_settings(self, update: Update):
         """Show admin settings dashboard (called from back buttons)"""
         try:
-            self.logger.info(f"show_admin_settings called by user {update.effective_user.id}")
+            user_id = update.effective_user.id
+            self.logger.info(f"show_admin_settings called by user {user_id}")
+            
+            # Check owner status
+            bot_data = self.db.get_bot_by_token(self.token)
+            owner_id = int(bot_data.get('owner_id', 0)) if bot_data else 0
+            is_owner = user_id == owner_id
+            
             # Check referral status for toggle button
             referral_enabled = self.db.is_referral_enabled(self.bot_id)
             referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
@@ -1556,9 +1553,18 @@ class ChildBot:
             livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
             livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
             
+            # Check forwarder status
+            forwarder_config = self.db.get_forwarder_config(self.bot_id)
+            forwarder_active = forwarder_config and forwarder_config.get('is_active')
+            forwarder_btn_text = "🟢 Forwarder: ON" if forwarder_active else "🔴 Forwarder: OFF"
+            
             # Check pending schedules
             pending = self.db.get_pending_broadcasts(self.bot_id)
             schedule_text = f"🔄 Reset Schedule ({len(pending)})" if pending else "📅 No Schedules"
+
+            # Count admins
+            admins = self.db.get_admins(self.bot_id)
+            admin_count = len(admins)
 
             text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
             keyboard = [
@@ -1566,8 +1572,16 @@ class ChildBot:
                 [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
                 [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
                 [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
-                [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
+                [InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring"), InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu")],
+                [InlineKeyboardButton("📊 Analytics", callback_data="show_analytics"), InlineKeyboardButton("📥 Export Data", callback_data="export_data")],
             ]
+            
+            # Only owner can manage admins
+            if is_owner:
+                keyboard.append([InlineKeyboardButton(f"👥 Manage Admins ({admin_count})", callback_data="manage_admins")])
+                
+            keyboard.append([InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")])
+            
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             self.logger.info("show_admin_settings completed successfully")
         except Exception as e:
@@ -1580,20 +1594,8 @@ class ChildBot:
         new_state = self.db.toggle_livegram(self.bot_id)
         status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
         
-        # Update the admin panel with new button states
-        referral_enabled = self.db.is_referral_enabled(self.bot_id)
-        referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
-        livegram_btn_text = "🟢 Livegram: ON" if new_state else "🔴 Livegram: OFF"
-        
-        text = f"👑 **ADMIN SETTINGS DASHBOARD**\n\n✅ Livegram system is now {status_text}"
-        keyboard = [
-            [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
-            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
-            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals")],
-            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
-            [InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")]
-        ]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await update.callback_query.answer(f"Livegram system is now {status_text}")
+        await self.show_admin_settings(update)
     
     # --- Admin Management ---
     async def show_manage_admins(self, update: Update):
@@ -1754,7 +1756,7 @@ class ChildBot:
                 "Tiada recurring broadcast yang aktif.\n\n"
                 "💡 Buat broadcast baru dan pilih \"🔁 Recurring\"",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("« Back", callback_data="show_admin_dashboard")]
+                    [InlineKeyboardButton("« Back", callback_data="admin_settings")]
                 ]),
                 parse_mode='Markdown'
             )
@@ -1785,7 +1787,7 @@ class ChildBot:
             
             keyboard.append([InlineKeyboardButton(f"🛑 Stop #{b['id']}", callback_data=f"stop_recurring_{b['id']}")])
         
-        keyboard.append([InlineKeyboardButton("« Back", callback_data="forwarder_back")])
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
         
         await update.callback_query.message.edit_text(
             text, 
@@ -3259,7 +3261,7 @@ class ChildBot:
         if is_group:
              keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_panel")])
         else:
-             keyboard.append([InlineKeyboardButton("« Back", callback_data="forwarder_back")])
+             keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
     
     async def toggle_forwarder_mode_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle mode toggle callback"""
@@ -3578,49 +3580,7 @@ class ChildBot:
         
         await self.show_forwarder_menu(update)
     
-    async def forwarder_back_to_admin(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Go back to admin dashboard from forwarder menu"""
-        # Show admin dashboard
-        user_id = update.effective_user.id
-        bot_data = self.db.get_bot_by_token(self.token)
-        
-        if not bot_data:
-            await update.callback_query.message.delete()
-            return
-        
-        owner_id = int(bot_data.get('owner_id', 0))
-        is_owner = user_id == owner_id
-        
-        # Check referral status for toggle button
-        referral_enabled = self.db.is_referral_enabled(self.bot_id)
-        referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
-        
-        # Check livegram status for toggle button
-        livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
-        livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
-        
-        # Check pending schedules
-        pending = self.db.get_pending_broadcasts(self.bot_id)
-        schedule_text = f"🔄 Reset Schedule ({len(pending)})" if pending else "📅 No Schedules"
-        
-        # Count admins for button
-        admins = self.db.get_admins(self.bot_id)
-        admin_count = len(admins)
 
-        text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
-        keyboard = [
-            [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
-            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
-            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
-            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
-            [InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring"), InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu")],
-            [InlineKeyboardButton("📊 Analytics", callback_data="show_analytics"), InlineKeyboardButton("📥 Export Data", callback_data="export_data")],
-        ]
-        if is_owner:
-            keyboard.append([InlineKeyboardButton(f"👥 Manage Admins ({admin_count})", callback_data="manage_admins")])
-        keyboard.append([InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")])
-        
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def handle_channel_post(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle channel posts for forwarding to target group"""
