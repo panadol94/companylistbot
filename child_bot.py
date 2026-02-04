@@ -620,6 +620,8 @@ class ChildBot:
         
         # 4D Stats Handlers
         elif data == "4d_menu": await self.show_4d_menu(update)
+        elif data == "4d_latest": await self.show_4d_latest_results(update)
+        elif data == "4d_check": await self.start_4d_check(update, context)
         elif data == "4d_hot_numbers": await self.show_4d_hot_numbers(update)
         elif data == "4d_cold_numbers": await self.show_4d_cold_numbers(update)
         elif data == "4d_lucky_gen": await self.generate_4d_lucky(update)
@@ -903,6 +905,8 @@ class ChildBot:
         )
         
         keyboard = [
+            [InlineKeyboardButton("🏆 Latest Results", callback_data="4d_latest")],
+            [InlineKeyboardButton("🔍 Check Number", callback_data="4d_check")],
             [InlineKeyboardButton("🔥 Hot Numbers", callback_data="4d_hot_numbers"), 
              InlineKeyboardButton("❄️ Cold Numbers", callback_data="4d_cold_numbers")],
             [InlineKeyboardButton("📊 Digit Frequency", callback_data="4d_digit_freq")],
@@ -920,6 +924,132 @@ class ChildBot:
             except:
                 pass
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def show_4d_latest_results(self, update: Update):
+        """Show latest 4D results from all companies"""
+        results = self.db.get_4d_results(limit=3)  # Get latest from each company
+        
+        if not results:
+            await update.callback_query.answer("Tiada data! Sila Refresh dulu.", show_alert=True)
+            return
+        
+        # Group by company
+        by_company = {}
+        for r in results:
+            company = r.get('company', 'UNKNOWN')
+            if company not in by_company:
+                by_company[company] = r
+        
+        text = "🏆 **KEPUTUSAN 4D TERKINI**\n"
+        text += f"📅 _{datetime.datetime.now().strftime('%d/%m/%Y')}_\n\n"
+        
+        company_icons = {'MAGNUM': '🔴', 'TOTO': '🟢', 'DAMACAI': '🟡'}
+        
+        for company in ['MAGNUM', 'TOTO', 'DAMACAI']:
+            if company in by_company:
+                r = by_company[company]
+                icon = company_icons.get(company, '⚪')
+                
+                text += f"{icon} **{company}**\n"
+                text += f"🥇 `{r['first_prize']}`  🥈 `{r['second_prize']}`  🥉 `{r['third_prize']}`\n"
+                
+                # Special prizes (first 5 only for display)
+                if r['special_prizes']:
+                    specials = r['special_prizes'].split(',')[:5]
+                    text += f"✨ {' '.join([f'`{s.strip()}`' for s in specials])}...\n"
+                
+                text += "\n"
+        
+        text += "_Tekan Refresh Data untuk update terkini_"
+        
+        keyboard = [
+            [InlineKeyboardButton("🔍 Check My Number", callback_data="4d_check")],
+            [InlineKeyboardButton("🔄 Refresh Data", callback_data="4d_refresh")],
+            [InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]
+        ]
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def start_4d_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start check number flow - ask user for number"""
+        text = (
+            "🔍 **CHECK YOUR NUMBER**\n\n"
+            "Masukkan nombor 4D anda:\n"
+            "(contoh: `1234`)\n\n"
+            "_Reply dengan nombor 4 digit_"
+        )
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="4d_menu")]]
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        # Set state to wait for number input
+        context.user_data['waiting_4d_check'] = True
+
+    async def check_4d_number(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Check if user's number won in any draw"""
+        if not context.user_data.get('waiting_4d_check'):
+            return False
+        
+        number = update.message.text.strip()
+        
+        # Validate 4 digit number
+        if not number.isdigit() or len(number) != 4:
+            await update.message.reply_text(
+                "❌ Sila masukkan nombor 4 digit sahaja!\n\ncontoh: `1234`",
+                parse_mode='Markdown'
+            )
+            return True
+        
+        # Clear waiting state
+        context.user_data['waiting_4d_check'] = False
+        
+        # Search in database
+        results = self.db.get_4d_results(limit=30)
+        
+        found_wins = []
+        
+        for r in results:
+            company = r.get('company', '')
+            date = r.get('draw_date', '')
+            
+            # Check main prizes
+            if r['first_prize'] == number:
+                found_wins.append(f"🥇 **1ST PRIZE** - {company} ({date})")
+            elif r['second_prize'] == number:
+                found_wins.append(f"🥈 **2ND PRIZE** - {company} ({date})")
+            elif r['third_prize'] == number:
+                found_wins.append(f"🥉 **3RD PRIZE** - {company} ({date})")
+            elif r['special_prizes'] and number in r['special_prizes'].split(','):
+                found_wins.append(f"✨ **SPECIAL** - {company} ({date})")
+            elif r['consolation_prizes'] and number in r['consolation_prizes'].split(','):
+                found_wins.append(f"🎁 **CONSOLATION** - {company} ({date})")
+        
+        if found_wins:
+            text = f"🎉 **TAHNIAH!**\n\n"
+            text += f"Nombor `{number}` MENANG!\n\n"
+            for win in found_wins[:5]:  # Show max 5 wins
+                text += f"{win}\n"
+            text += "\n🧧 _Huat Ah!_"
+        else:
+            text = f"😔 **TIDAK MENANG**\n\n"
+            text += f"Nombor `{number}` tidak dijumpai dalam rekod.\n\n"
+            text += "_Cuba nombor lain atau tunggu result baru!_"
+        
+        keyboard = [
+            [InlineKeyboardButton("🔍 Check Lagi", callback_data="4d_check")],
+            [InlineKeyboardButton("🏆 Latest Results", callback_data="4d_latest")],
+            [InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]
+        ]
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return True
 
     async def show_4d_hot_numbers(self, update: Update):
         """Show frequently appearing numbers"""
@@ -2684,3 +2814,12 @@ class ChildBot:
         except Exception as e:
             print(f"Subscription check error: {e}")
             return True  # Fail open to avoid breaking bots
+
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle incoming text messages"""
+        # Check if waiting for 4D number input
+        if context.user_data.get('waiting_4d_check'):
+            await self.check_4d_number(update, context)
+            return
+        
+        # Add other message handlers here if needed
