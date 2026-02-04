@@ -1747,7 +1747,7 @@ class ChildBot:
                 "Tiada recurring broadcast yang aktif.\n\n"
                 "💡 Buat broadcast baru dan pilih \"🔁 Recurring\"",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+                    [InlineKeyboardButton("« Back", callback_data="show_admin_dashboard")]
                 ]),
                 parse_mode='Markdown'
             )
@@ -1778,7 +1778,7 @@ class ChildBot:
             
             keyboard.append([InlineKeyboardButton(f"🛑 Stop #{b['id']}", callback_data=f"stop_recurring_{b['id']}")])
         
-        keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="show_admin_dashboard")])
         
         await update.callback_query.message.edit_text(
             text, 
