@@ -763,6 +763,8 @@ class ChildBot:
         elif data == "4d_lucky_gen": await self.generate_4d_lucky(update)
         elif data == "4d_digit_freq": await self.show_4d_digit_frequency(update)
         elif data == "4d_refresh": await self.refresh_4d_data(update)
+        elif data == "4d_sub": await self.subscribe_4d_notification(update)
+        elif data == "4d_unsub": await self.unsubscribe_4d_notification(update)
         
         # Admin Actions
         elif data == "admin_withdrawals": await self.show_withdrawals(update)
@@ -1026,19 +1028,33 @@ class ChildBot:
     async def show_4d_menu(self, update: Update):
         """Show 4D stats main menu"""
         stats = self.db.get_4d_statistics()
+        user_id = update.effective_user.id
+        
+        # Check if user is subscribed to notifications
+        is_subscribed = self.db.is_subscribed_4d_notification(self.bot_id, user_id)
         
         if stats:
             stats_text = f"📊 Data: {stats['total_draws']} draws analyzed"
         else:
             stats_text = "⚠️ Belum ada data. Tekan Refresh untuk load."
         
+        # Notification status
+        notify_status = "🔔 ON" if is_subscribed else "🔕 OFF"
+        
         text = (
             "🎰 **4D STATISTICAL ANALYZER**\n\n"
-            f"{stats_text}\n\n"
+            f"{stats_text}\n"
+            f"📬 Notification: {notify_status}\n\n"
             "Pilih analisis yang anda mahu:\n\n"
             "⚠️ _Disclaimer: Ini untuk hiburan sahaja._\n"
             "_Tiada jaminan menang._"
         )
+        
+        # Dynamic subscribe/unsubscribe button
+        if is_subscribed:
+            notify_btn = InlineKeyboardButton("🔕 Unsubscribe Notification", callback_data="4d_unsub")
+        else:
+            notify_btn = InlineKeyboardButton("🔔 Subscribe Notification", callback_data="4d_sub")
         
         keyboard = [
             [InlineKeyboardButton("🏆 Latest Results", callback_data="4d_latest")],
@@ -1047,6 +1063,7 @@ class ChildBot:
              InlineKeyboardButton("❄️ Cold Numbers", callback_data="4d_cold_numbers")],
             [InlineKeyboardButton("📊 Digit Frequency", callback_data="4d_digit_freq")],
             [InlineKeyboardButton("🎯 Generate Lucky Number", callback_data="4d_lucky_gen")],
+            [notify_btn],
             [InlineKeyboardButton("🔄 Refresh Data", callback_data="4d_refresh")],
             [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
         ]
@@ -1405,6 +1422,34 @@ class ChildBot:
                 consolation = ",".join([f"{random.randint(0, 9999):04d}" for _ in range(10)])
                 
                 self.db.save_4d_result(company, date, first, second, third, special, consolation)
+    
+    async def subscribe_4d_notification(self, update: Update):
+        """Subscribe user to 4D result notifications"""
+        user_id = update.effective_user.id
+        
+        success = self.db.subscribe_4d_notification(self.bot_id, user_id)
+        
+        if success:
+            await update.callback_query.answer("🔔 Anda akan terima notification bila result baru keluar!", show_alert=True)
+        else:
+            await update.callback_query.answer("❌ Gagal subscribe. Cuba lagi.", show_alert=True)
+        
+        # Refresh menu to show updated status
+        await self.show_4d_menu(update)
+    
+    async def unsubscribe_4d_notification(self, update: Update):
+        """Unsubscribe user from 4D result notifications"""
+        user_id = update.effective_user.id
+        
+        success = self.db.unsubscribe_4d_notification(self.bot_id, user_id)
+        
+        if success:
+            await update.callback_query.answer("🔕 Anda tidak lagi akan terima notification.", show_alert=True)
+        else:
+            await update.callback_query.answer("❌ Gagal unsubscribe. Cuba lagi.", show_alert=True)
+        
+        # Refresh menu to show updated status
+        await self.show_4d_menu(update)
     
     # --- Delete Company Logic ---
     async def show_delete_company_list(self, update: Update):

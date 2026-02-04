@@ -216,6 +216,18 @@ class Database:
                 )
             ''')
 
+            # 12. 4D Notification Subscribers Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS notify_4d_subscribers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    subscribed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(bot_id, user_id),
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
+                )
+            ''')
+
             # Create indexes for better query performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_companies_bot_id ON companies(bot_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_bot_id ON users(bot_id)')
@@ -1288,3 +1300,63 @@ class Database:
             'digit_frequency': digit_count
         }
 
+    # ==================== 4D NOTIFICATION SUBSCRIBERS ====================
+    
+    def subscribe_4d_notification(self, bot_id, user_id):
+        """Subscribe user to 4D result notifications"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                conn.execute(
+                    "INSERT OR IGNORE INTO notify_4d_subscribers (bot_id, user_id) VALUES (?, ?)",
+                    (bot_id, user_id)
+                )
+                conn.commit()
+                return True
+            except Exception as e:
+                return False
+            finally:
+                conn.close()
+    
+    def unsubscribe_4d_notification(self, bot_id, user_id):
+        """Unsubscribe user from 4D result notifications"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                result = conn.execute(
+                    "DELETE FROM notify_4d_subscribers WHERE bot_id = ? AND user_id = ?",
+                    (bot_id, user_id)
+                )
+                conn.commit()
+                return result.rowcount > 0
+            finally:
+                conn.close()
+    
+    def is_subscribed_4d_notification(self, bot_id, user_id):
+        """Check if user is subscribed to 4D notifications"""
+        conn = self.get_connection()
+        sub = conn.execute(
+            "SELECT id FROM notify_4d_subscribers WHERE bot_id = ? AND user_id = ?",
+            (bot_id, user_id)
+        ).fetchone()
+        conn.close()
+        return sub is not None
+    
+    def get_4d_subscribers(self, bot_id):
+        """Get all 4D notification subscribers for a bot"""
+        conn = self.get_connection()
+        subs = conn.execute(
+            "SELECT user_id FROM notify_4d_subscribers WHERE bot_id = ?",
+            (bot_id,)
+        ).fetchall()
+        conn.close()
+        return [s['user_id'] for s in subs]
+    
+    def get_all_4d_subscribers(self):
+        """Get all 4D subscribers across all bots (for global notification)"""
+        conn = self.get_connection()
+        subs = conn.execute(
+            "SELECT bot_id, user_id FROM notify_4d_subscribers"
+        ).fetchall()
+        conn.close()
+        return [dict(s) for s in subs]

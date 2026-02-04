@@ -171,8 +171,88 @@ class BotManager:
             
             logger.info(f"✅ 4D Update complete: {saved_count} results saved")
             
+            # Send notifications to subscribers if new results were saved
+            if saved_count > 0:
+                await self.notify_4d_subscribers(results)
+            
         except Exception as e:
             logger.error(f"❌ 4D update failed: {e}")
+
+    async def notify_4d_subscribers(self, results):
+        """Send 4D results notification to all subscribers"""
+        try:
+            # Get all subscribers
+            subscribers = self.db.get_all_4d_subscribers()
+            
+            if not subscribers:
+                logger.info("📬 No 4D subscribers to notify")
+                return
+            
+            # Build notification message
+            today = datetime.datetime.now().strftime('%d/%m/%Y')
+            
+            # Get first prize from top 3 companies
+            highlights = []
+            for company in ['MAGNUM', 'TOTO', 'DAMACAI']:
+                if company in results and results[company]:
+                    first = results[company][0].get('first', '----')
+                    highlights.append(f"{company}: {first}")
+            
+            message = (
+                f"🎰 **4D RESULTS - {today}**\n\n"
+                f"🏆 **First Prizes:**\n"
+            )
+            
+            for h in highlights:
+                message += f"• {h}\n"
+            
+            message += (
+                f"\n📊 Total {len(results)} companies updated!\n\n"
+                f"👉 Tekan /4d untuk lihat semua result."
+            )
+            
+            # Send to each subscriber (group by bot)
+            from telegram import Bot
+            
+            sent_count = 0
+            failed_count = 0
+            
+            # Group subscribers by bot_id
+            by_bot = {}
+            for sub in subscribers:
+                bot_id = sub['bot_id']
+                if bot_id not in by_bot:
+                    by_bot[bot_id] = []
+                by_bot[bot_id].append(sub['user_id'])
+            
+            # Send via each child bot
+            for bot_id, user_ids in by_bot.items():
+                # Get bot token
+                bot_data = self.db.get_bot_by_id(bot_id)
+                if not bot_data:
+                    continue
+                
+                try:
+                    bot = Bot(token=bot_data['token'])
+                    
+                    for user_id in user_ids:
+                        try:
+                            await bot.send_message(
+                                chat_id=user_id,
+                                text=message,
+                                parse_mode='Markdown'
+                            )
+                            sent_count += 1
+                        except Exception as e:
+                            failed_count += 1
+                            logger.debug(f"Failed to notify {user_id}: {e}")
+                except Exception as e:
+                    logger.error(f"Failed to create bot for {bot_id}: {e}")
+            
+            logger.info(f"📬 4D Notifications sent: {sent_count} success, {failed_count} failed")
+            
+        except Exception as e:
+            logger.error(f"❌ 4D notification failed: {e}")
 
     async def spawn_bot(self, bot_data):
         token = bot_data['token']
