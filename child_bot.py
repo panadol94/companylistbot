@@ -698,58 +698,7 @@ class ChildBot:
             parse_mode='Markdown'
         )
     async def admin_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id
-        bot_data = self.db.get_bot_by_token(self.token)
-        
-        if not bot_data:
-            await update.message.reply_text("⛔ Bot data not found.")
-            return
-            
-        # Convert both to int for comparison (owner_id may be stored as string)
-        owner_id = int(bot_data.get('owner_id', 0))
-        is_owner = user_id == owner_id
-        is_admin = self.db.is_bot_admin(self.bot_id, user_id)
-        
-        if not is_admin:
-            self.logger.warning(f"Access denied: user_id={user_id}, owner_id={owner_id}")
-            await update.message.reply_text("⛔ Access Denied.")
-            return
-
-        # Check referral status for toggle button
-        referral_enabled = self.db.is_referral_enabled(self.bot_id)
-        referral_btn_text = "🟢 Referral: ON" if referral_enabled else "🔴 Referral: OFF"
-        
-        # Check livegram status for toggle button
-        livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
-        livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
-        
-        # Check forwarder status
-        forwarder_config = self.db.get_forwarder_config(self.bot_id)
-        forwarder_active = forwarder_config and forwarder_config.get('is_active')
-        forwarder_btn_text = "🟢 Forwarder: ON" if forwarder_active else "🔴 Forwarder: OFF"
-        
-        # Check pending schedules
-        pending = self.db.get_pending_broadcasts(self.bot_id)
-        schedule_text = f"🔄 Reset Schedule ({len(pending)})" if pending else "📅 No Schedules"
-        
-        # Count admins for button
-        admins = self.db.get_admins(self.bot_id)
-        admin_count = len(admins)
-
-        text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
-        keyboard = [
-            [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
-            [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
-            [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
-            [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
-            [InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring"), InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu")],
-            [InlineKeyboardButton("📊 Analytics", callback_data="show_analytics"), InlineKeyboardButton("📥 Export Data", callback_data="export_data")],
-        ]
-        # Only owner can manage admins
-        if is_owner:
-            keyboard.append([InlineKeyboardButton(f"👥 Manage Admins ({admin_count})", callback_data="manage_admins")])
-        keyboard.append([InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")])
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        await self.show_admin_settings(update)
 
 
     async def cmd_reset_referrals(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1800,7 +1749,11 @@ class ChildBot:
                 
             keyboard.append([InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")])
             
-            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            if update.callback_query:
+                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            else:
+                 await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            
             self.logger.info("show_admin_settings completed successfully")
         except Exception as e:
             self.logger.error(f"Error in show_admin_settings: {e}")
