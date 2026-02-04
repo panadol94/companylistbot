@@ -1558,3 +1558,101 @@ class Database:
         ).fetchall()
         conn.close()
         return [dict(s) for s in subs]
+
+    # ==================== FORWARDER CONFIG ====================
+    
+    def get_forwarder_config(self, bot_id):
+        """Get forwarder configuration for a bot"""
+        conn = self.get_connection()
+        config = conn.execute(
+            "SELECT * FROM forwarder_config WHERE bot_id = ?",
+            (bot_id,)
+        ).fetchone()
+        conn.close()
+        return dict(config) if config else None
+
+    def save_forwarder_config(self, bot_id, source_id, source_name, target_id, target_name, filter_keywords):
+        """Save or update forwarder configuration"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                # Check if exists
+                exists = conn.execute("SELECT id FROM forwarder_config WHERE bot_id = ?", (bot_id,)).fetchone()
+                
+                if exists:
+                    conn.execute(
+                        """UPDATE forwarder_config 
+                           SET source_channel_id = ?, source_channel_name = ?, 
+                               target_group_id = ?, target_group_name = ?, 
+                               filter_keywords = ?
+                           WHERE bot_id = ?""",
+                        (source_id, source_name, target_id, target_name, filter_keywords, bot_id)
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO forwarder_config 
+                           (bot_id, source_channel_id, source_channel_name, target_group_id, target_group_name, filter_keywords, is_active)
+                           VALUES (?, ?, ?, ?, ?, ?, 0)""",
+                        (bot_id, source_id, source_name, target_id, target_name, filter_keywords)
+                    )
+                conn.commit()
+                return True
+            except Exception as e:
+                return False
+            finally:
+                conn.close()
+
+    def toggle_forwarder(self, bot_id):
+        """Toggle forwarder active state"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                config = conn.execute("SELECT is_active FROM forwarder_config WHERE bot_id = ?", (bot_id,)).fetchone()
+                if not config:
+                    return None
+                
+                new_state = 0 if config['is_active'] else 1
+                conn.execute("UPDATE forwarder_config SET is_active = ? WHERE bot_id = ?", (new_state, bot_id))
+                conn.commit()
+                return new_state
+            finally:
+                conn.close()
+
+    def update_forwarder_filter(self, bot_id, keywords):
+        """Update forwarder filter keywords"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                conn.execute("UPDATE forwarder_config SET filter_keywords = ? WHERE bot_id = ?", (keywords, bot_id))
+                conn.commit()
+                return True
+            except:
+                return False
+            finally:
+                conn.close()
+
+    def toggle_forwarder_mode(self, bot_id):
+        """Toggle forwarder mode between SINGLE and BROADCAST"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                config = conn.execute("SELECT forwarder_mode FROM forwarder_config WHERE bot_id = ?", (bot_id,)).fetchone()
+                
+                current_mode = config['forwarder_mode'] if config and config['forwarder_mode'] else 'SINGLE'
+                new_mode = 'BROADCAST' if current_mode == 'SINGLE' else 'SINGLE'
+                
+                # If record doesn't exist, create it
+                if not config:
+                     conn.execute(
+                        "INSERT INTO forwarder_config (bot_id, forwarder_mode) VALUES (?, ?)",
+                        (bot_id, new_mode)
+                    )
+                else:
+                    conn.execute("UPDATE forwarder_config SET forwarder_mode = ? WHERE bot_id = ?", (new_mode, bot_id))
+                
+                conn.commit()
+                return new_mode
+            except Exception as e:
+                return None
+            finally:
+                conn.close()
