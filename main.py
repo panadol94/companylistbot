@@ -46,6 +46,15 @@ class BotManager:
             id='expiry_reminder'
         )
         
+        # Schedule 4D results update at 7:30 PM daily (after draw results announced)
+        self.scheduler.add_job(
+            self.update_4d_results,
+            'cron',
+            hour=19,
+            minute=30,
+            id='4d_update'
+        )
+        
         # Also backup on startup
         await self.backup_database()
         
@@ -131,6 +140,39 @@ class BotManager:
             
         except Exception as e:
             logger.error(f"❌ Expiry check failed: {e}")
+
+    async def update_4d_results(self):
+        """Fetch and save latest 4D results from live4d2u.net"""
+        try:
+            from utils_4d import fetch_all_4d_results
+            
+            logger.info("🎰 Fetching latest 4D results...")
+            
+            results = await fetch_all_4d_results()
+            
+            if not results:
+                logger.warning("⚠️ No 4D results fetched")
+                return
+            
+            saved_count = 0
+            for company, draws in results.items():
+                for draw in draws:
+                    success = self.db.save_4d_result(
+                        company=company,
+                        draw_date=draw['date'],
+                        first=draw['first'],
+                        second=draw['second'],
+                        third=draw['third'],
+                        special=draw['special'],
+                        consolation=draw['consolation']
+                    )
+                    if success:
+                        saved_count += 1
+            
+            logger.info(f"✅ 4D Update complete: {saved_count} results saved")
+            
+        except Exception as e:
+            logger.error(f"❌ 4D update failed: {e}")
 
     async def spawn_bot(self, bot_data):
         token = bot_data['token']
