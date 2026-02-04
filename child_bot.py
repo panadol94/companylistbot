@@ -3191,77 +3191,99 @@ class ChildBot:
 
     # ==================== FORWARDER FUNCTIONS ====================
     
+
     async def show_forwarder_menu(self, update: Update):
         """Show forwarder configuration menu"""
-        config = self.db.get_forwarder_config(self.bot_id)
-        
-        if config:
-            source_name = config.get('source_channel_name') or config.get('source_channel_id') or 'Not Set'
-            target_name = config.get('target_group_name') or config.get('target_group_id') or 'Not Set'
-            filter_keywords = config.get('filter_keywords') or 'None (All messages)'
-            is_active = config.get('is_active')
-            forwarder_mode = config.get('forwarder_mode', 'SINGLE')
-            status = "🟢 ACTIVE" if is_active else "🔴 INACTIVE"
-        else:
-            source_name = "Not Set"
-            target_name = "Not Set"
-            filter_keywords = "None"
-            forwarder_mode = "SINGLE"
-            status = "🔴 INACTIVE"
-        
-        # Adjust display based on mode
-        if forwarder_mode == 'BROADCAST':
-            target_display = "📡 All Known Groups (Auto)"
-        else:
-            target_display = target_name
+        try:
+            query = update.callback_query
+            if query:
+                await query.answer()
 
-        text = (
-            "📡 **CHANNEL FORWARDER**\n\n"
-            f"📢 Source: `{source_name}`\n"
-            f"💬 Target: `{target_display}`\n"
-            f"📡 Mode: `{forwarder_mode}`\n"
-            f"🔍 Filter: {filter_keywords}\n"
-            f"📊 Status: {status}\n\n"
-        )
-        
-        if not (config and config.get('is_active')):
-             text += "👇 Klik 'Activate' untuk memulakan forwarder!\n"
-
-        # Check chat type (Group vs Private)
-        chat = update.effective_chat
-        is_group = chat.type in ['group', 'supergroup']
-        
-        keyboard = []
-        
-        # Source is usually set from DM or by forwarding
-        keyboard.append([InlineKeyboardButton("📢 Set Source Channel", callback_data="forwarder_set_source")])
-        
-        # Mode Toggle
-        mode_btn_text = f"🔄 Mode: {forwarder_mode}"
-        keyboard.append([InlineKeyboardButton(mode_btn_text, callback_data="forwarder_toggle_mode")])
-
-        if forwarder_mode == 'SINGLE':
-            if is_group:
-                # Smart Feature: Set CURRENT group as target
-                keyboard.append([InlineKeyboardButton("🎯 Set THIS Group as Target", callback_data="forwarder_set_this_group")])
+            config = self.db.get_forwarder_config(self.bot_id)
+            
+            if config:
+                source_name = config.get('source_channel_name') or config.get('source_channel_id') or 'Not Set'
+                target_name = config.get('target_group_name') or config.get('target_group_id') or 'Not Set'
+                filter_keywords = config.get('filter_keywords') or 'None (All messages)'
+                is_active = config.get('is_active')
+                forwarder_mode = config.get('forwarder_mode', 'SINGLE')
+                status = "🟢 ACTIVE" if is_active else "🔴 INACTIVE"
             else:
-                # Private chat: Allow manual setting
-                keyboard.append([InlineKeyboardButton("💬 Set Target Group", callback_data="forwarder_set_target")])
+                source_name = "Not Set"
+                target_name = "Not Set"
+                filter_keywords = "None"
+                forwarder_mode = "SINGLE"
+                status = "🔴 INACTIVE"
             
-        keyboard.append([InlineKeyboardButton("🔍 Set Filter Keywords", callback_data="forwarder_set_filter")])
-        
-        if config and config.get('filter_keywords'):
-             keyboard.append([InlineKeyboardButton("🗑️ Clear Filter", callback_data="forwarder_clear_filter")])
+            # Adjust display based on mode
+            if forwarder_mode == 'BROADCAST':
+                target_display = "📡 All Known Groups (Auto)"
+            else:
+                target_display = target_name
 
-        if config:
-            btn_text = "🔴 Deactivate" if is_active else "🟢 Activate"
-            keyboard.append([InlineKeyboardButton(btn_text, callback_data="forwarder_toggle")])
+            text = (
+                "📡 **CHANNEL FORWARDER**\n\n"
+                f"📢 Source: `{source_name}`\n"
+                f"💬 Target: `{target_display}`\n"
+                f"📡 Mode: `{forwarder_mode}`\n"
+                f"🔍 Filter: {filter_keywords}\n"
+                f"📊 Status: {status}\n\n"
+            )
             
-        # Back button logic
-        if is_group:
-             keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_panel")])
-        else:
-             keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
+            if not (config and config.get('is_active')):
+                 text += "👇 Klik 'Activate' untuk memulakan forwarder!\n"
+
+            # Check chat type (Group vs Private)
+            chat = update.effective_chat
+            is_group = chat.type in ['group', 'supergroup']
+            
+            keyboard = []
+            
+            # Source is usually set from DM or by forwarding
+            keyboard.append([InlineKeyboardButton("📢 Set Source Channel", callback_data="forwarder_set_source")])
+            
+            # Mode Toggle
+            mode_btn_text = f"🔄 Mode: {forwarder_mode}"
+            keyboard.append([InlineKeyboardButton(mode_btn_text, callback_data="forwarder_toggle_mode")])
+
+            if forwarder_mode == 'SINGLE':
+                if is_group:
+                    # Smart Feature: Set CURRENT group as target
+                    keyboard.append([InlineKeyboardButton("🎯 Set THIS Group as Target", callback_data="forwarder_set_this_group")])
+                else:
+                    # Private chat: Allow manual setting
+                    keyboard.append([InlineKeyboardButton("💬 Set Target Group", callback_data="forwarder_set_target")])
+                
+            keyboard.append([InlineKeyboardButton("🔍 Set Filter Keywords", callback_data="forwarder_set_filter")])
+            
+            if config and config.get('filter_keywords'):
+                 keyboard.append([InlineKeyboardButton("🗑️ Clear Filter", callback_data="forwarder_clear_filter")])
+
+            if config:
+                btn_text = "🔴 Deactivate" if is_active else "🟢 Activate"
+                keyboard.append([InlineKeyboardButton(btn_text, callback_data="forwarder_toggle")])
+                
+            # Back button logic
+            if is_group:
+                 keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_panel")])
+            else:
+                 keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
+                 
+            if update.callback_query:
+                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            else:
+                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                
+        except Exception as e:
+            self.logger.error(f"Error in forwarder menu: {e}")
+            error_text = f"❌ Error loading Forwarder Menu: {str(e)}"
+            try:
+                if update.callback_query:
+                    await update.callback_query.message.edit_text(error_text)
+                else:
+                    await update.message.reply_text(error_text)
+            except:
+                pass
     
     async def toggle_forwarder_mode_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle mode toggle callback"""

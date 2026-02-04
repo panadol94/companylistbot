@@ -159,6 +159,12 @@ class Database:
                 cursor.execute("ALTER TABLE forwarder_config ADD COLUMN filter_keywords TEXT")
             except:
                 pass
+
+            try:
+                cursor.execute("ALTER TABLE forwarder_config ADD COLUMN forwarder_mode TEXT DEFAULT 'SINGLE'")
+            except:
+                pass
+                pass
             try:
                 cursor.execute("ALTER TABLE forwarder_config ADD COLUMN source_channel_name TEXT")
             except:
