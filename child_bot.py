@@ -856,6 +856,8 @@ class ChildBot:
         elif data == "forwarder_set_this_group": await self.set_current_forwarder_target_group(update, context)
         elif data == "forwarder_set_filter": await self.forwarder_set_filter_start(update, context)
         elif data == "forwarder_clear_filter": await self.forwarder_clear_filter(update)
+        elif data == "forwarder_manage_sources": await self.show_forwarder_sources(update)
+        elif data.startswith("forwarder_remove_source_"): await self.remove_forwarder_source_handler(update, int(data.split("_")[3]))
         elif data == "forwarder_back": await self.show_admin_settings(update)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
@@ -3220,8 +3222,24 @@ class ChildBot:
 
             config = self.db.get_forwarder_config(self.bot_id)
             
+            # Multi-Source Support
+            multi_sources = self.db.get_forwarder_sources(self.bot_id)
+            source_count = len(multi_sources)
+            
             if config:
-                source_name = config.get('source_channel_name') or config.get('source_channel_id') or 'Not Set'
+                legacy_source = config.get('source_channel_name')
+                if legacy_source: source_count += 1
+                
+                if source_count > 1:
+                    source_name = f"📚 Aggregator Mode ({source_count} sources)"
+                elif source_count == 1:
+                    if legacy_source:
+                         source_name = legacy_source
+                    elif multi_sources:
+                         source_name = multi_sources[0]['source_name']
+                else:
+                    source_name = "Not Set"
+
                 target_name = config.get('target_group_name') or config.get('target_group_id') or 'Not Set'
                 filter_keywords = config.get('filter_keywords') or 'None (All messages)'
                 is_active = config.get('is_active')
@@ -3258,8 +3276,10 @@ class ChildBot:
             
             keyboard = []
             
-            # Source is usually set from DM or by forwarding
-            keyboard.append([InlineKeyboardButton("📢 Set Source Channel", callback_data="forwarder_set_source")])
+            # Source Management
+            keyboard.append([InlineKeyboardButton("➕ Add Source Channel", callback_data="forwarder_set_source")])
+            if source_count > 0:
+                 keyboard.append([InlineKeyboardButton("📋 Manage Sources", callback_data="forwarder_manage_sources")])
             
             # Mode Toggle
             mode_btn_text = f"🔄 Mode: {forwarder_mode}"
@@ -3440,7 +3460,12 @@ class ChildBot:
         target_name = config.get('target_group_name') if config else None
         filter_keywords = config.get('filter_keywords') if config else None
         
-        success = self.db.save_forwarder_config(
+        # Add to Multi-Source Table
+        success = self.db.add_forwarder_source(self.bot_id, channel_id, channel_name)
+        
+        # Also update main config (Legacy support + Setup flow metadata)
+        # We perform a save to ensure the row exists and target/filters are preserved
+        self.db.save_forwarder_config(
             self.bot_id, channel_id, channel_name, target_id, target_name, filter_keywords
         )
         
@@ -3458,7 +3483,7 @@ class ChildBot:
                 await self.show_forwarder_complete_notification(update, channel_name, target_name, filter_keywords)
             else:
                 await update.message.reply_text(
-                    f"✅ Source channel ditetapkan: `{channel_name}`\n\n"
+                    f"✅ Source channel ditambah: `{channel_name}`\n\n"
                     f"💡 Seterusnya, set Target Group untuk complete setup.",
                     parse_mode='Markdown'
                 )
@@ -3623,6 +3648,76 @@ class ChildBot:
     
 
 
+    async def show_forwarder_sources(self, update: Update):
+        """Show list of added source channels"""
+        sources = self.db.get_forwarder_sources(self.bot_id)
+        config = self.db.get_forwarder_config(self.bot_id)
+        
+        # Include legacy source in list for display (though deletions might need migration logic)
+        legacy_source_id = config.get('source_channel_id') if config else None
+        
+        text = "📋 **MANAGE SOURCE CHANNELS**\n\nSenarai channel yang menjadi sumber forwarder:\n"
+        
+        keyboard = []
+        
+        # Helper to check if listed
+        listed_ids = set()
+        
+        if sources:
+            for s in sources:
+                name = s.get('source_name') or str(s.get('source_id'))
+                text += f"• `{name}`\n"
+                keyboard.append([
+                    InlineKeyboardButton(f"🗑️ {name}", callback_data=f"forwarder_remove_source_{s['source_id']}")
+                ])
+                listed_ids.add(s['source_id'])
+
+        # Show legacy if not in DB yet (for migration visual)
+        if legacy_source_id and legacy_source_id not in listed_ids:
+             name = config.get('source_channel_name') or str(legacy_source_id)
+             text += f"• `{name}` (Legacy - Main)\n"
+             # Legacy removal is tricky via this ID - better to migrate it on 'Add' or allow overwrite
+             keyboard.append([
+                 InlineKeyboardButton(f"🗑️ {name}", callback_data=f"forwarder_remove_source_{legacy_source_id}")
+             ])
+
+        text += "\nTekan 🗑️ untuk buang source."
+        
+        keyboard.append([InlineKeyboardButton("➕ Add Source", callback_data="forwarder_set_source")])
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="forwarder_menu")])
+        
+        # Edit text or new message depending on context
+        if update.callback_query:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def remove_forwarder_source_handler(self, update: Update, source_id: int):
+        """Remove a source channel"""
+        # specialized logic: if it matches legacy, we might need to nullify forwarding_config.source_channel_id too
+        config = self.db.get_forwarder_config(self.bot_id)
+        legacy_id = config.get('source_channel_id') if config else None
+        
+        removed = False
+        
+        # Try remove from table
+        if self.db.remove_forwarder_source(self.bot_id, source_id):
+            removed = True
+            
+        # Try remove from legacy config if matches
+        if legacy_id == source_id:
+             # We update legacy config to null source
+             self.db.save_forwarder_config(
+                 self.bot_id, None, None, config['target_group_id'], config['target_group_name'], config['filter_keywords']
+             )
+             removed = True
+        
+        if removed:
+            await update.callback_query.answer("✅ Source removed!")
+            await self.show_forwarder_sources(update)
+        else:
+             await update.callback_query.answer("❌ Failed to remove.", show_alert=True)
+
     async def handle_channel_post(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle channel posts for forwarding to target group"""
         try:
@@ -3645,6 +3740,14 @@ class ChildBot:
             filter_keywords = config.get('filter_keywords')
             forwarder_mode = config.get('forwarder_mode', 'SINGLE')
             
+            # Fetch Multi-Sources
+            multi_sources = self.db.get_forwarder_sources(self.bot_id)
+            valid_source_ids = [s['source_id'] for s in multi_sources]
+            
+            # Add legacy source if present
+            if source_channel_id:
+                valid_source_ids.append(source_channel_id)
+            
             # Determine targets
             target_ids = []
             if forwarder_mode == 'BROADCAST':
@@ -3657,17 +3760,17 @@ class ChildBot:
                 if target_group_id:
                     target_ids = [target_group_id]
             
-            if not source_channel_id or not target_ids:
+            if not valid_source_ids or not target_ids:
                 self.logger.warning("⚠️ Forwarder incomplete config (No Source or No Targets)")
                 return  # Not properly configured
             
-            # Check if message is from source channel
-            if update.effective_chat.id != source_channel_id:
-                self.logger.debug(f"⏩ Skipped: Chat ID {update.effective_chat.id} != Source {source_channel_id}")
+            # Check if message is from valid source
+            if update.effective_chat.id not in valid_source_ids:
+                self.logger.debug(f"⏩ Skipped: Chat ID {update.effective_chat.id} not in valid sources")
                 return  # Not from our source channel
             
             message = update.effective_message
-            self.logger.info(f"✅ Processing forwarding for message detected from Source Channel {source_channel_id}")
+            self.logger.info(f"✅ Processing forwarding for message detected from Source Channel {update.effective_chat.id}")
             
             # Apply keyword filter if set
             if filter_keywords:

@@ -1738,3 +1738,67 @@ class Database:
                 return False
             finally:
                 conn.close()
+
+    # ==================== MULTI-SOURCE FORWARDER ====================
+
+    def add_forwarder_source(self, bot_id, source_id, source_name):
+        """Add a source channel to the forwarder"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                # Ensure table exists
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS forwarder_sources (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        bot_id INTEGER NOT NULL,
+                        source_id INTEGER NOT NULL,
+                        source_name TEXT,
+                        added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE,
+                        UNIQUE(bot_id, source_id)
+                    )
+                ''')
+                
+                conn.execute(
+                    "INSERT OR REPLACE INTO forwarder_sources (bot_id, source_id, source_name) VALUES (?, ?, ?)",
+                    (bot_id, source_id, source_name)
+                )
+                conn.commit()
+                return True
+            except Exception as e:
+                print(f"Error adding source: {e}")
+                return False
+            finally:
+                conn.close()
+
+    def remove_forwarder_source(self, bot_id, source_id):
+        """Remove a source channel"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                conn.execute("DELETE FROM forwarder_sources WHERE bot_id = ? AND source_id = ?", (bot_id, source_id))
+                conn.commit()
+                return True
+            except:
+                return False
+            finally:
+                conn.close()
+
+    def get_forwarder_sources(self, bot_id):
+        """Get all source channels for a bot"""
+        conn = self.get_connection()
+        try:
+            # Check if table exists first (to avoid error on fresh DB)
+            table_exists = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='forwarder_sources'").fetchone()
+            if not table_exists:
+                return []
+                
+            sources = conn.execute(
+                "SELECT * FROM forwarder_sources WHERE bot_id = ?",
+                (bot_id,)
+            ).fetchall()
+            return [dict(s) for s in sources]
+        except:
+            return []
+        finally:
+            conn.close()
