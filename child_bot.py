@@ -3142,6 +3142,11 @@ class ChildBot:
             return
             
         msg_text = update.message.text[:50] if update.message.text else 'No text'
+        chat = update.effective_chat
+        
+        # Auto-Discovery: Save group if message is from a group
+        if chat.type in ['group', 'supergroup']:
+            self.db.upsert_known_group(self.bot_id, chat.id, chat.title)
         
         # Safe forwarded check for PTB v20+
         forward_from_chat = getattr(update.message, 'forward_from_chat', None)
