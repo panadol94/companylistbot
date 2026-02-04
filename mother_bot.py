@@ -224,24 +224,65 @@ class MotherBot:
         if user_id in MASTER_ADMIN_IDS:
             bots = conn.execute("SELECT * FROM bots ORDER BY id").fetchall()
             title = "🤖 **ALL PLATFORM BOTS**"
+            is_admin = True
         else:
             bots = conn.execute("SELECT * FROM bots WHERE owner_id = ?", (user_id,)).fetchall()
             title = "🤖 **YOUR BOTS**"
-        conn.close()
+            is_admin = False
 
         if not bots:
             await update.message.reply_text("You have no bots. /createbot to start.")
+            conn.close()
             return
 
-        text = f"{title}\n\nClick a bot to manage:"
+        # Build detailed text
+        text = f"{title}\n"
+        text += "━" * 20 + "\n\n"
+        
         keyboard = []
         for bot in bots:
-            status_icon = "🟢" if bot['is_active'] else "🔴"
-            expiry = bot['subscription_end'][:10]
+            # Get stats
+            user_count = conn.execute("SELECT COUNT(*) FROM users WHERE bot_id = ?", (bot['id'],)).fetchone()[0]
+            company_count = conn.execute("SELECT COUNT(*) FROM companies WHERE bot_id = ?", (bot['id'],)).fetchone()[0]
+            
+            # Calculate days left
+            try:
+                expiry = datetime.datetime.fromisoformat(bot['subscription_end'])
+                now = datetime.datetime.now()
+                days_left = (expiry - now).days
+                if days_left < 0:
+                    days_text = f"⚠️ EXPIRED {abs(days_left)} days ago"
+                elif days_left == 0:
+                    days_text = "⚠️ Expires TODAY"
+                elif days_left <= 7:
+                    days_text = f"⚠️ {days_left} days left"
+                else:
+                    days_text = f"✅ {days_left} days left"
+            except:
+                days_text = bot['subscription_end'][:10]
+            
+            # Status
+            status = "🟢 ACTIVE" if bot['is_active'] else "🔴 STOPPED"
+            
+            # Bot info line
+            bot_name = bot.get('bot_username') or f"Bot #{bot['id']}"
+            text += f"**{bot_name}** {status}\n"
+            text += f"👥 Users: {user_count} | 🏢 Companies: {company_count}\n"
+            
+            # Show owner for admin view
+            if is_admin:
+                text += f"👤 Owner ID: `{bot['owner_id']}`\n"
+            
+            text += f"📅 {days_text}\n"
+            text += "━" * 20 + "\n\n"
+            
+            # Button
             keyboard.append([InlineKeyboardButton(
-                f"{status_icon} Bot #{bot['id']} (Exp: {expiry})",
+                f"🔧 Manage {bot_name}",
                 callback_data=f"manage_bot_{bot['id']}"
             )])
+        
+        conn.close()
         
         keyboard.append([InlineKeyboardButton("➕ Create New Bot", callback_data="new_bot")])
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
@@ -255,24 +296,65 @@ class MotherBot:
         if user_id in MASTER_ADMIN_IDS:
             bots = conn.execute("SELECT * FROM bots ORDER BY id").fetchall()
             title = "🤖 **ALL PLATFORM BOTS**"
+            is_admin = True
         else:
             bots = conn.execute("SELECT * FROM bots WHERE owner_id = ?", (user_id,)).fetchall()
             title = "🤖 **YOUR BOTS**"
-        conn.close()
+            is_admin = False
 
         if not bots:
             await update.callback_query.message.edit_text("You have no bots. Use /createbot to start.")
+            conn.close()
             return
 
-        text = f"{title}\n\nClick a bot to manage:"
+        # Build detailed text
+        text = f"{title}\n"
+        text += "━" * 20 + "\n\n"
+        
         keyboard = []
         for bot in bots:
-            status_icon = "🟢" if bot['is_active'] else "🔴"
-            expiry = bot['subscription_end'][:10]
+            # Get stats
+            user_count = conn.execute("SELECT COUNT(*) FROM users WHERE bot_id = ?", (bot['id'],)).fetchone()[0]
+            company_count = conn.execute("SELECT COUNT(*) FROM companies WHERE bot_id = ?", (bot['id'],)).fetchone()[0]
+            
+            # Calculate days left
+            try:
+                expiry = datetime.datetime.fromisoformat(bot['subscription_end'])
+                now = datetime.datetime.now()
+                days_left = (expiry - now).days
+                if days_left < 0:
+                    days_text = f"⚠️ EXPIRED {abs(days_left)} days ago"
+                elif days_left == 0:
+                    days_text = "⚠️ Expires TODAY"
+                elif days_left <= 7:
+                    days_text = f"⚠️ {days_left} days left"
+                else:
+                    days_text = f"✅ {days_left} days left"
+            except:
+                days_text = bot['subscription_end'][:10]
+            
+            # Status
+            status = "🟢 ACTIVE" if bot['is_active'] else "🔴 STOPPED"
+            
+            # Bot info line
+            bot_name = bot.get('bot_username') or f"Bot #{bot['id']}"
+            text += f"**{bot_name}** {status}\n"
+            text += f"👥 Users: {user_count} | 🏢 Companies: {company_count}\n"
+            
+            # Show owner for admin view
+            if is_admin:
+                text += f"👤 Owner ID: `{bot['owner_id']}`\n"
+            
+            text += f"📅 {days_text}\n"
+            text += "━" * 20 + "\n\n"
+            
+            # Button
             keyboard.append([InlineKeyboardButton(
-                f"{status_icon} Bot #{bot['id']} (Exp: {expiry})",
+                f"🔧 Manage {bot_name}",
                 callback_data=f"manage_bot_{bot['id']}"
             )])
+        
+        conn.close()
         
         keyboard.append([InlineKeyboardButton("➕ Create New Bot", callback_data="new_bot")])
         keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_panel")])
