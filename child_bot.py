@@ -144,6 +144,9 @@ class ChildBot:
         # Support System & Text
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         
+        # Forwarded Message Handler (for forwarder setup)
+        self.app.add_handler(MessageHandler(filters.FORWARDED, self.handle_forwarded_message))
+        
         # Channel Post Handler (for forwarder)
         self.app.add_handler(MessageHandler(
             filters.ChatType.CHANNEL, 
@@ -3087,6 +3090,18 @@ class ChildBot:
             return
         
         # Add other message handlers here if needed
+
+    async def handle_forwarded_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle forwarded messages - used for forwarder channel/group setup"""
+        # Check if waiting for forwarder source channel
+        if context.user_data.get('waiting_forwarder_source'):
+            await self.save_forwarder_source(update, context)
+            return
+        
+        # Check if waiting for forwarder target group
+        if context.user_data.get('waiting_forwarder_target'):
+            await self.save_forwarder_target(update, context)
+            return
 
     # ==================== FORWARDER FUNCTIONS ====================
     
