@@ -457,7 +457,19 @@ class ChildBot:
             keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
             
             if update.callback_query:
-                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                # Defensive answer
+                try: await update.callback_query.answer()
+                except: pass
+                
+                try:
+                    await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                except Exception as e:
+                     # Ignore "Message not modified"
+                    if "Message is not modified" not in str(e):
+                        # Fallback
+                        try: await update.callback_query.message.delete()
+                        except: pass
+                        await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             else:
                 await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             return
@@ -512,64 +524,89 @@ class ChildBot:
         
         keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
         
-        # Send or edit message with media
-        if update.callback_query:
-            # Delete old message and send new with media (can't edit media type)
-            try:
-                await update.callback_query.message.delete()
-            except:
-                pass
+        # Check Media
+        import os
+        media_path = comp['media_file_id']
+        is_local_file = media_path and (media_path.startswith('/') or os.path.sep in media_path) and os.path.exists(media_path)
         
-        # Send based on media type - using LOCAL FILE PATH
+        # Defensive answer
+        if update.callback_query:
+            try: await update.callback_query.answer()
+            except: pass
+
         try:
-            import os
-            media_path = comp['media_file_id']  # This now contains file PATH, not file_id
-            
-            # Check if it's a file path (starts with / or contains path separator)
-            is_local_file = media_path and (media_path.startswith('/') or os.path.sep in media_path)
-            
-            if is_local_file and os.path.exists(media_path):
-                # Read from local file
-                with open(media_path, 'rb') as media_file:
+             # Helper to get InputMedia
+            def get_input_media(file_obj=None):
+                 # Use file_obj if provided (local file), else media_path (file_id)
+                 media_source = file_obj if file_obj else media_path
+                 
+                 if comp['media_type'] == 'video':
+                     return InputMediaVideo(media=media_source, caption=caption, parse_mode='Markdown')
+                 elif comp['media_type'] == 'animation':
+                     return InputMediaAnimation(media=media_source, caption=caption, parse_mode='Markdown')
+                 else:
+                     return InputMediaPhoto(media=media_source, caption=caption, parse_mode='Markdown')
+
+            # EXECUTION BLOCK
+            if is_local_file:
+                # Open file context
+                with open(media_path, 'rb') as f:
+                    media_obj = get_input_media(f)
+                    
+                    # Try edit if possible
+                    if update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
+                         try:
+                             await update.callback_query.message.edit_media(media=media_obj, reply_markup=InlineKeyboardMarkup(keyboard))
+                             return 
+                         except Exception as e:
+                             if "Message is not modified" in str(e): return
+                             # If edit fails (e.g. type mismatch), falltrough to send
+                             pass 
+                             
+                    # Fallback: Delete + Send
+                    if update.callback_query:
+                        try: await update.callback_query.message.delete()
+                        except: pass
+                    
+                    # Re-open for send (since edit might have consumed cursor? No, but safe to match logic)
+                    # Actually valid file handle needed.
+                    f.seek(0)
                     if comp['media_type'] == 'video':
-                        await update.effective_chat.send_video(
-                            video=media_file,
-                            caption=caption,
-                            reply_markup=InlineKeyboardMarkup(keyboard),
-                            parse_mode='Markdown'
-                        )
+                        await update.effective_chat.send_video(video=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
                     elif comp['media_type'] == 'animation':
-                        await update.effective_chat.send_animation(
-                            animation=media_file,
-                            caption=caption,
-                            reply_markup=InlineKeyboardMarkup(keyboard),
-                            parse_mode='Markdown'
-                        )
-                    else:  # photo
-                        await update.effective_chat.send_photo(
-                            photo=media_file,
-                            caption=caption,
-                            reply_markup=InlineKeyboardMarkup(keyboard),
-                            parse_mode='Markdown'
-                        )
+                         await update.effective_chat.send_animation(animation=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                    else:
+                         await update.effective_chat.send_photo(photo=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             else:
-                # Fallback: Try as Telegram file_id (for old data)
-                if comp['media_type'] == 'video':
-                    await update.effective_chat.send_video(video=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-                elif comp['media_type'] == 'animation':
-                    await update.effective_chat.send_animation(animation=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-                else:
-                    await update.effective_chat.send_photo(photo=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                 # Remote File ID
+                 media_obj = get_input_media(None)
+                 
+                 if update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
+                     try:
+                         await update.callback_query.message.edit_media(media=media_obj, reply_markup=InlineKeyboardMarkup(keyboard))
+                         return
+                     except Exception as e:
+                         if "Message is not modified" in str(e): return
+                         pass
+
+                 if update.callback_query:
+                     try: await update.callback_query.message.delete()
+                     except: pass
+                 
+                 if comp['media_type'] == 'video':
+                     await update.effective_chat.send_video(video=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                 elif comp['media_type'] == 'animation':
+                     await update.effective_chat.send_animation(animation=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                 else:
+                     await update.effective_chat.send_photo(photo=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
         except Exception as e:
-            # Log the error for debugging
-            self.logger.error(f"Media display error: {e}")
-            self.logger.error(f"media_file_id: {comp.get('media_file_id')}, media_type: {comp.get('media_type')}")
-            # Fallback to text if media fails
-            await update.effective_chat.send_message(
-                f"{caption}\n\n_(Media unavailable: {str(e)[:50]})_",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
+             self.logger.error(f"Media error in show_page: {e}")
+             # Absolute Fallback
+             if update.callback_query:
+                 try: await update.callback_query.message.delete()
+                 except: pass
+             await update.effective_chat.send_message(f"{caption}\n\n(Media Error)", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def view_company(self, update: Update, comp_id: int):
         # Redirect to Carousel View (find index)
