@@ -625,31 +625,41 @@ class ChildBot:
     async def show_wallet(self, update: Update):
         user = self.db.get_user(self.bot_id, update.effective_user.id)
         if not user:
-            await update.callback_query.answer("⚠️ Data not found. Type /start again.", show_alert=True)
+            try: await update.callback_query.answer("⚠️ Data not found. Type /start again.", show_alert=True)
+            except: pass
             return
             
-        text = f"💰 **DOMPET ANDA**\n\n👤 **ID:** `{user['telegram_id']}`\n📊 **Total Invite:** {user['total_invites']} Orang\n💵 **Baki Wallet:** RM {user['balance']:.2f}\n\n*Min withdrawal: RM 50.00*"
+        text = (
+            f"💰 **DOMPET ANDA**\n\n"
+            f"👤 **ID:** `{user['telegram_id']}`\n"
+            f"📊 **Total Invite:** {user['total_invites']} Orang\n"
+            f"💵 **Baki Wallet:** RM {user['balance']:.2f}\n\n"
+            f"*Min withdrawal: RM 50.00*"
+        )
         
         keyboard = []
         if user['balance'] >= 50.0:
             keyboard.append([InlineKeyboardButton("📤 REQUEST WITHDRAWAL", callback_data="req_withdraw")])
         keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
         
-        # Carousel Logic: Try to edit caption if photo exists, else edit text
+        # Carousel Logic: Text -> Text (Edit), Media -> Text (Delete+Send)
         if update.callback_query:
-            # Defensive answer
             try: await update.callback_query.answer()
             except: pass
             
             try:
-                # Check if message has photo/video
-                if update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation:
-                     await update.callback_query.message.edit_caption(
-                        caption=text,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
-                     )
+                # Check if current message is valid for edit_text
+                is_media = (update.callback_query.message.photo or 
+                           update.callback_query.message.video or 
+                           update.callback_query.message.animation)
+                
+                if is_media:
+                    # Media -> Text: Must delete and send new
+                    try: await update.callback_query.message.delete()
+                    except: pass
+                    await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
                 else:
+                    # Text -> Text: Edit safely
                     await update.callback_query.message.edit_text(
                         text, 
                         reply_markup=InlineKeyboardMarkup(keyboard), 
@@ -658,10 +668,10 @@ class ChildBot:
             except Exception as e:
                 err_msg = str(e)
                 if "Message is not modified" in err_msg:
-                    return # Ignore if already showing this view
+                    return 
                 
                 self.logger.error(f"Error in show_wallet: {e}")
-                # Fallback on error (e.g. media type change or unknown error)
+                # Fallback
                 try: await update.callback_query.message.delete()
                 except: pass
                 await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
@@ -679,12 +689,16 @@ class ChildBot:
             except: pass
             
             try:
-                if update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation:
-                     await update.callback_query.message.edit_caption(
-                        caption=text,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
-                     )
+                # Check if current message is valid for edit_text
+                is_media = (update.callback_query.message.photo or 
+                           update.callback_query.message.video or 
+                           update.callback_query.message.animation)
+                
+                if is_media:
+                     # Media -> Text: Must delete and send new
+                    try: await update.callback_query.message.delete()
+                    except: pass
+                    await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
                 else:
                     await update.callback_query.message.edit_text(
                         text,
