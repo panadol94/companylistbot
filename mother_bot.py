@@ -219,14 +219,21 @@ class MotherBot:
     async def my_bots(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         conn = self.db.get_connection()
-        bots = conn.execute("SELECT * FROM bots WHERE owner_id = ?", (user_id,)).fetchall()
+        
+        # Master Admins see ALL bots, regular users see only their own
+        if user_id in MASTER_ADMIN_IDS:
+            bots = conn.execute("SELECT * FROM bots ORDER BY id").fetchall()
+            title = "🤖 **ALL PLATFORM BOTS**"
+        else:
+            bots = conn.execute("SELECT * FROM bots WHERE owner_id = ?", (user_id,)).fetchall()
+            title = "🤖 **YOUR BOTS**"
         conn.close()
 
         if not bots:
             await update.message.reply_text("You have no bots. /createbot to start.")
             return
 
-        text = "🤖 **YOUR BOTS**\n\nClick a bot to manage:"
+        text = f"{title}\n\nClick a bot to manage:"
         keyboard = []
         for bot in bots:
             status_icon = "🟢" if bot['is_active'] else "🔴"
@@ -243,14 +250,21 @@ class MotherBot:
         """Carousel-style my bots - edit existing message instead of new"""
         user_id = update.effective_user.id
         conn = self.db.get_connection()
-        bots = conn.execute("SELECT * FROM bots WHERE owner_id = ?", (user_id,)).fetchall()
+        
+        # Master Admins see ALL bots, regular users see only their own
+        if user_id in MASTER_ADMIN_IDS:
+            bots = conn.execute("SELECT * FROM bots ORDER BY id").fetchall()
+            title = "🤖 **ALL PLATFORM BOTS**"
+        else:
+            bots = conn.execute("SELECT * FROM bots WHERE owner_id = ?", (user_id,)).fetchall()
+            title = "🤖 **YOUR BOTS**"
         conn.close()
 
         if not bots:
             await update.callback_query.message.edit_text("You have no bots. Use /createbot to start.")
             return
 
-        text = "🤖 **YOUR BOTS**\n\nClick a bot to manage:"
+        text = f"{title}\n\nClick a bot to manage:"
         keyboard = []
         for bot in bots:
             status_icon = "🟢" if bot['is_active'] else "🔴"
