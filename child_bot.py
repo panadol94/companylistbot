@@ -143,6 +143,12 @@ class ChildBot:
 
         # Support System & Text
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+        
+        # Channel Post Handler (for forwarder)
+        self.app.add_handler(MessageHandler(
+            filters.ChatType.CHANNEL, 
+            self.handle_channel_post
+        ))
 
     # --- Group Commands ---
     async def cmd_list_companies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -710,6 +716,11 @@ class ChildBot:
         livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
         livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
         
+        # Check forwarder status
+        forwarder_config = self.db.get_forwarder_config(self.bot_id)
+        forwarder_active = forwarder_config and forwarder_config.get('is_active')
+        forwarder_btn_text = "🟢 Forwarder: ON" if forwarder_active else "🔴 Forwarder: OFF"
+        
         # Check pending schedules
         pending = self.db.get_pending_broadcasts(self.bot_id)
         schedule_text = f"🔄 Reset Schedule ({len(pending)})" if pending else "📅 No Schedules"
@@ -724,7 +735,7 @@ class ChildBot:
             [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
             [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
-            [InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring")],
+            [InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring"), InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu")],
             [InlineKeyboardButton("📊 Analytics", callback_data="show_analytics"), InlineKeyboardButton("📥 Export Data", callback_data="export_data")],
         ]
         # Only owner can manage admins
@@ -811,6 +822,13 @@ class ChildBot:
         elif data.startswith("copair2_"): await self.complete_co_pair(update)
         elif data.startswith("unpair_co_btn_"): await self.unpair_company_btn(update, int(data.split("_")[3]))
         elif data == "ef_manage_btns": await self.show_company_buttons_from_edit(update, context)
+        # Forwarder Menu
+        elif data == "forwarder_menu": await self.show_forwarder_menu(update)
+        elif data == "forwarder_toggle": await self.toggle_forwarder(update)
+        elif data == "forwarder_set_source": await self.forwarder_set_source_start(update, context)
+        elif data == "forwarder_set_target": await self.forwarder_set_target_start(update, context)
+        elif data == "forwarder_set_filter": await self.forwarder_set_filter_start(update, context)
+        elif data == "forwarder_clear_filter": await self.forwarder_clear_filter(update)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -3041,9 +3059,329 @@ class ChildBot:
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages"""
+        # Check if waiting for forwarder source channel
+        if context.user_data.get('waiting_forwarder_source'):
+            await self.save_forwarder_source(update, context)
+            return
+        
+        # Check if waiting for forwarder target group
+        if context.user_data.get('waiting_forwarder_target'):
+            await self.save_forwarder_target(update, context)
+            return
+        
+        # Check if waiting for forwarder filter
+        if context.user_data.get('waiting_forwarder_filter'):
+            await self.save_forwarder_filter(update, context)
+            return
+        
         # Check if waiting for 4D number input
         if context.user_data.get('waiting_4d_check'):
             await self.check_4d_number(update, context)
             return
         
         # Add other message handlers here if needed
+
+    # ==================== FORWARDER FUNCTIONS ====================
+    
+    async def show_forwarder_menu(self, update: Update):
+        """Show forwarder configuration menu"""
+        config = self.db.get_forwarder_config(self.bot_id)
+        
+        if config:
+            source_name = config.get('source_channel_name') or config.get('source_channel_id') or 'Not Set'
+            target_name = config.get('target_group_name') or config.get('target_group_id') or 'Not Set'
+            filter_keywords = config.get('filter_keywords') or 'None (All messages)'
+            is_active = config.get('is_active')
+            status = "🟢 ACTIVE" if is_active else "🔴 INACTIVE"
+        else:
+            source_name = "Not Set"
+            target_name = "Not Set"
+            filter_keywords = "None"
+            status = "🔴 INACTIVE"
+        
+        text = (
+            "📡 **CHANNEL FORWARDER**\n\n"
+            f"📢 Source: `{source_name}`\n"
+            f"💬 Target: `{target_name}`\n"
+            f"🔍 Filter: {filter_keywords}\n"
+            f"📊 Status: {status}\n\n"
+            "ℹ️ _Bot mesti jadi admin di source channel & target group_"
+        )
+        
+        toggle_text = "🔴 OFF" if (config and config.get('is_active')) else "🟢 ON"
+        
+        keyboard = [
+            [InlineKeyboardButton("📢 Set Source Channel", callback_data="forwarder_set_source")],
+            [InlineKeyboardButton("💬 Set Target Group", callback_data="forwarder_set_target")],
+            [InlineKeyboardButton("🔍 Set Filter Keywords", callback_data="forwarder_set_filter")],
+            [InlineKeyboardButton("🗑️ Clear Filter", callback_data="forwarder_clear_filter")],
+            [InlineKeyboardButton(f"Toggle {toggle_text}", callback_data="forwarder_toggle")],
+            [InlineKeyboardButton("« Back", callback_data="close_panel")]
+        ]
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def toggle_forwarder(self, update: Update):
+        """Toggle forwarder on/off"""
+        config = self.db.get_forwarder_config(self.bot_id)
+        
+        if not config or not config.get('source_channel_id') or not config.get('target_group_id'):
+            await update.callback_query.answer("❌ Set source & target dulu!", show_alert=True)
+            return
+        
+        new_state = self.db.toggle_forwarder(self.bot_id)
+        
+        if new_state is not None:
+            status = "🟢 AKTIF" if new_state else "🔴 TIDAK AKTIF"
+            await update.callback_query.answer(f"Forwarder sekarang: {status}", show_alert=True)
+        else:
+            await update.callback_query.answer("❌ Error toggling forwarder", show_alert=True)
+        
+        await self.show_forwarder_menu(update)
+    
+    async def forwarder_set_source_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start set source channel flow"""
+        text = (
+            "📢 **SET SOURCE CHANNEL**\n\n"
+            "Forward satu message dari channel yang anda mahu jadikan source.\n\n"
+            "Atau hantar Channel ID (contoh: `-1001234567890`)"
+        )
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="forwarder_menu")]]
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        context.user_data['waiting_forwarder_source'] = True
+    
+    async def save_forwarder_source(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save source channel from forwarded message or ID"""
+        context.user_data.pop('waiting_forwarder_source', None)
+        
+        if update.message.forward_from_chat:
+            # Got forwarded message
+            channel = update.message.forward_from_chat
+            channel_id = channel.id
+            channel_name = channel.title or channel.username or str(channel_id)
+        else:
+            # Try to parse as channel ID
+            try:
+                channel_id = int(update.message.text.strip())
+                channel_name = str(channel_id)
+            except ValueError:
+                await update.message.reply_text("❌ ID tidak sah. Hantar ID bermula dengan `-100`")
+                return
+        
+        # Get existing config or create placeholder for target
+        config = self.db.get_forwarder_config(self.bot_id)
+        target_id = config.get('target_group_id') if config else None
+        target_name = config.get('target_group_name') if config else None
+        filter_keywords = config.get('filter_keywords') if config else None
+        
+        success = self.db.save_forwarder_config(
+            self.bot_id, channel_id, channel_name, target_id, target_name, filter_keywords
+        )
+        
+        if success:
+            await update.message.reply_text(f"✅ Source channel ditetapkan: `{channel_name}`", parse_mode='Markdown')
+        else:
+            await update.message.reply_text("❌ Gagal menyimpan. Cuba lagi.")
+    
+    async def forwarder_set_target_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start set target group flow"""
+        text = (
+            "💬 **SET TARGET GROUP**\n\n"
+            "Forward satu message dari group yang anda mahu jadikan target.\n\n"
+            "Atau hantar Group ID (contoh: `-1009876543210`)"
+        )
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="forwarder_menu")]]
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        context.user_data['waiting_forwarder_target'] = True
+    
+    async def save_forwarder_target(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save target group from forwarded message or ID"""
+        context.user_data.pop('waiting_forwarder_target', None)
+        
+        if update.message.forward_from_chat:
+            # Got forwarded message
+            group = update.message.forward_from_chat
+            group_id = group.id
+            group_name = group.title or group.username or str(group_id)
+        else:
+            # Try to parse as group ID
+            try:
+                group_id = int(update.message.text.strip())
+                group_name = str(group_id)
+            except ValueError:
+                await update.message.reply_text("❌ ID tidak sah. Hantar ID bermula dengan `-100`")
+                return
+        
+        # Get existing config
+        config = self.db.get_forwarder_config(self.bot_id)
+        source_id = config.get('source_channel_id') if config else None
+        source_name = config.get('source_channel_name') if config else None
+        filter_keywords = config.get('filter_keywords') if config else None
+        
+        success = self.db.save_forwarder_config(
+            self.bot_id, source_id, source_name, group_id, group_name, filter_keywords
+        )
+        
+        if success:
+            await update.message.reply_text(f"✅ Target group ditetapkan: `{group_name}`", parse_mode='Markdown')
+        else:
+            await update.message.reply_text("❌ Gagal menyimpan. Cuba lagi.")
+    
+    async def forwarder_set_filter_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start set filter flow"""
+        text = (
+            "🔍 **SET FILTER KEYWORDS**\n\n"
+            "Hantar keywords, dipisahkan dengan koma.\n\n"
+            "Contoh: `promo, offer, discount`\n\n"
+            "Hanya message yang mengandungi keywords ini akan diforward.\n"
+            "Kosongkan untuk forward semua message."
+        )
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="forwarder_menu")]]
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        context.user_data['waiting_forwarder_filter'] = True
+    
+    async def save_forwarder_filter(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save filter keywords"""
+        context.user_data.pop('waiting_forwarder_filter', None)
+        
+        keywords = update.message.text.strip()
+        
+        if keywords.lower() in ['none', 'clear', 'kosong', '-']:
+            keywords = None
+        
+        success = self.db.update_forwarder_filter(self.bot_id, keywords)
+        
+        if success:
+            if keywords:
+                await update.message.reply_text(f"✅ Filter ditetapkan: `{keywords}`", parse_mode='Markdown')
+            else:
+                await update.message.reply_text("✅ Filter dikosongkan. Semua message akan diforward.")
+        else:
+            await update.message.reply_text("❌ Gagal menyimpan. Cuba lagi.")
+    
+    async def forwarder_clear_filter(self, update: Update):
+        """Clear filter keywords"""
+        success = self.db.update_forwarder_filter(self.bot_id, None)
+        
+        if success:
+            await update.callback_query.answer("✅ Filter dikosongkan!", show_alert=True)
+        else:
+            await update.callback_query.answer("❌ Gagal clear filter", show_alert=True)
+        
+        await self.show_forwarder_menu(update)
+
+    async def handle_channel_post(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle channel posts for forwarding to target group"""
+        try:
+            # Get forwarder config
+            config = self.db.get_forwarder_config(self.bot_id)
+            
+            if not config or not config.get('is_active'):
+                return  # Forwarder not configured or inactive
+            
+            source_channel_id = config.get('source_channel_id')
+            target_group_id = config.get('target_group_id')
+            filter_keywords = config.get('filter_keywords')
+            
+            if not source_channel_id or not target_group_id:
+                return  # Not properly configured
+            
+            # Check if message is from source channel
+            if update.effective_chat.id != source_channel_id:
+                return  # Not from our source channel
+            
+            message = update.effective_message
+            
+            # Apply keyword filter if set
+            if filter_keywords:
+                keywords = [k.strip().lower() for k in filter_keywords.split(',')]
+                message_text = (message.text or message.caption or '').lower()
+                
+                # Check if any keyword is in the message
+                if not any(keyword in message_text for keyword in keywords):
+                    self.logger.debug(f"Message filtered out - no matching keywords")
+                    return  # Message doesn't match filter
+            
+            # Forward message content (copy, not forward) to target group
+            try:
+                if message.text:
+                    # Text-only message
+                    await context.bot.send_message(
+                        chat_id=target_group_id,
+                        text=message.text,
+                        entities=message.entities,
+                        parse_mode=None  # Use entities instead
+                    )
+                elif message.photo:
+                    # Photo message
+                    await context.bot.send_photo(
+                        chat_id=target_group_id,
+                        photo=message.photo[-1].file_id,  # Largest photo
+                        caption=message.caption,
+                        caption_entities=message.caption_entities
+                    )
+                elif message.video:
+                    # Video message
+                    await context.bot.send_video(
+                        chat_id=target_group_id,
+                        video=message.video.file_id,
+                        caption=message.caption,
+                        caption_entities=message.caption_entities
+                    )
+                elif message.document:
+                    # Document message
+                    await context.bot.send_document(
+                        chat_id=target_group_id,
+                        document=message.document.file_id,
+                        caption=message.caption,
+                        caption_entities=message.caption_entities
+                    )
+                elif message.animation:
+                    # GIF/Animation message
+                    await context.bot.send_animation(
+                        chat_id=target_group_id,
+                        animation=message.animation.file_id,
+                        caption=message.caption,
+                        caption_entities=message.caption_entities
+                    )
+                elif message.audio:
+                    # Audio message
+                    await context.bot.send_audio(
+                        chat_id=target_group_id,
+                        audio=message.audio.file_id,
+                        caption=message.caption,
+                        caption_entities=message.caption_entities
+                    )
+                elif message.voice:
+                    # Voice message
+                    await context.bot.send_voice(
+                        chat_id=target_group_id,
+                        voice=message.voice.file_id,
+                        caption=message.caption
+                    )
+                elif message.sticker:
+                    # Sticker
+                    await context.bot.send_sticker(
+                        chat_id=target_group_id,
+                        sticker=message.sticker.file_id
+                    )
+                else:
+                    # Fallback - try to copy message
+                    await message.copy(chat_id=target_group_id)
+                
+                self.logger.info(f"📡 Forwarded message from {source_channel_id} to {target_group_id}")
+                
+            except Exception as e:
+                self.logger.error(f"Failed to forward message: {e}")
+                
+        except Exception as e:
+            self.logger.error(f"Channel post handler error: {e}")

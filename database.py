@@ -144,11 +144,29 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     bot_id INTEGER NOT NULL,
                     source_channel_id INTEGER,
+                    source_channel_name TEXT,
                     target_group_id INTEGER,
+                    target_group_name TEXT,
+                    filter_keywords TEXT,
                     is_active BOOLEAN DEFAULT 0,
-                    FOREIGN KEY(bot_id) REFERENCES bots(id)
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
                 )
             ''')
+            
+            # Migration: Add filter_keywords column if missing
+            try:
+                cursor.execute("ALTER TABLE forwarder_config ADD COLUMN filter_keywords TEXT")
+            except:
+                pass
+            try:
+                cursor.execute("ALTER TABLE forwarder_config ADD COLUMN source_channel_name TEXT")
+            except:
+                pass
+            try:
+                cursor.execute("ALTER TABLE forwarder_config ADD COLUMN target_group_name TEXT")
+            except:
+                pass
 
             # 7. Menu Buttons Table (Custom buttons for /start menu)
             cursor.execute('''
@@ -933,6 +951,99 @@ class Database:
         ).fetchone()
         conn.close()
         return owner is not None
+
+    # ==================== FORWARDER CONFIG ====================
+    
+    def save_forwarder_config(self, bot_id, source_channel_id, source_channel_name, 
+                               target_group_id, target_group_name, filter_keywords=None):
+        """Save or update forwarder configuration"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                # Check if config exists
+                existing = conn.execute(
+                    "SELECT id FROM forwarder_config WHERE bot_id = ?", (bot_id,)
+                ).fetchone()
+                
+                if existing:
+                    conn.execute(
+                        """UPDATE forwarder_config SET 
+                           source_channel_id = ?, source_channel_name = ?,
+                           target_group_id = ?, target_group_name = ?,
+                           filter_keywords = ?
+                           WHERE bot_id = ?""",
+                        (source_channel_id, source_channel_name, target_group_id, 
+                         target_group_name, filter_keywords, bot_id)
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO forwarder_config 
+                           (bot_id, source_channel_id, source_channel_name, 
+                            target_group_id, target_group_name, filter_keywords, is_active)
+                           VALUES (?, ?, ?, ?, ?, ?, 0)""",
+                        (bot_id, source_channel_id, source_channel_name, 
+                         target_group_id, target_group_name, filter_keywords)
+                    )
+                conn.commit()
+                return True
+            except Exception as e:
+                print(f"Error saving forwarder config: {e}")
+                return False
+            finally:
+                conn.close()
+    
+    def get_forwarder_config(self, bot_id):
+        """Get forwarder configuration for a bot"""
+        conn = self.get_connection()
+        config = conn.execute(
+            "SELECT * FROM forwarder_config WHERE bot_id = ?", (bot_id,)
+        ).fetchone()
+        conn.close()
+        return dict(config) if config else None
+    
+    def toggle_forwarder(self, bot_id):
+        """Toggle forwarder on/off"""
+        with self.lock:
+            conn = self.get_connection()
+            current = conn.execute(
+                "SELECT is_active FROM forwarder_config WHERE bot_id = ?", (bot_id,)
+            ).fetchone()
+            
+            if not current:
+                conn.close()
+                return None
+            
+            new_state = 0 if current['is_active'] else 1
+            conn.execute(
+                "UPDATE forwarder_config SET is_active = ? WHERE bot_id = ?",
+                (new_state, bot_id)
+            )
+            conn.commit()
+            conn.close()
+            return new_state
+    
+    def update_forwarder_filter(self, bot_id, filter_keywords):
+        """Update filter keywords for forwarder"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "UPDATE forwarder_config SET filter_keywords = ? WHERE bot_id = ?",
+                (filter_keywords, bot_id)
+            )
+            conn.commit()
+            conn.close()
+            return True
+    
+    def get_all_active_forwarders(self):
+        """Get all active forwarder configs (for global handler)"""
+        conn = self.get_connection()
+        configs = conn.execute(
+            """SELECT fc.*, b.token FROM forwarder_config fc
+               JOIN bots b ON fc.bot_id = b.id
+               WHERE fc.is_active = 1"""
+        ).fetchall()
+        conn.close()
+        return [dict(c) for c in configs]
 
     # ==================== CLONE BOT ====================
     
