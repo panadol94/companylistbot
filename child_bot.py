@@ -1,7 +1,7 @@
 import logging
 import datetime
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, ChatMemberUpdated
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, InputMediaAnimation, ChatMemberUpdated
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatMemberHandler
 from database import Database
 from config import DEFAULT_GLOBAL_AD
@@ -598,16 +598,56 @@ class ChildBot:
             keyboard.append([InlineKeyboardButton("📤 REQUEST WITHDRAWAL", callback_data="req_withdraw")])
         keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
         
-        try:
-            await update.callback_query.message.delete()
-        except:
-            pass
-        await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        # Carousel Logic: Try to edit caption if photo exists, else edit text
+        if update.callback_query:
+            try:
+                # Check if message has photo/video
+                if update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation:
+                     await update.callback_query.message.edit_caption(
+                        caption=text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                     )
+                else:
+                    await update.callback_query.message.edit_text(
+                        text, 
+                        reply_markup=InlineKeyboardMarkup(keyboard), 
+                        parse_mode='Markdown'
+                    )
+            except Exception as e:
+                # Fallback on error (e.g. media type change or unknown error)
+                try: await update.callback_query.message.delete()
+                except: pass
+                await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def show_share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_uname = context.bot.username
         link = f"https://t.me/{bot_uname}?start={update.effective_user.id}"
-        await update.callback_query.message.reply_text(f"🔗 Link Referral Anda:\n{link}\n\nShare link ini dan dapatkan RM1.00 setiap invite!")
+        text = f"🔗 **LINK REFERRAL ANDA**\n\n`{link}`\n\nShare link ini dan dapatkan **RM1.00** setiap invite!"
+        keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
+        
+        if update.callback_query:
+            try:
+                if update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation:
+                     await update.callback_query.message.edit_caption(
+                        caption=text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                     )
+                else:
+                    await update.callback_query.message.edit_text(
+                        text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+            except:
+                try: await update.callback_query.message.delete()
+                except: pass
+                await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+             await update.message.reply_text(text, parse_mode='Markdown')
 
     async def show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Simple Logic: Top users by invite
@@ -629,27 +669,72 @@ class ChildBot:
         asset = self.db.get_asset(self.bot_id, 'leaderboard')
         
         if asset:
-             try:
-                 await update.callback_query.message.delete()
-             except:
-                 pass
-                 
+             # Case 1: Custom Asset Exists (Force Media)
              caption_header = asset.get('caption')
-             if caption_header:
-                 final_caption = f"{caption_header}\n\n{list_text}"
-             else:
-                 final_caption = text
+             final_caption = f"{caption_header}\n\n{list_text}" if caption_header else text
+             
+             try:
+                 if asset['file_type'] == 'photo':
+                     # If current msg is photo/video, edit media. Else delete + send.
+                     if update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video):
+                         await update.callback_query.message.edit_media(
+                             media=InputMediaPhoto(media=asset['file_id'], caption=final_caption, parse_mode='Markdown'),
+                             reply_markup=InlineKeyboardMarkup(buttons)
+                         )
+                     else:
+                         # Transition Text -> Photo (or if edit fails)
+                         if update.callback_query: 
+                            try: await update.callback_query.message.delete()
+                            except: pass
+                         await update.effective_chat.send_photo(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
                  
-             if asset['file_type'] == 'photo':
-                 await update.effective_chat.send_photo(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
-             elif asset['file_type'] == 'video':
-                 await update.effective_chat.send_video(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+                 elif asset['file_type'] == 'video':
+                     if update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video):
+                         await update.callback_query.message.edit_media(
+                             media=InputMediaVideo(media=asset['file_id'], caption=final_caption, parse_mode='Markdown'),
+                             reply_markup=InlineKeyboardMarkup(buttons)
+                         )
+                     else:
+                         if update.callback_query: 
+                            try: await update.callback_query.message.delete()
+                            except: pass
+                         await update.effective_chat.send_video(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+                 else:
+                     # Fallback for animations etc
+                     if update.callback_query: 
+                        try: await update.callback_query.message.delete()
+                        except: pass
+                     await update.effective_chat.send_animation(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+             except Exception as e:
+                 self.logger.error(f"Error showing leaderboard asset: {e}")
+                 # Fallback
+                 await update.effective_chat.send_message(final_caption, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
         else:
-            try:
-                await update.callback_query.message.delete()
-            except:
-                pass
-            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+             # Case 2: No Custom Asset (Text Mode or Preserve Existing Banner)
+             if update.callback_query:
+                 try:
+                     is_media = update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation
+                     if is_media:
+                         # Preserve existing banner!
+                         await update.callback_query.message.edit_caption(
+                             caption=text,
+                             reply_markup=InlineKeyboardMarkup(buttons),
+                             parse_mode='Markdown'
+                         )
+                     else:
+                         # Text -> Text
+                         await update.callback_query.message.edit_text(
+                             text, 
+                             reply_markup=InlineKeyboardMarkup(buttons), 
+                             parse_mode='Markdown'
+                         )
+                 except:
+                     # Fallback
+                     try: await update.callback_query.message.delete()
+                     except: pass
+                     await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+             else:
+                 await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
 
     # --- Admin Dashboard ---
     async def withdraw_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
