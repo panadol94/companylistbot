@@ -3211,7 +3211,7 @@ class ChildBot:
     
     async def save_forwarder_source(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Save source channel from forwarded message or ID"""
-        context.user_data.pop('waiting_forwarder_source', None)
+        # DON'T pop state yet - user might need to retry if detection fails
         
         channel_id = None
         channel_name = None
@@ -3260,6 +3260,9 @@ class ChildBot:
         )
         
         if success:
+            # Clear waiting state on success
+            context.user_data.pop('waiting_forwarder_source', None)
+            
             # Check if setup is complete (both source and target set)
             if target_id:
                 await self.show_forwarder_complete_notification(update, channel_name, target_name, filter_keywords)
@@ -3287,7 +3290,7 @@ class ChildBot:
     
     async def save_forwarder_target(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Save target group from forwarded message or ID"""
-        context.user_data.pop('waiting_forwarder_target', None)
+        # DON'T pop state yet - user might need to retry if detection fails
         
         group_id = None
         group_name = None
@@ -3336,6 +3339,9 @@ class ChildBot:
         )
         
         if success:
+            # Clear waiting state on success
+            context.user_data.pop('waiting_forwarder_target', None)
+            
             # Check if setup is complete (both source and target set)
             if source_id:
                 await self.show_forwarder_complete_notification(update, source_name, group_name, filter_keywords)
