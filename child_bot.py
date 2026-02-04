@@ -199,6 +199,7 @@ class ChildBot:
         
         keyboard = [
             [InlineKeyboardButton("🏢 LIST COMPANY", callback_data="list_page_0")],
+            [InlineKeyboardButton("🎰 4D STATS", callback_data="4d_menu")],
         ]
         
         # Only show referral buttons if enabled
@@ -617,6 +618,14 @@ class ChildBot:
         elif data == "leaderboard":
             await self.show_leaderboard(update, context)
         
+        # 4D Stats Handlers
+        elif data == "4d_menu": await self.show_4d_menu(update)
+        elif data == "4d_hot_numbers": await self.show_4d_hot_numbers(update)
+        elif data == "4d_cold_numbers": await self.show_4d_cold_numbers(update)
+        elif data == "4d_lucky_gen": await self.generate_4d_lucky(update)
+        elif data == "4d_digit_freq": await self.show_4d_digit_frequency(update)
+        elif data == "4d_refresh": await self.refresh_4d_data(update)
+        
         # Admin Actions
         elif data == "admin_withdrawals": await self.show_withdrawals(update)
         elif data.startswith("approve_wd_"): await self.process_withdrawal(update, data, True)
@@ -875,6 +884,197 @@ class ChildBot:
         keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]]
         await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
+    # --- 4D Stats Module ---
+    async def show_4d_menu(self, update: Update):
+        """Show 4D stats main menu"""
+        stats = self.db.get_4d_statistics()
+        
+        if stats:
+            stats_text = f"📊 Data: {stats['total_draws']} draws analyzed"
+        else:
+            stats_text = "⚠️ Belum ada data. Tekan Refresh untuk load."
+        
+        text = (
+            "🎰 **4D STATISTICAL ANALYZER**\n\n"
+            f"{stats_text}\n\n"
+            "Pilih analisis yang anda mahu:\n\n"
+            "⚠️ _Disclaimer: Ini untuk hiburan sahaja._\n"
+            "_Tiada jaminan menang._"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔥 Hot Numbers", callback_data="4d_hot_numbers"), 
+             InlineKeyboardButton("❄️ Cold Numbers", callback_data="4d_cold_numbers")],
+            [InlineKeyboardButton("📊 Digit Frequency", callback_data="4d_digit_freq")],
+            [InlineKeyboardButton("🎯 Generate Lucky Number", callback_data="4d_lucky_gen")],
+            [InlineKeyboardButton("🔄 Refresh Data", callback_data="4d_refresh")],
+            [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
+        ]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def show_4d_hot_numbers(self, update: Update):
+        """Show frequently appearing numbers"""
+        stats = self.db.get_4d_statistics()
+        
+        if not stats:
+            await update.callback_query.answer("Tiada data! Sila Refresh dulu.", show_alert=True)
+            return
+        
+        text = "🔥 **HOT NUMBERS**\n\n"
+        text += "Nombor yang paling kerap keluar:\n\n"
+        
+        text += "**🔢 Hot Digits:**\n"
+        for digit, count in stats['hot_digits']:
+            bar = "█" * min(count // 10, 10)
+            text += f"`{digit}` - {count}x {bar}\n"
+        
+        text += "\n**🎯 Hot 4D Numbers:**\n"
+        for num, count in stats['hot_numbers'][:5]:
+            text += f"`{num}` - {count}x keluar\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def show_4d_cold_numbers(self, update: Update):
+        """Show rarely appearing numbers"""
+        stats = self.db.get_4d_statistics()
+        
+        if not stats:
+            await update.callback_query.answer("Tiada data! Sila Refresh dulu.", show_alert=True)
+            return
+        
+        text = "❄️ **COLD NUMBERS**\n\n"
+        text += "Digit yang jarang keluar:\n\n"
+        
+        for digit, count in stats['cold_digits']:
+            bar = "░" * min(count // 10, 10)
+            text += f"`{digit}` - {count}x {bar}\n"
+        
+        text += "\n💡 _Cold numbers mungkin akan keluar soon!_"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def show_4d_digit_frequency(self, update: Update):
+        """Show digit frequency chart"""
+        stats = self.db.get_4d_statistics()
+        
+        if not stats:
+            await update.callback_query.answer("Tiada data! Sila Refresh dulu.", show_alert=True)
+            return
+        
+        text = "📊 **DIGIT FREQUENCY**\n\n"
+        
+        freq = stats['digit_frequency']
+        max_count = max(freq.values()) if freq.values() else 1
+        
+        for digit in range(10):
+            count = freq.get(str(digit), 0)
+            bar_len = int((count / max_count) * 10)
+            bar = "█" * bar_len + "░" * (10 - bar_len)
+            text += f"`{digit}` {bar} {count}\n"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def generate_4d_lucky(self, update: Update):
+        """Generate lucky numbers based on statistics"""
+        import random
+        
+        stats = self.db.get_4d_statistics()
+        
+        # Generate numbers with bias towards hot digits if we have stats
+        numbers = []
+        for _ in range(5):
+            if stats and stats['hot_digits']:
+                # 60% chance to use hot digits
+                hot = [d[0] for d in stats['hot_digits'][:5]]
+                num = ""
+                for _ in range(4):
+                    if random.random() < 0.6 and hot:
+                        num += random.choice(hot)
+                    else:
+                        num += str(random.randint(0, 9))
+                numbers.append(num)
+            else:
+                # Pure random
+                numbers.append(f"{random.randint(0, 9999):04d}")
+        
+        user = update.effective_user
+        text = (
+            f"🎯 **LUCKY NUMBERS**\n"
+            f"_untuk @{user.username or user.first_name}_\n\n"
+        )
+        
+        emojis = ["🔮", "⭐", "💫", "🍀", "🧧"]
+        for i, num in enumerate(numbers):
+            text += f"{emojis[i]} `{num}`\n"
+        
+        text += f"\n📅 {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+        text += "\n✨ _Good Luck! Huat Ah!_ 🧧\n"
+        text += "\n⚠️ _For entertainment only_"
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Generate Lagi", callback_data="4d_lucky_gen")],
+            [InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]
+        ]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def refresh_4d_data(self, update: Update):
+        """Fetch latest 4D data from web sources"""
+        await update.callback_query.answer("🔄 Loading 4D data...", show_alert=False)
+        
+        try:
+            # Import scraper
+            from utils_4d import fetch_all_4d_results
+            
+            results = await fetch_all_4d_results()
+            
+            if results:
+                for company, data in results.items():
+                    for draw in data:
+                        self.db.save_4d_result(
+                            company=company,
+                            draw_date=draw['date'],
+                            first=draw['first'],
+                            second=draw['second'],
+                            third=draw['third'],
+                            special=draw['special'],
+                            consolation=draw['consolation']
+                        )
+                
+                await update.callback_query.answer(f"✅ Loaded data dari {len(results)} companies!", show_alert=True)
+            else:
+                await update.callback_query.answer("⚠️ Gagal fetch data. Cuba lagi.", show_alert=True)
+        except ImportError:
+            # If scraper not available, use sample data for demo
+            await self._load_sample_4d_data()
+            await update.callback_query.answer("✅ Sample data loaded for demo!", show_alert=True)
+        except Exception as e:
+            self.logger.error(f"4D fetch error: {e}")
+            await update.callback_query.answer("❌ Error fetching data", show_alert=True)
+        
+        # Refresh menu
+        await self.show_4d_menu(update)
+
+    async def _load_sample_4d_data(self):
+        """Load sample 4D data for demo purposes"""
+        import random
+        
+        companies = ['MAGNUM', 'TOTO', 'DAMACAI']
+        
+        for company in companies:
+            for days_ago in range(30):
+                date = (datetime.datetime.now() - datetime.timedelta(days=days_ago)).strftime('%Y-%m-%d')
+                
+                # Generate random results
+                first = f"{random.randint(0, 9999):04d}"
+                second = f"{random.randint(0, 9999):04d}"
+                third = f"{random.randint(0, 9999):04d}"
+                special = ",".join([f"{random.randint(0, 9999):04d}" for _ in range(10)])
+                consolation = ",".join([f"{random.randint(0, 9999):04d}" for _ in range(10)])
+                
+                self.db.save_4d_result(company, date, first, second, third, special, consolation)
     
     # --- Delete Company Logic ---
     async def show_delete_company_list(self, update: Update):

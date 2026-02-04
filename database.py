@@ -200,6 +200,22 @@ class Database:
                 )
             ''')
 
+            # 11. 4D Results Table (Historical 4D data)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS results_4d (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    company TEXT NOT NULL,
+                    draw_date DATE NOT NULL,
+                    first_prize TEXT,
+                    second_prize TEXT,
+                    third_prize TEXT,
+                    special_prizes TEXT,
+                    consolation_prizes TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(company, draw_date)
+                )
+            ''')
+
             # Create indexes for better query performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_companies_bot_id ON companies(bot_id)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_bot_id ON users(bot_id)')
@@ -1192,4 +1208,83 @@ class Database:
         )
         conn.commit()
         conn.close()
+
+    # ==================== 4D RESULTS ====================
+    
+    def save_4d_result(self, company, draw_date, first, second, third, special, consolation):
+        """Save 4D result to database"""
+        conn = self.get_connection()
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO results_4d 
+                   (company, draw_date, first_prize, second_prize, third_prize, special_prizes, consolation_prizes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (company, draw_date, first, second, third, special, consolation)
+            )
+            conn.commit()
+            return True
+        except Exception as e:
+            return False
+        finally:
+            conn.close()
+
+    def get_4d_results(self, company=None, limit=30):
+        """Get 4D results history"""
+        conn = self.get_connection()
+        if company:
+            results = conn.execute(
+                "SELECT * FROM results_4d WHERE company = ? ORDER BY draw_date DESC LIMIT ?",
+                (company, limit)
+            ).fetchall()
+        else:
+            results = conn.execute(
+                "SELECT * FROM results_4d ORDER BY draw_date DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+        conn.close()
+        return [dict(r) for r in results]
+
+    def get_4d_statistics(self, company=None, limit=100):
+        """Analyze 4D statistics - digit frequency, hot/cold numbers"""
+        results = self.get_4d_results(company, limit)
+        
+        if not results:
+            return None
+        
+        # Collect all winning numbers
+        all_numbers = []
+        for r in results:
+            for prize in [r['first_prize'], r['second_prize'], r['third_prize']]:
+                if prize:
+                    all_numbers.append(prize)
+            # Parse special and consolation (comma separated)
+            if r['special_prizes']:
+                all_numbers.extend(r['special_prizes'].split(','))
+            if r['consolation_prizes']:
+                all_numbers.extend(r['consolation_prizes'].split(','))
+        
+        # Count digit frequency
+        digit_count = {str(i): 0 for i in range(10)}
+        number_count = {}
+        
+        for num in all_numbers:
+            num = num.strip()
+            if len(num) == 4:
+                number_count[num] = number_count.get(num, 0) + 1
+                for digit in num:
+                    digit_count[digit] = digit_count.get(digit, 0) + 1
+        
+        # Sort by frequency
+        hot_digits = sorted(digit_count.items(), key=lambda x: x[1], reverse=True)
+        cold_digits = sorted(digit_count.items(), key=lambda x: x[1])
+        hot_numbers = sorted(number_count.items(), key=lambda x: x[1], reverse=True)[:10]
+        
+        return {
+            'total_draws': len(results),
+            'total_numbers': len(all_numbers),
+            'hot_digits': hot_digits[:5],
+            'cold_digits': cold_digits[:5],
+            'hot_numbers': hot_numbers,
+            'digit_frequency': digit_count
+        }
 
