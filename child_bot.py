@@ -623,186 +623,203 @@ class ChildBot:
 
     # --- Wallet & Referral ---
     async def show_wallet(self, update: Update):
-        user = self.db.get_user(self.bot_id, update.effective_user.id)
-        if not user:
-            try: await update.callback_query.answer("⚠️ Data not found. Type /start again.", show_alert=True)
-            except: pass
-            return
-            
-        text = (
-            f"💰 **DOMPET ANDA**\n\n"
-            f"👤 **ID:** `{user['telegram_id']}`\n"
-            f"📊 **Total Invite:** {user['total_invites']} Orang\n"
-            f"💵 **Baki Wallet:** RM {user['balance']:.2f}\n\n"
-            f"*Min withdrawal: RM 50.00*"
-        )
-        
-        keyboard = []
-        if user['balance'] >= 50.0:
-            keyboard.append([InlineKeyboardButton("📤 REQUEST WITHDRAWAL", callback_data="req_withdraw")])
-        keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
-        
-        # Carousel Logic: Text -> Text (Edit), Media -> Text (Delete+Send)
-        if update.callback_query:
-            try: await update.callback_query.answer()
-            except: pass
-            
-            try:
-                # Check if current message is valid for edit_text
-                is_media = (update.callback_query.message.photo or 
-                           update.callback_query.message.video or 
-                           update.callback_query.message.animation)
-                
-                if is_media:
-                    # Media -> Text: Must delete and send new
-                    try: await update.callback_query.message.delete()
-                    except: pass
-                    await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-                else:
-                    # Text -> Text: Edit safely
-                    await update.callback_query.message.edit_text(
-                        text, 
-                        reply_markup=InlineKeyboardMarkup(keyboard), 
-                        parse_mode='Markdown'
-                    )
-            except Exception as e:
-                err_msg = str(e)
-                if "Message is not modified" in err_msg:
-                    return 
-                
-                self.logger.error(f"Error in show_wallet: {e}")
-                # Fallback
-                try: await update.callback_query.message.delete()
+        try:
+            user = self.db.get_user(self.bot_id, update.effective_user.id)
+            if not user:
+                try: await update.callback_query.answer("⚠️ Data not found. Type /start again.", show_alert=True)
                 except: pass
-                await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        else:
-             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-
-    async def show_share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        bot_uname = context.bot.username
-        link = f"https://t.me/{bot_uname}?start={update.effective_user.id}"
-        text = f"🔗 **LINK REFERRAL ANDA**\n\n`{link}`\n\nShare link ini dan dapatkan **RM1.00** setiap invite!"
-        keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
-        
-        if update.callback_query:
-            try: await update.callback_query.answer()
-            except: pass
-            
-            try:
-                # Check if current message is valid for edit_text
-                is_media = (update.callback_query.message.photo or 
-                           update.callback_query.message.video or 
-                           update.callback_query.message.animation)
+                return
                 
-                if is_media:
-                     # Media -> Text: Must delete and send new
-                    try: await update.callback_query.message.delete()
-                    except: pass
-                    await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-                else:
-                    await update.callback_query.message.edit_text(
-                        text,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
-                    )
-            except Exception as e:
-                err_msg = str(e)
-                if "Message is not modified" in err_msg:
-                    return 
+            # Use HTML for safety
+            text = (
+                f"💰 <b>DOMPET ANDA</b>\n\n"
+                f"👤 <b>ID:</b> <code>{user['telegram_id']}</code>\n"
+                f"📊 <b>Total Invite:</b> {user['total_invites']} Orang\n"
+                f"💵 <b>Baki Wallet:</b> RM {user['balance']:.2f}\n\n"
+                f"<i>Min withdrawal: RM 50.00</i>"
+            )
+            
+            keyboard = []
+            if user['balance'] >= 50.0:
+                keyboard.append([InlineKeyboardButton("📤 REQUEST WITHDRAWAL", callback_data="req_withdraw")])
+            keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
+            
+            # Carousel Logic: Text -> Text (Edit), Media -> Text (Delete+Send)
+            if update.callback_query:
+                try: await update.callback_query.answer()
+                except: pass
+                
+                try:
+                    is_media = (update.callback_query.message.photo or 
+                               update.callback_query.message.video or 
+                               update.callback_query.message.animation)
                     
-                self.logger.error(f"Error in show_share_link: {e}")
-                try: await update.callback_query.message.delete()
-                except: pass
-                await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        else:
-             await update.message.reply_text(text, parse_mode='Markdown')
-
-    async def show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Simple Logic: Top users by invite
-        conn = self.db.get_connection()
-        top = conn.execute("SELECT telegram_id, total_invites FROM users WHERE bot_id = ? ORDER BY total_invites DESC LIMIT 10", (self.bot_id,)).fetchall()
-        conn.close()
-        
-        # Build Leaderboard List
-        list_text = ""
-        for i, row in enumerate(top):
-            list_text += f"{i+1}. ID: `{str(row['telegram_id'])[-4:]}***` - **{row['total_invites']}** Invites\n"
-        
-        default_header = "🏆 **LEADERBOARD MINGGUAN**\n\n"
-        text = default_header + list_text
-        
-        buttons = [[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]
-        
-        # Check Asset
-        asset = self.db.get_asset(self.bot_id, 'leaderboard')
-        
-        if asset:
-             # Case 1: Custom Asset Exists (Force Media)
-             caption_header = asset.get('caption')
-             final_caption = f"{caption_header}\n\n{list_text}" if caption_header else text
-             
-             try:
-                 if asset['file_type'] == 'photo':
-                     # If current msg is photo/video, edit media. Else delete + send.
-                     if update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video):
-                         await update.callback_query.message.edit_media(
-                             media=InputMediaPhoto(media=asset['file_id'], caption=final_caption, parse_mode='Markdown'),
-                             reply_markup=InlineKeyboardMarkup(buttons)
-                         )
-                     else:
-                         # Transition Text -> Photo (or if edit fails)
-                         if update.callback_query: 
-                            try: await update.callback_query.message.delete()
-                            except: pass
-                         await update.effective_chat.send_photo(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
-                 
-                 elif asset['file_type'] == 'video':
-                     if update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video):
-                         await update.callback_query.message.edit_media(
-                             media=InputMediaVideo(media=asset['file_id'], caption=final_caption, parse_mode='Markdown'),
-                             reply_markup=InlineKeyboardMarkup(buttons)
-                         )
-                     else:
-                         if update.callback_query: 
-                            try: await update.callback_query.message.delete()
-                            except: pass
-                         await update.effective_chat.send_video(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
-                 else:
-                     # Fallback for animations etc
-                     if update.callback_query: 
+                    if is_media:
+                        # Media -> Text: Must delete and send new
                         try: await update.callback_query.message.delete()
                         except: pass
-                     await update.effective_chat.send_animation(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
-             except Exception as e:
-                 self.logger.error(f"Error showing leaderboard asset: {e}")
-                 # Fallback
-                 await update.effective_chat.send_message(final_caption, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
-        else:
-             # Case 2: No Custom Asset (Text Mode or Preserve Existing Banner)
-             if update.callback_query:
+                        await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    else:
+                        # Text -> Text: Edit safely
+                        await update.callback_query.message.edit_text(
+                            text, 
+                            reply_markup=InlineKeyboardMarkup(keyboard), 
+                            parse_mode='HTML'
+                        )
+                except Exception as e:
+                    err_msg = str(e)
+                    if "Message is not modified" in err_msg:
+                        return 
+                    
+                    self.logger.error(f"Error in show_wallet (Edit): {e}")
+                    # Fallback
+                    try: await update.callback_query.message.delete()
+                    except: pass
+                    await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            else:
+                 await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        except Exception as e:
+            self.logger.error(f"CRITICAL Error in show_wallet: {e}")
+            try: await update.effective_chat.send_message("❌ Error loading wallet.", parse_mode='HTML')
+            except: pass
+
+    async def show_share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            bot_uname = context.bot.username
+            link = f"https://t.me/{bot_uname}?start={update.effective_user.id}"
+            
+            # Use HTML for safety
+            text = (
+                f"🔗 <b>LINK REFERRAL ANDA</b>\n\n"
+                f"<code>{link}</code>\n\n"
+                f"Share link ini dan dapatkan <b>RM1.00</b> setiap invite!"
+            )
+            
+            keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
+            
+            if update.callback_query:
+                try: await update.callback_query.answer()
+                except: pass
+                
+                try:
+                    is_media = (update.callback_query.message.photo or 
+                               update.callback_query.message.video or 
+                               update.callback_query.message.animation)
+                    
+                    if is_media:
+                         # Media -> Text: Must delete and send new
+                        try: await update.callback_query.message.delete()
+                        except: pass
+                        await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    else:
+                        await update.callback_query.message.edit_text(
+                            text,
+                            reply_markup=InlineKeyboardMarkup(keyboard),
+                            parse_mode='HTML'
+                        )
+                except Exception as e:
+                    err_msg = str(e)
+                    if "Message is not modified" in err_msg:
+                        return 
+                        
+                    self.logger.error(f"Error in show_share_link (Edit): {e}")
+                    try: await update.callback_query.message.delete()
+                    except: pass
+                    await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            else:
+                 await update.message.reply_text(text, parse_mode='HTML')
+        except Exception as e:
+             self.logger.error(f"CRITICAL Error in show_share_link: {e}")
+             try: await update.effective_chat.send_message("❌ Error generating link.", parse_mode='HTML')
+             except: pass
+
+    async def show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            # Simple Logic: Top users by invite
+            conn = self.db.get_connection()
+            top = conn.execute("SELECT telegram_id, total_invites FROM users WHERE bot_id = ? ORDER BY total_invites DESC LIMIT 10", (self.bot_id,)).fetchall()
+            conn.close()
+            
+            list_text = ""
+            if not top:
+                list_text = "<i>Belum ada data.</i>"
+            else:
+                for i, row in enumerate(top):
+                    tid = row[0]
+                    invites = row[1]
+                    # Mask ID
+                    masked_id = str(tid)[:4] + "xxxx"
+                    
+                    medal = "🥇" if i==0 else "🥈" if i==1 else "🥉" if i==2 else f"#{i+1}"
+                    list_text += f"{medal} <b>ID: {masked_id}</b> - {invites} Invites\n"
+            
+            text = (
+                f"🏆 <b>TOP 10 LEADERBOARD</b>\n\n"
+                f"{list_text}\n\n"
+                f"<i>Jom invite kawan untuk naik ranking!</i>"
+            )
+            
+            keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
+            
+            # Smart Edit Logic
+            asset = self.db.get_asset(self.bot_id, 'leaderboard_photo')
+            
+            if asset:
+                 # Case 1: Custom Asset Exists (Force Media)
+                 caption_header = asset.get('caption')
+                 final_caption = f"{caption_header}\n\n{list_text}" if caption_header else text
+                 
+                 # Logic: If current is same media type, edit media. Else delete + send.
+                 if update.callback_query:
+                      try: await update.callback_query.message.delete()
+                      except: pass
+                 
+                 file_id = asset['file_id']
+                 media_type = asset.get('media_type', 'photo') # Default to photo
+                 
                  try:
-                     is_media = update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation
-                     if is_media:
-                         # Preserve existing banner!
-                         await update.callback_query.message.edit_caption(
-                             caption=text,
-                             reply_markup=InlineKeyboardMarkup(buttons),
-                             parse_mode='Markdown'
-                         )
+                     if media_type == 'video':
+                         await update.effective_chat.send_video(video=file_id, caption=final_caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                     elif media_type == 'animation':
+                         await update.effective_chat.send_animation(animation=file_id, caption=final_caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                      else:
-                         # Text -> Text
-                         await update.callback_query.message.edit_text(
-                             text, 
-                             reply_markup=InlineKeyboardMarkup(buttons), 
-                             parse_mode='Markdown'
-                         )
-                 except:
-                     # Fallback
-                     try: await update.callback_query.message.delete()
+                         await update.effective_chat.send_photo(photo=file_id, caption=final_caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                 except Exception as e:
+                     self.logger.error(f"Asset send error in leaderboard: {e}")
+                     # Fallback to text
+                     await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                      
+            else:
+                 # Case 2: No Custom Asset (Text Mode or Preserve Existing Banner)
+                 if update.callback_query:
+                     try: await update.callback_query.answer()
                      except: pass
-                     await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
-             else:
-                 await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+                     
+                     try:
+                         is_media = (update.callback_query.message.photo or 
+                                    update.callback_query.message.video or 
+                                    update.callback_query.message.animation)
+                                    
+                         if is_media:
+                             # Media -> Text: Delete + Send
+                             try: await update.callback_query.message.delete()
+                             except: pass
+                             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                         else:
+                             # Text -> Text: Edit
+                             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                     except Exception as e:
+                         # Fallback
+                         try: await update.callback_query.message.delete()
+                         except: pass
+                         await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                 else:
+                     await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                     
+        except Exception as e:
+            self.logger.error(f"CRITICAL Error in show_leaderboard: {e}")
+            try: await update.effective_chat.send_message("❌ Error loading leaderboard.", parse_mode='HTML')
+            except: pass
 
     # --- Admin Dashboard ---
     async def withdraw_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
