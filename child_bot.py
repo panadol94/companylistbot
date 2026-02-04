@@ -22,6 +22,8 @@ SEARCH = 22
 MENU_BTN_TEXT, MENU_BTN_URL = range(23, 25)
 # States for Pair Buttons
 PAIR_SELECT_1, PAIR_SELECT_2 = range(26, 28)
+# States for Recurring Broadcast
+RECURRING_TYPE = 40
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -37,6 +39,18 @@ class ChildBot:
         """Prepare bot application but do not start polling (Webhook mode)"""
         await self.app.initialize()
         await self.app.start()
+        # Reload recurring broadcast jobs from database
+        self.reload_recurring_jobs()
+
+    def reload_recurring_jobs(self):
+        """Reload recurring broadcast jobs from database on startup"""
+        recurring = self.db.get_recurring_broadcasts(self.bot_id)
+        for b in recurring:
+            try:
+                self.start_recurring_job(b['id'], b['interval_type'], b['interval_value'])
+                self.logger.info(f"Reloaded recurring job: recurring_{b['id']}")
+            except Exception as e:
+                self.logger.error(f"Failed to reload recurring job {b['id']}: {e}")
 
     async def stop(self):
         await self.app.stop()
@@ -72,7 +86,8 @@ class ChildBot:
             states={
                 BROADCAST_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, self.broadcast_content)],
                 BROADCAST_CONFIRM: [CallbackQueryHandler(self.broadcast_confirm)],
-                SCHEDULE_TIME: [CallbackQueryHandler(self.broadcast_confirm)]
+                SCHEDULE_TIME: [CallbackQueryHandler(self.broadcast_confirm)],
+                RECURRING_TYPE: [CallbackQueryHandler(self.recurring_type_handler)]
             },
             fallbacks=[CommandHandler("cancel", self.cancel_op)]
         )
@@ -572,6 +587,7 @@ class ChildBot:
             [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
             [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
             [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
+            [InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring")],
         ]
         # Only owner can manage admins
         if is_owner:
@@ -611,6 +627,8 @@ class ChildBot:
         elif data == "toggle_livegram": await self.toggle_livegram_system(update)
         elif data == "reset_schedule": await self.show_reset_schedule(update)
         elif data == "confirm_reset_schedule": await self.confirm_reset_schedule(update)
+        elif data == "manage_recurring": await self.show_manage_recurring(update)
+        elif data.startswith("stop_recurring_"): await self.stop_recurring(update, int(data.split("_")[2]))
         elif data == "admin_settings": await self.show_admin_settings(update)
         # Admin Management
         elif data == "manage_admins": await self.show_manage_admins(update)
@@ -1110,6 +1128,76 @@ class ChildBot:
         
         await update.callback_query.answer(f"✅ {deleted} schedule(s) deleted!", show_alert=True)
         await self.show_admin_settings(update)
+
+    async def show_manage_recurring(self, update: Update):
+        """Show active recurring broadcasts for management"""
+        recurring = self.db.get_recurring_broadcasts(self.bot_id)
+        
+        if not recurring:
+            await update.callback_query.message.edit_text(
+                "🔁 **MANAGE RECURRING**\n\n"
+                "Tiada recurring broadcast yang aktif.\n\n"
+                "💡 Buat broadcast baru dan pilih \"🔁 Recurring\"",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+                ]),
+                parse_mode='Markdown'
+            )
+            return
+        
+        text = "🔁 **ACTIVE RECURRING BROADCASTS**\n\n"
+        keyboard = []
+        
+        for b in recurring:
+            interval_type = b['interval_type'] or 'unknown'
+            interval_value = b['interval_value'] or 0
+            
+            if interval_type == "hours":
+                desc = f"Setiap {interval_value} jam"
+            elif interval_type == "daily":
+                desc = f"Setiap hari jam {interval_value}:00"
+            elif interval_type == "minutes":
+                desc = f"Setiap {interval_value} minit"
+            else:
+                desc = f"{interval_type} ({interval_value})"
+            
+            # Preview message
+            msg = b['message'] or ''
+            preview = msg[:25] + "..." if len(msg) > 25 else msg
+            
+            text += f"🆔 `{b['id']}` | {desc}\n"
+            text += f"   └ _{preview}_\n\n"
+            
+            keyboard.append([InlineKeyboardButton(f"🛑 Stop #{b['id']}", callback_data=f"stop_recurring_{b['id']}")])
+        
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
+        
+        await update.callback_query.message.edit_text(
+            text, 
+            reply_markup=InlineKeyboardMarkup(keyboard), 
+            parse_mode='Markdown'
+        )
+
+    async def stop_recurring(self, update: Update, broadcast_id: int):
+        """Stop a recurring broadcast"""
+        # Remove scheduler job
+        job_id = f"recurring_{broadcast_id}"
+        try:
+            self.scheduler.remove_job(job_id)
+            self.logger.info(f"Removed recurring job: {job_id}")
+        except Exception as e:
+            self.logger.warning(f"Job {job_id} not found in scheduler: {e}")
+        
+        # Delete from database
+        deleted = self.db.delete_recurring_broadcast(broadcast_id, self.bot_id)
+        
+        if deleted:
+            await update.callback_query.answer(f"✅ Recurring #{broadcast_id} stopped!", show_alert=True)
+        else:
+            await update.callback_query.answer(f"❌ Failed to stop recurring", show_alert=True)
+        
+        # Refresh list
+        await self.show_manage_recurring(update)
     
     # --- Customize Menu System ---
     async def show_customize_submenu(self, update: Update):
@@ -1766,10 +1854,11 @@ class ChildBot:
             'message': msg  # Keep original for instant send
         }
         
-        # Show Send Now vs Schedule options
+        # Show Send Now vs Schedule vs Recurring options
         keyboard = [
             [InlineKeyboardButton("📤 Send Now", callback_data="broadcast_now")],
             [InlineKeyboardButton("⏰ Schedule", callback_data="broadcast_schedule")],
+            [InlineKeyboardButton("🔁 Recurring", callback_data="broadcast_recurring")],
             [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
         ]
         await update.message.reply_text(
@@ -1877,7 +1966,226 @@ class ChildBot:
             context.user_data.pop('broadcast_data', None)
             return ConversationHandler.END
         
+        # Recurring broadcast - show type options
+        if action == "broadcast_recurring":
+            keyboard = [
+                [InlineKeyboardButton("⏰ Setiap X Jam", callback_data="recur_type_hours")],
+                [InlineKeyboardButton("📅 Setiap Hari", callback_data="recur_type_daily")],
+                [InlineKeyboardButton("⏱️ Setiap X Minit", callback_data="recur_type_minutes")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
+            ]
+            await update.callback_query.message.edit_text(
+                "🔁 **RECURRING BROADCAST**\n\nPilih jenis recurring:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return RECURRING_TYPE
+        
         return BROADCAST_CONFIRM
+
+    async def recurring_type_handler(self, update, context):
+        """Handle recurring broadcast type and interval selection"""
+        await update.callback_query.answer()
+        action = update.callback_query.data
+        
+        if action == "broadcast_cancel":
+            context.user_data.pop('broadcast_data', None)
+            await update.callback_query.message.edit_text("❌ Recurring broadcast dibatalkan.")
+            return ConversationHandler.END
+        
+        # Type selection
+        if action == "recur_type_hours":
+            keyboard = [
+                [InlineKeyboardButton("1 Jam", callback_data="recur_h_1"), 
+                 InlineKeyboardButton("2 Jam", callback_data="recur_h_2")],
+                [InlineKeyboardButton("3 Jam", callback_data="recur_h_3"), 
+                 InlineKeyboardButton("6 Jam", callback_data="recur_h_6")],
+                [InlineKeyboardButton("12 Jam", callback_data="recur_h_12"),
+                 InlineKeyboardButton("24 Jam", callback_data="recur_h_24")],
+                [InlineKeyboardButton("« Kembali", callback_data="broadcast_recurring")]
+            ]
+            await update.callback_query.message.edit_text(
+                "⏰ **SETIAP X JAM**\n\nPilih selang masa:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return RECURRING_TYPE
+        
+        if action == "recur_type_daily":
+            keyboard = [
+                [InlineKeyboardButton("8:00 AM", callback_data="recur_d_8"),
+                 InlineKeyboardButton("10:00 AM", callback_data="recur_d_10")],
+                [InlineKeyboardButton("12:00 PM", callback_data="recur_d_12"),
+                 InlineKeyboardButton("2:00 PM", callback_data="recur_d_14")],
+                [InlineKeyboardButton("6:00 PM", callback_data="recur_d_18"),
+                 InlineKeyboardButton("8:00 PM", callback_data="recur_d_20")],
+                [InlineKeyboardButton("10:00 PM", callback_data="recur_d_22")],
+                [InlineKeyboardButton("« Kembali", callback_data="broadcast_recurring")]
+            ]
+            await update.callback_query.message.edit_text(
+                "📅 **SETIAP HARI**\n\nPilih waktu broadcast:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return RECURRING_TYPE
+        
+        if action == "recur_type_minutes":
+            keyboard = [
+                [InlineKeyboardButton("15 Minit", callback_data="recur_m_15"),
+                 InlineKeyboardButton("30 Minit", callback_data="recur_m_30")],
+                [InlineKeyboardButton("45 Minit", callback_data="recur_m_45")],
+                [InlineKeyboardButton("« Kembali", callback_data="broadcast_recurring")]
+            ]
+            await update.callback_query.message.edit_text(
+                "⏱️ **SETIAP X MINIT**\n\nPilih selang masa:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return RECURRING_TYPE
+        
+        # Handle actual interval selection
+        if action.startswith("recur_h_"):
+            hours = int(action.split("_")[2])
+            return await self.save_and_start_recurring(update, context, "hours", hours)
+        
+        if action.startswith("recur_d_"):
+            hour = int(action.split("_")[2])
+            return await self.save_and_start_recurring(update, context, "daily", hour)
+        
+        if action.startswith("recur_m_"):
+            minutes = int(action.split("_")[2])
+            return await self.save_and_start_recurring(update, context, "minutes", minutes)
+        
+        return RECURRING_TYPE
+
+    async def save_and_start_recurring(self, update, context, interval_type, interval_value):
+        """Save recurring broadcast to database and start scheduler job"""
+        data = context.user_data.get('broadcast_data', {})
+        
+        # Determine media type
+        media_type = None
+        media_file_id = None
+        if data.get('photo'):
+            media_type = 'photo'
+            media_file_id = data['photo']
+        elif data.get('video'):
+            media_type = 'video'
+            media_file_id = data['video']
+        elif data.get('document'):
+            media_type = 'document'
+            media_file_id = data['document']
+        
+        # Save to database
+        broadcast_id = self.db.save_recurring_broadcast(
+            self.bot_id,
+            data.get('text', ''),
+            media_file_id,
+            media_type,
+            interval_type,
+            interval_value
+        )
+        
+        # Schedule recurring job
+        self.start_recurring_job(broadcast_id, interval_type, interval_value)
+        
+        # Format description
+        if interval_type == "hours":
+            desc = f"Setiap {interval_value} jam"
+        elif interval_type == "daily":
+            desc = f"Setiap hari jam {interval_value}:00"
+        else:
+            desc = f"Setiap {interval_value} minit"
+        
+        await update.callback_query.message.edit_text(
+            f"✅ **Recurring Broadcast Aktif!**\n\n"
+            f"🔁 Jadual: **{desc}**\n"
+            f"🆔 ID: `{broadcast_id}`\n\n"
+            f"💡 Guna `/settings` → Manage Recurring untuk stop",
+            parse_mode='Markdown'
+        )
+        context.user_data.pop('broadcast_data', None)
+        return ConversationHandler.END
+
+    def start_recurring_job(self, broadcast_id, interval_type, interval_value):
+        """Start an APScheduler job for recurring broadcast"""
+        job_id = f"recurring_{broadcast_id}"
+        
+        # Remove existing job if any
+        try:
+            self.scheduler.remove_job(job_id)
+        except:
+            pass
+        
+        if interval_type == "hours":
+            self.scheduler.add_job(
+                self.execute_recurring_broadcast,
+                'interval',
+                hours=interval_value,
+                args=[broadcast_id],
+                id=job_id
+            )
+        elif interval_type == "daily":
+            self.scheduler.add_job(
+                self.execute_recurring_broadcast,
+                'cron',
+                hour=interval_value,
+                minute=0,
+                args=[broadcast_id],
+                id=job_id
+            )
+        elif interval_type == "minutes":
+            self.scheduler.add_job(
+                self.execute_recurring_broadcast,
+                'interval',
+                minutes=interval_value,
+                args=[broadcast_id],
+                id=job_id
+            )
+        
+        self.logger.info(f"Started recurring job {job_id}: {interval_type}={interval_value}")
+
+    async def execute_recurring_broadcast(self, broadcast_id):
+        """Execute a recurring broadcast"""
+        try:
+            # Get broadcast details
+            broadcasts = self.db.get_recurring_broadcasts(self.bot_id)
+            broadcast = next((b for b in broadcasts if b['id'] == broadcast_id), None)
+            
+            if not broadcast:
+                self.logger.warning(f"Recurring broadcast {broadcast_id} not found or inactive")
+                return
+            
+            users = self.db.get_users(self.bot_id)
+            sent = 0
+            failed = 0
+            
+            for user in users:
+                try:
+                    if broadcast['media_type'] == 'photo' and broadcast['media_file_id']:
+                        await self.app.bot.send_photo(
+                            chat_id=user['telegram_id'],
+                            photo=broadcast['media_file_id'],
+                            caption=broadcast['message']
+                        )
+                    elif broadcast['media_type'] == 'video' and broadcast['media_file_id']:
+                        await self.app.bot.send_video(
+                            chat_id=user['telegram_id'],
+                            video=broadcast['media_file_id'],
+                            caption=broadcast['message']
+                        )
+                    else:
+                        await self.app.bot.send_message(
+                            chat_id=user['telegram_id'],
+                            text=broadcast['message']
+                        )
+                    sent += 1
+                except Exception as e:
+                    failed += 1
+            
+            self.logger.info(f"Recurring broadcast {broadcast_id} executed: {sent} sent, {failed} failed")
+            
+        except Exception as e:
+            self.logger.error(f"Error executing recurring broadcast {broadcast_id}: {e}")
 
     async def execute_scheduled_broadcast(self, broadcast_id):
         """Execute a scheduled broadcast"""

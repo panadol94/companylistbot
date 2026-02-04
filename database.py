@@ -107,6 +107,11 @@ class Database:
                     media_type TEXT,
                     status TEXT DEFAULT 'PENDING', -- PENDING, SENT, FAILED
                     scheduled_time DATETIME,
+                    is_recurring BOOLEAN DEFAULT 0,
+                    interval_type TEXT, -- 'minutes', 'hours', 'daily'
+                    interval_value INTEGER, -- minutes/hours count, or hour of day (0-23)
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(bot_id) REFERENCES bots(id)
                 )
             ''')
@@ -675,6 +680,72 @@ class Database:
             deleted = result.rowcount
             conn.close()
             return deleted
+
+    # --- Recurring Broadcasts ---
+    def save_recurring_broadcast(self, bot_id, message, media_file_id, media_type, interval_type, interval_value):
+        """Save a recurring broadcast configuration"""
+        with self.lock:
+            conn = self.get_connection()
+            cursor = conn.execute(
+                """INSERT INTO broadcasts 
+                   (bot_id, message, media_file_id, media_type, status, is_recurring, interval_type, interval_value, is_active) 
+                   VALUES (?, ?, ?, ?, 'RECURRING', 1, ?, ?, 1)""",
+                (bot_id, message, media_file_id, media_type, interval_type, interval_value)
+            )
+            broadcast_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+            return broadcast_id
+
+    def get_recurring_broadcasts(self, bot_id=None):
+        """Get active recurring broadcasts, optionally filtered by bot_id"""
+        conn = self.get_connection()
+        if bot_id:
+            rows = conn.execute(
+                "SELECT * FROM broadcasts WHERE bot_id = ? AND is_recurring = 1 AND is_active = 1",
+                (bot_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM broadcasts WHERE is_recurring = 1 AND is_active = 1"
+            ).fetchall()
+        conn.close()
+        return rows
+
+    def toggle_recurring_broadcast(self, broadcast_id, bot_id, is_active):
+        """Enable or disable a recurring broadcast"""
+        with self.lock:
+            conn = self.get_connection()
+            result = conn.execute(
+                "UPDATE broadcasts SET is_active = ? WHERE id = ? AND bot_id = ? AND is_recurring = 1",
+                (is_active, broadcast_id, bot_id)
+            )
+            conn.commit()
+            updated = result.rowcount > 0
+            conn.close()
+            return updated
+
+    def delete_recurring_broadcast(self, broadcast_id, bot_id):
+        """Delete a recurring broadcast"""
+        with self.lock:
+            conn = self.get_connection()
+            result = conn.execute(
+                "DELETE FROM broadcasts WHERE id = ? AND bot_id = ? AND is_recurring = 1",
+                (broadcast_id, bot_id)
+            )
+            conn.commit()
+            deleted = result.rowcount > 0
+            conn.close()
+            return deleted
+
+    def get_all_recurring_broadcasts(self):
+        """Get all active recurring broadcasts from all bots (for startup reload)"""
+        conn = self.get_connection()
+        rows = conn.execute(
+            "SELECT * FROM broadcasts WHERE is_recurring = 1 AND is_active = 1"
+        ).fetchall()
+        conn.close()
+        return rows
 
     # ==================== BOT ADMINS ====================
     
