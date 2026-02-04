@@ -600,6 +600,10 @@ class ChildBot:
         
         # Carousel Logic: Try to edit caption if photo exists, else edit text
         if update.callback_query:
+            # Defensive answer
+            try: await update.callback_query.answer()
+            except: pass
+            
             try:
                 # Check if message has photo/video
                 if update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation:
@@ -615,6 +619,11 @@ class ChildBot:
                         parse_mode='Markdown'
                     )
             except Exception as e:
+                err_msg = str(e)
+                if "Message is not modified" in err_msg:
+                    return # Ignore if already showing this view
+                
+                self.logger.error(f"Error in show_wallet: {e}")
                 # Fallback on error (e.g. media type change or unknown error)
                 try: await update.callback_query.message.delete()
                 except: pass
@@ -629,6 +638,9 @@ class ChildBot:
         keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
         
         if update.callback_query:
+            try: await update.callback_query.answer()
+            except: pass
+            
             try:
                 if update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation:
                      await update.callback_query.message.edit_caption(
@@ -642,7 +654,12 @@ class ChildBot:
                         reply_markup=InlineKeyboardMarkup(keyboard),
                         parse_mode='Markdown'
                     )
-            except:
+            except Exception as e:
+                err_msg = str(e)
+                if "Message is not modified" in err_msg:
+                    return 
+                    
+                self.logger.error(f"Error in show_share_link: {e}")
                 try: await update.callback_query.message.delete()
                 except: pass
                 await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
