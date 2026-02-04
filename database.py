@@ -1802,3 +1802,97 @@ class Database:
             return []
         finally:
             conn.close()
+
+    # ==================== MEDIA ASSETS MANAGER ====================
+
+    def upsert_asset(self, bot_id, section_name, file_id, file_type, caption=None):
+        """Save or update a media asset for a section"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                # Ensure table exists
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS bot_assets (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        bot_id INTEGER NOT NULL,
+                        section_name TEXT NOT NULL,
+                        file_id TEXT NOT NULL,
+                        file_type TEXT NOT NULL,
+                        caption TEXT,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE,
+                        UNIQUE(bot_id, section_name)
+                    )
+                ''')
+                
+                # Check if exists
+                exists = conn.execute(
+                    "SELECT id FROM bot_assets WHERE bot_id = ? AND section_name = ?", 
+                    (bot_id, section_name)
+                ).fetchone()
+
+                if exists:
+                    conn.execute(
+                        """UPDATE bot_assets 
+                           SET file_id = ?, file_type = ?, caption = ?, updated_at = CURRENT_TIMESTAMP 
+                           WHERE bot_id = ? AND section_name = ?""",
+                        (file_id, file_type, caption, bot_id, section_name)
+                    )
+                else:
+                    conn.execute(
+                        """INSERT INTO bot_assets (bot_id, section_name, file_id, file_type, caption) 
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (bot_id, section_name, file_id, file_type, caption)
+                    )
+                conn.commit()
+                return True
+            except Exception as e:
+                print(f"Error saving asset: {e}")
+                return False
+            finally:
+                conn.close()
+
+    def get_asset(self, bot_id, section_name):
+        """Get media asset for a section"""
+        conn = self.get_connection()
+        try:
+            # Check table existence to safely return None on fresh db
+            table_check = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='bot_assets'").fetchone()
+            if not table_check:
+                return None
+                
+            asset = conn.execute(
+                "SELECT * FROM bot_assets WHERE bot_id = ? AND section_name = ?",
+                (bot_id, section_name)
+            ).fetchone()
+            return dict(asset) if asset else None
+        except:
+            return None
+        finally:
+            conn.close()
+
+    def reset_user_referral_stats(self, bot_id, user_telegram_id):
+        """Reset validation stats for testing"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute('''
+                UPDATE users 
+                SET total_invites = 0, referrer_id = NULL 
+                WHERE bot_id = ? AND telegram_id = ?
+            ''', (bot_id, user_telegram_id))
+            conn.commit()
+            conn.close()
+            return True
+
+    def reset_all_referral_stats(self, bot_id):
+        """Reset ALL users' referral stats to 0"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute('''
+                UPDATE users 
+                SET total_invites = 0, referrer_id = NULL 
+                WHERE bot_id = ?
+            ''', (bot_id,))
+            conn.commit()
+            conn.close()
+            return True

@@ -25,6 +25,12 @@ MENU_BTN_TEXT, MENU_BTN_URL = range(23, 25)
 PAIR_SELECT_1, PAIR_SELECT_2 = range(26, 28)
 # States for Recurring Broadcast
 RECURRING_TYPE = 40
+# States for Recurring Broadcast
+RECURRING_TYPE = 40
+# States for Media Manager
+MEDIA_UPLOAD = 50
+# States for Referral Manage
+RR_CONFIRM, RR_INPUT_ID = range(60, 62)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -62,6 +68,7 @@ class ChildBot:
         # Admin Commands
         self.app.add_handler(CommandHandler("settings", self.admin_dashboard))
         self.app.add_handler(CommandHandler("admin", self.admin_dashboard))
+        self.app.add_handler(CommandHandler("reset_ref", self.cmd_reset_referrals))
 
         # Main User Commands (work in both private and group)
         self.app.add_handler(CommandHandler("start", self.start_command))
@@ -112,11 +119,41 @@ class ChildBot:
         )
         self.app.add_handler(welcome_conv)
         
+        # Media Manager Wizard
+        media_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.show_media_manager, pattern="^admin_media_manager$")],
+            states={
+                MEDIA_UPLOAD: [
+                    CallbackQueryHandler(self.media_manager_select_section, pattern="^media_section_"),
+                    MessageHandler(filters.PHOTO | filters.VIDEO, self.media_manager_save_upload)
+                ]
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$")]
+        )
+        self.app.add_handler(media_conv)
+
+        # Referral Management Wizard
+        manage_ref_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.manage_ref_start, pattern="^admin_ref_manage$")],
+            states={
+                RR_CONFIRM: [CallbackQueryHandler(self.manage_ref_confirm_action)],
+                RR_INPUT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.manage_ref_input_id)]
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$")]
+        )
+        self.app.add_handler(manage_ref_conv)
+
         # Edit Company Wizard
         edit_company_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(self.edit_company_start, pattern=r'^edit_company_\d+$')],
+            entry_points=[
+                CallbackQueryHandler(self.edit_company_start, pattern=r'^edit_company_\d+$'),
+                CallbackQueryHandler(self.edit_company_start, pattern=r'^admin_edit_company_select_\d+$')
+            ],
             states={
-                EDIT_FIELD: [CallbackQueryHandler(self.edit_company_choose_field, pattern=r'^ef_')],
+                EDIT_FIELD: [
+                    CallbackQueryHandler(self.edit_company_choose_field, pattern=r'^ef_'),
+                    CallbackQueryHandler(self.back_to_admin_list, pattern=r'^admin_edit_back$')
+                ],
                 EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_name)],
                 EDIT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_desc)],
                 EDIT_MEDIA: [MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, self.edit_company_save_media)],
@@ -180,26 +217,8 @@ class ChildBot:
         """Show companies list - works in groups"""
         if not await self.check_subscription(update): return
         
-        companies = self.db.get_companies(self.bot_id)
-        if not companies:
-            await update.message.reply_text("📭 Tiada company didaftarkan.")
-            return
-        
-        text = "📋 **SENARAI COMPANY**\n\n"
-        for i, comp in enumerate(companies[:10], 1):
-            text += f"{i}. **{comp['name']}**\n"
-        
-        if len(companies) > 10:
-            text += f"\n_...dan {len(companies) - 10} lagi_"
-        
-        text += "\n\n💬 Klik butang untuk lihat detail:"
-        
-        keyboard = []
-        for comp in companies[:5]:
-            keyboard.append([InlineKeyboardButton(f"👁️ {comp['name'][:25]}", callback_data=f"view_{comp['id']}")])
-        keyboard.append([InlineKeyboardButton("📖 Lihat Semua", callback_data="list_page_0")])
-        
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        # Switch to Carousel Mode immediately (Page 0)
+        await self.show_page(update, 0)
 
     async def cmd_show_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show main menu - works in groups"""
@@ -553,79 +572,17 @@ class ChildBot:
             )
 
     async def view_company(self, update: Update, comp_id: int):
+        # Redirect to Carousel View (find index)
         comps = self.db.get_companies(self.bot_id)
-        comp = next((c for c in comps if c['id'] == int(comp_id)), None)
-        if not comp:
-            await update.callback_query.answer("Company not found.")
-            return
-
-        text = f"🏢 *{comp['name']}*\n\n{comp['description']}\n\n_{DEFAULT_GLOBAL_AD}_"
+        index = next((i for i, c in enumerate(comps) if c['id'] == int(comp_id)), -1)
         
-        # Load buttons from company_buttons table
-        buttons = self.db.get_company_buttons(comp_id)
-        
-        if buttons:
-            # Group buttons by row_group for pairing
-            paired_groups = {}
-            unpaired = []
-            
-            for btn in buttons:
-                if btn['row_group']:
-                    if btn['row_group'] not in paired_groups:
-                        paired_groups[btn['row_group']] = []
-                    paired_groups[btn['row_group']].append(btn)
-                else:
-                    unpaired.append(btn)
-            
-            keyboard = []
-            # Add paired buttons (2 per row)
-            for group_id, btns in paired_groups.items():
-                row = [InlineKeyboardButton(b['text'], url=b['url']) for b in btns[:2]]
-                keyboard.append(row)
-            
-            # Add unpaired buttons (1 per row)
-            for btn in unpaired:
-                keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
+        if index != -1:
+            await self.show_page(update, index)
         else:
-            # Fallback to old button_text/button_url from company record
-            keyboard = [
-                [InlineKeyboardButton(comp['button_text'], url=comp['button_url'])],
-            ]
-        
-        # Add EDIT button for admin only
-        bot_data = self.db.get_bot_by_token(self.token)
-        if update.effective_user.id == bot_data['owner_id']:
-            keyboard.append([InlineKeyboardButton("✏️ EDIT COMPANY", callback_data=f"edit_company_{comp_id}")])
-        
-        keyboard.append([InlineKeyboardButton("🔙 BACK TO LIST", callback_data="list_page_0")])
-        
-        await update.callback_query.message.delete()
-        
-        # Handle local file path or file_id
-        import os
-        media_path = comp['media_file_id']
-        is_local_file = media_path and (media_path.startswith('/') or os.path.sep in media_path)
-        
-        try:
-            if is_local_file and os.path.exists(media_path):
-                with open(media_path, 'rb') as media_file:
-                    if comp['media_type'] == 'video':
-                        await update.effective_chat.send_video(video=media_file, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-                    elif comp['media_type'] == 'animation':
-                        await update.effective_chat.send_animation(animation=media_file, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-                    else:
-                        await update.effective_chat.send_photo(photo=media_file, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            if update.callback_query:
+                await update.callback_query.answer("Company not found.")
             else:
-                # Fallback to file_id
-                if comp['media_type'] == 'video':
-                    await update.effective_chat.send_video(video=media_path, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-                elif comp['media_type'] == 'animation':
-                    await update.effective_chat.send_animation(animation=media_path, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-                else:
-                    await update.effective_chat.send_photo(photo=media_path, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except Exception as e:
-            self.logger.error(f"View company media error: {e}")
-            await update.effective_chat.send_message(f"{text}\n\n_(Media unavailable)_", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                await update.message.reply_text("Company not found.")
 
     # --- Wallet & Referral ---
     async def show_wallet(self, update: Update):
@@ -654,16 +611,41 @@ class ChildBot:
         top = conn.execute("SELECT telegram_id, total_invites FROM users WHERE bot_id = ? ORDER BY total_invites DESC LIMIT 10", (self.bot_id,)).fetchall()
         conn.close()
         
-        text = "🏆 **LEADERBOARD MINGGUAN**\n\n"
+        # Build Leaderboard List
+        list_text = ""
         for i, row in enumerate(top):
-            text += f"{i+1}. ID: `{str(row['telegram_id'])[-4:]}***` - **{row['total_invites']}** Invites\n"
+            list_text += f"{i+1}. ID: `{str(row['telegram_id'])[-4:]}***` - **{row['total_invites']}** Invites\n"
+        
+        default_header = "🏆 **LEADERBOARD MINGGUAN**\n\n"
+        text = default_header + list_text
         
         buttons = [[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]
-        try:
-            await update.callback_query.message.delete()
-        except:
-            pass
-        await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
+        
+        # Check Asset
+        asset = self.db.get_asset(self.bot_id, 'leaderboard')
+        
+        if asset:
+             try:
+                 await update.callback_query.message.delete()
+             except:
+                 pass
+                 
+             caption_header = asset.get('caption')
+             if caption_header:
+                 final_caption = f"{caption_header}\n\n{list_text}"
+             else:
+                 final_caption = text
+                 
+             if asset['file_type'] == 'photo':
+                 await update.effective_chat.send_photo(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+             elif asset['file_type'] == 'video':
+                 await update.effective_chat.send_video(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(buttons))
+        else:
+            try:
+                await update.callback_query.message.delete()
+            except:
+                pass
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(buttons), parse_mode='Markdown')
 
     # --- Admin Dashboard ---
     async def withdraw_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -769,6 +751,34 @@ class ChildBot:
         keyboard.append([InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")])
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
+
+    async def cmd_reset_referrals(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Reset referral stats for testing (Admin Only)"""
+        # Admin check
+        bot_data = self.db.get_bot_by_token(self.token)
+        is_owner = update.effective_user.id == bot_data.get('owner_id')
+        is_admin = self.db.is_bot_admin(self.bot_id, update.effective_user.id)
+        
+        if not (is_owner or is_admin):
+             return
+             
+        target_id = update.effective_user.id
+        
+        # Check for arguments
+        if context.args:
+            try:
+                target_id = int(context.args[0])
+            except ValueError:
+                await update.message.reply_text("⚠️ Invalid ID. Usage: /reset_ref [user_id]")
+                return
+                
+        success = self.db.reset_user_referral_stats(self.bot_id, target_id)
+        
+        if success:
+            await update.message.reply_text(f"✅ Referral stats RESET for ID: `{target_id}`", parse_mode='Markdown')
+        else:
+            await update.message.reply_text("❌ Error resetting stats.")
+
     # --- Callbacks ---
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -810,6 +820,8 @@ class ChildBot:
         elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
         elif data == "admin_customize": await self.show_customize_menu(update)
         elif data == "toggle_referral": await self.toggle_referral_system(update)
+        elif data == "admin_reset_my_ref": await self.reset_my_referral_btn_handler(update)
+        elif data == "admin_reset_ref_confirm": await self.confirm_reset_my_ref_handler(update)
         elif data == "toggle_livegram": await self.toggle_livegram_system(update)
         elif data == "reset_schedule": await self.show_reset_schedule(update)
         elif data == "confirm_reset_schedule": await self.confirm_reset_schedule(update)
@@ -820,6 +832,8 @@ class ChildBot:
         elif data == "export_users": await self.export_users_csv(update)
         elif data == "export_companies": await self.export_companies_csv(update)
         elif data == "admin_settings": await self.show_admin_settings(update)
+        # Edit Company List (Admin)
+        elif data == "admin_edit_company_list": await self.show_edit_company_list(update)
         # Admin Management
         elif data == "manage_admins": await self.show_manage_admins(update)
         elif data == "add_admin_start": await self.add_admin_start(update, context)
@@ -920,11 +934,22 @@ class ChildBot:
         )
     
     # --- Edit Company Wizard Functions ---
+    # --- Edit Company Wizard Functions ---
     async def edit_company_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point for edit company conversation"""
-        await update.callback_query.answer()  # Acknowledge immediately to stop loading
-        company_id = int(update.callback_query.data.split("_")[2])
+        await update.callback_query.answer()
+        data = update.callback_query.data
+        
+        # Robust ID extraction
+        if data.startswith("admin_edit_company_select_"):
+            company_id = int(data.split("_")[-1])
+            is_admin_mode = True
+        else:
+            company_id = int(data.split("_")[-1]) # works for edit_company_{id}
+            is_admin_mode = False
+            
         context.user_data['edit_company_id'] = company_id
+        context.user_data['edit_from_admin'] = is_admin_mode
         
         company = next((c for c in self.db.get_companies(self.bot_id) if c['id'] == company_id), None)
         if not company:
@@ -932,6 +957,9 @@ class ChildBot:
             return ConversationHandler.END
         
         text = f"✏️ **EDIT: {company['name']}**\n\nPilih apa yang nak diedit:"
+        
+        cancel_btn = InlineKeyboardButton("« Back", callback_data="admin_edit_back") if is_admin_mode else InlineKeyboardButton("❌ Cancel", callback_data="cancel")
+        
         keyboard = [
             [InlineKeyboardButton("📝 Nama", callback_data="ef_name")],
             [InlineKeyboardButton("📄 Deskripsi", callback_data="ef_desc")],
@@ -939,10 +967,21 @@ class ChildBot:
             [InlineKeyboardButton("🔗 Button Text", callback_data="ef_btn_text")],
             [InlineKeyboardButton("🌐 Button URL", callback_data="ef_btn_url")],
             [InlineKeyboardButton("🔘 Manage Buttons", callback_data="ef_manage_btns")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
+            [cancel_btn]
         ]
-        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        # Use edit_text if from admin list to keep UI clean, reply_text if from public view overlay
+        if is_admin_mode:
+             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+             await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+             
         return EDIT_FIELD
+
+    async def back_to_admin_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle Back button from Edit menu (Admin Mode)"""
+        await self.show_edit_company_list(update)
+        return ConversationHandler.END
     
     async def edit_company_choose_field(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle field selection for edit"""
@@ -1030,7 +1069,11 @@ class ChildBot:
         user = self.db.get_user(self.bot_id, user_id)
         
         if not user:
-            await update.callback_query.message.reply_text("❌ User not found. Type /start first.")
+            msg = "❌ User not found. Type /start first."
+            if update.callback_query:
+                await update.callback_query.message.reply_text(msg)
+            else:
+                await update.message.reply_text(msg)
             return
         
         balance = user.get('balance', 0)
@@ -1049,8 +1092,38 @@ class ChildBot:
             [InlineKeyboardButton("📤 WITHDRAW", callback_data="withdraw")],
             [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
         ]
-        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    
+        
+        # Check for Custom Media
+        asset = self.db.get_asset(self.bot_id, 'wallet')
+        
+        if asset:
+             # Use asset caption if provided, else generic text
+             caption = asset.get('caption') or text
+             # If using custom caption, we might lose dynamic stats if user didn't include placeholders.
+             # Ideally we append stats to user caption? 
+             # For now, let's append the stats if caption is custom, or just use the standard text if caption is empty.
+             if asset.get('caption'):
+                 # Append stats to custom caption
+                 final_caption = f"{asset['caption']}\n\n" \
+                                 f"💵 Balance: **RM {balance:.2f}**\n" \
+                                 f"👥 Invites: **{total_invites}**"
+             else:
+                 final_caption = text
+
+             if update.callback_query:
+                 await update.callback_query.message.delete()
+                 
+             if asset['file_type'] == 'photo':
+                 await update.effective_chat.send_photo(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+             elif asset['file_type'] == 'video':
+                 await update.effective_chat.send_video(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+             # Text fallback
+             if update.callback_query:
+                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+             else:
+                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
     async def show_share_link(self, update: Update):
         """Show user's referral share link"""
         user_id = update.effective_user.id
@@ -1070,7 +1143,30 @@ class ChildBot:
         )
         
         keyboard = [[InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]]
-        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        # Check for Custom Media
+        asset = self.db.get_asset(self.bot_id, 'share')
+        
+        if asset:
+             if update.callback_query:
+                 await update.callback_query.message.delete()
+             
+             caption = asset.get('caption') or text
+             # For share link, if custom caption is used, we MUST ensure the link is present.
+             if asset.get('caption'):
+                 final_caption = f"{asset['caption']}\n\n🔗 Link: `{referral_link}`"
+             else:
+                 final_caption = text
+
+             if asset['file_type'] == 'photo':
+                 await update.effective_chat.send_photo(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+             elif asset['file_type'] == 'video':
+                 await update.effective_chat.send_video(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+             if update.callback_query:
+                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+             else:
+                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     # --- 4D Stats Module ---
     async def show_4d_menu(self, update: Update):
@@ -1089,14 +1185,16 @@ class ChildBot:
         # Notification status
         notify_status = "🔔 ON" if is_subscribed else "🔕 OFF"
         
-        text = (
-            "🎰 **4D STATISTICAL ANALYZER**\n\n"
+        body_text = (
             f"{stats_text}\n"
             f"📬 Notification: {notify_status}\n\n"
             "Pilih analisis yang anda mahu:\n\n"
             "⚠️ _Disclaimer: Ini untuk hiburan sahaja._\n"
             "_Tiada jaminan menang._"
         )
+        
+        default_header = "🎰 **4D STATISTICAL ANALYZER**\n\n"
+        text = default_header + body_text
         
         # Dynamic subscribe/unsubscribe button
         if is_subscribed:
@@ -1116,15 +1214,35 @@ class ChildBot:
             [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
         ]
         
-        try:
-            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except Exception:
-            # Message has media, delete and send new
+        # Check Asset
+        asset = self.db.get_asset(self.bot_id, '4d')
+        
+        if asset:
+             if update.callback_query:
+                 try:
+                    await update.callback_query.message.delete()
+                 except: pass
+                 
+             caption_header = asset.get('caption')
+             if caption_header:
+                 final_caption = f"{caption_header}\n\n{body_text}"
+             else:
+                 final_caption = text
+                 
+             if asset['file_type'] == 'photo':
+                 await update.effective_chat.send_photo(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+             elif asset['file_type'] == 'video':
+                 await update.effective_chat.send_video(asset['file_id'], caption=final_caption, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
             try:
-                await update.callback_query.message.delete()
-            except:
-                pass
-            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            except Exception:
+                # Message has media or other error, delete and send new
+                try:
+                    await update.callback_query.message.delete()
+                except:
+                    pass
+                await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def show_4d_latest_results(self, update: Update):
         """Show latest 4D results from all companies - organized by region"""
@@ -1499,6 +1617,24 @@ class ChildBot:
         # Refresh menu to show updated status
         await self.show_4d_menu(update)
     
+    # --- Edit Company List Logic (New) ---
+    async def show_edit_company_list(self, update: Update):
+        """Show list of companies to select for editing"""
+        companies = self.db.get_companies(self.bot_id)
+        if not companies:
+            await update.callback_query.answer("📭 Tiada company untuk edit.", show_alert=True)
+            return
+        
+        text = "✏️ **EDIT COMPANY**\n\nPilih company untuk edit:"
+        keyboard = []
+        for company in companies:
+            keyboard.append([InlineKeyboardButton(
+                f"📝 {company['name']}", 
+                callback_data=f"admin_edit_company_select_{company['id']}"
+            )])
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
     # --- Delete Company Logic ---
     async def show_delete_company_list(self, update: Update):
         """Show list of companies with delete buttons"""
@@ -1545,11 +1681,78 @@ class ChildBot:
         status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
         
         await update.callback_query.answer(f"Referral system is now {status_text}")
+        await update.callback_query.answer(f"Referral system is now {status_text}")
         await self.show_admin_settings(update)
+
+    # --- Referral Management Wizard ---
+    async def manage_ref_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start referral management menu"""
+        text = (
+            "🔄 **MANAGE REFERRALS**\n\n"
+            "Sila pilih tindakan yang anda mahu lakukan:\n\n"
+            "1. **Reset All Users** - Reset SEMUA user kepada 0.\n"
+            "2. **Reset Specific User** - Reset user tertentu sahaja."
+        )
+        keyboard = [
+            [InlineKeyboardButton("🌍 RESET ALL USERS (GLOBAL)", callback_data="rr_global")],
+            [InlineKeyboardButton("👤 RESET SPECIFIC USER", callback_data="rr_specific")],
+            [InlineKeyboardButton("❌ CANCEL", callback_data="cancel")]
+        ]
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return RR_CONFIRM
+
+    async def manage_ref_confirm_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle menu choice"""
+        data = update.callback_query.data
+        
+        if data == "rr_global":
+            text = (
+                "⚠️ **WARNING: GLOBAL RESET**\n\n"
+                "Reset referral untuk **SEMUA USER** dalam database?\n"
+                "Tindakan ini tidak boleh diundur."
+            )
+            keyboard = [
+                [InlineKeyboardButton("🔥 YES, WIPE ALL DATA", callback_data="rr_do_reset_all")],
+                [InlineKeyboardButton("❌ CANCEL", callback_data="cancel")]
+            ]
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            return RR_CONFIRM
+            
+        elif data == "rr_specific":
+            text = "👤 **RESET SPECIFIC USER**\n\nSila hantar **Telegram ID** user tersebut sekarang:"
+            keyboard = [[InlineKeyboardButton("❌ CANCEL", callback_data="cancel")]]
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            return RR_INPUT_ID
+            
+        elif data == "rr_do_reset_all":
+            self.db.reset_all_referral_stats(self.bot_id)
+            await update.callback_query.answer("✅ All referrals reset!", show_alert=True)
+            await self.show_admin_settings(update)
+            return ConversationHandler.END
+
+        return RR_CONFIRM
+
+    async def manage_ref_input_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle User ID input"""
+        try:
+            target_id = int(update.message.text.strip())
+            success = self.db.reset_user_referral_stats(self.bot_id, target_id)
+            
+            msg = f"✅ Referral stats untuk ID `{target_id}` telah di-reset!" if success else "❌ Error resetting user."
+            await update.message.reply_text(msg, parse_mode='Markdown')
+            
+            await self.show_admin_settings(update)
+            return ConversationHandler.END
+            
+        except ValueError:
+            await update.message.reply_text("⚠️ ID tidak sah. Sila hantar nombor sahaja.")
+            return RR_INPUT_ID
     
     async def show_admin_settings(self, update: Update):
         """Show admin settings dashboard (called from back buttons)"""
         try:
+
+            
             user_id = update.effective_user.id
             self.logger.info(f"show_admin_settings called by user {user_id}")
             
@@ -1581,12 +1784,14 @@ class ChildBot:
 
             text = "👑 **ADMIN SETTINGS DASHBOARD**\n\nWelcome Boss! Full control in your hands."
             keyboard = [
-                [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
+                [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company")],
+                [InlineKeyboardButton("✏️ Edit Company", callback_data="admin_edit_company_list"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
                 [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
-                [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
-                [InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral"), InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram")],
-                [InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring"), InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu")],
-                [InlineKeyboardButton("📊 Analytics", callback_data="show_analytics"), InlineKeyboardButton("📥 Export Data", callback_data="export_data")],
+                [InlineKeyboardButton("🎨 Media Manager", callback_data="admin_media_manager"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
+                [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
+                [InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram"), InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring")],
+                [InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu"), InlineKeyboardButton("📊 Analytics", callback_data="show_analytics")],
+                [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")]
             ]
             
             # Only owner can manage admins
@@ -1936,14 +2141,104 @@ class ChildBot:
         buttons = self.db.get_menu_buttons(self.bot_id)
         btn_count = len(buttons)
         
-        text = f"⚙️ **CUSTOMIZE START MENU**\n\nCustom buttons: {btn_count}"
+        text = f"⚙️ **CUSTOMIZE & MEDIA**\n\nCustom buttons: {btn_count}"
         keyboard = [
             [InlineKeyboardButton("🖼️ Edit Banner", callback_data="edit_welcome")],
+            [InlineKeyboardButton("🎨 Media Manager", callback_data="admin_media_manager")],
             [InlineKeyboardButton("➕ Add Button", callback_data="menu_add_btn")],
             [InlineKeyboardButton("📋 Manage Buttons", callback_data="manage_menu_btns")],
             [InlineKeyboardButton("« Back", callback_data="admin_settings")]
         ]
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    # --- Media Manager Functions ---
+    async def show_media_manager(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show Media Manager Section Selection"""
+        text = (
+            "🎨 **MEDIA MANAGER**\n\n"
+            "Pilih section mana yang anda nak tukar gambar/video:\n\n"
+            "• **Wallet**: Paparan /wallet\n"
+            "• **Share Link**: Paparan 'Share Link'\n"
+            "• **Leaderboard**: Paparan Leaderboard\n"
+            "• **4D Stats**: Banner Menu 4D\n\n"
+            "💡 _Boleh set gambar atau video beserta caption._"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("💰 Wallet", callback_data="media_section_wallet")],
+            [InlineKeyboardButton("🔗 Share Link", callback_data="media_section_share")],
+            [InlineKeyboardButton("🏆 Leaderboard", callback_data="media_section_leaderboard")],
+            [InlineKeyboardButton("🔢 4D Stats", callback_data="media_section_4d")],
+            [InlineKeyboardButton("« Back", callback_data="customize_menu")]
+        ]
+        
+        # Determine if new message or edit
+        if update.callback_query:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        return MEDIA_UPLOAD
+
+    async def media_manager_select_section(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle section selection"""
+        data = update.callback_query.data
+        section_key = data.split("_")[2] # media_section_wallet
+        context.user_data['media_section'] = section_key
+        
+        section_names = {
+            'wallet': '💰 Dompet Saya',
+            'share': '🔗 Share Link',
+            'leaderboard': '🏆 Leaderboard',
+            '4d': '🔢 4D Stats'
+        }
+        name = section_names.get(section_key, section_key.title())
+        
+        text = (
+            f"🖼️ **UPLOAD MEDIA: {name}**\n\n"
+            f"Sila hantar **GAMBAR** atau **VIDEO** sekarang.\n"
+            f"✍️ **Caption:** Taip caption pada gambar/video tersebut untuk set caption baru.\n\n"
+            f"_Jika hantar tanpa caption, caption akan dikosongkan._\n"
+            f"Taip /cancel untuk batal."
+        )
+        
+        await update.callback_query.message.reply_text(text, parse_mode='Markdown')
+        return MEDIA_UPLOAD
+
+    async def media_manager_save_upload(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save uploaded media to bot_assets"""
+        section = context.user_data.get('media_section')
+        if not section:
+            await update.message.reply_text("❌ Session expired. Please start again.")
+            return ConversationHandler.END
+            
+        file_id = None
+        file_type = None
+        caption = update.message.caption  # Get caption from media message
+        
+        if update.message.photo:
+            file_id = update.message.photo[-1].file_id
+            file_type = 'photo'
+        elif update.message.video:
+            file_id = update.message.video.file_id
+            file_type = 'video'
+        else:
+            await update.message.reply_text("❌ Sila hantar Photo atau Video sahaja.")
+            return MEDIA_UPLOAD
+            
+        # Save to DB
+        success = self.db.upsert_asset(self.bot_id, section, file_id, file_type, caption)
+        
+        if success:
+            await update.message.reply_text(
+                f"✅ **Media Saved!**\n\nSection `{section}` telah dikemaskini.\n"
+                f"Paparan pengguna akan berubah serta-merta.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ Database Error. Gagal simpan.")
+            
+        return ConversationHandler.END
 
     async def show_manage_buttons(self, update: Update):
         """Show list of custom buttons to manage"""
