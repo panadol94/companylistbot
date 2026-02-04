@@ -115,6 +115,28 @@ class Database:
                     FOREIGN KEY(bot_id) REFERENCES bots(id)
                 )
             ''')
+            
+            # Migration: Add recurring broadcast columns if missing
+            try:
+                cursor.execute("ALTER TABLE broadcasts ADD COLUMN is_recurring BOOLEAN DEFAULT 0")
+            except:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE broadcasts ADD COLUMN interval_type TEXT")
+            except:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE broadcasts ADD COLUMN interval_value INTEGER")
+            except:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE broadcasts ADD COLUMN is_active BOOLEAN DEFAULT 1")
+            except:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE broadcasts ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
+            except:
+                pass  # Column already exists
 
             # 6. Forwarder Config Table
             cursor.execute('''
