@@ -1,8 +1,8 @@
 import logging
 import datetime
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, ChatMemberUpdated
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatMemberHandler
 from database import Database
 from config import DEFAULT_GLOBAL_AD
 
@@ -148,6 +148,12 @@ class ChildBot:
         self.app.add_handler(MessageHandler(
             filters.ChatType.CHANNEL, 
             self.handle_channel_post
+        ))
+        
+        # Bot Status Change Handler (detect when bot becomes admin)
+        self.app.add_handler(ChatMemberHandler(
+            self.handle_bot_status_change,
+            ChatMemberHandler.MY_CHAT_MEMBER
         ))
 
     # --- Group Commands ---
@@ -3430,3 +3436,127 @@ class ChildBot:
                 
         except Exception as e:
             self.logger.error(f"Channel post handler error: {e}")
+
+    async def handle_bot_status_change(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle when bot's status changes in a chat (added/removed/promoted/demoted)"""
+        try:
+            chat_member_update = update.my_chat_member
+            if not chat_member_update:
+                return
+            
+            chat = chat_member_update.chat
+            old_status = chat_member_update.old_chat_member.status
+            new_status = chat_member_update.new_chat_member.status
+            
+            # Get bot owner to notify
+            bot_data = self.db.get_bot_by_token(self.token)
+            if not bot_data:
+                return
+            
+            owner_id = bot_data.get('owner_id')
+            if not owner_id:
+                return
+            
+            # Determine chat type emoji
+            if chat.type == 'channel':
+                chat_type = "📢 Channel"
+                chat_emoji = "📢"
+            elif chat.type in ['group', 'supergroup']:
+                chat_type = "👥 Group"
+                chat_emoji = "👥"
+            else:
+                chat_type = "💬 Chat"
+                chat_emoji = "💬"
+            
+            chat_title = chat.title or chat.username or "Unknown"
+            chat_id = chat.id
+            
+            # Check if bot was promoted to admin
+            admin_statuses = ['administrator', 'creator']
+            was_admin = old_status in admin_statuses
+            is_admin = new_status in admin_statuses
+            
+            if not was_admin and is_admin:
+                # Bot was promoted to admin!
+                text = (
+                    f"🎉 **BOT PROMOTED TO ADMIN!**\n\n"
+                    f"{chat_emoji} **Chat:** {chat_title}\n"
+                    f"🆔 **Chat ID:** `{chat_id}`\n"
+                    f"📊 **Type:** {chat_type}\n\n"
+                    f"💡 _Boleh guna ID ini untuk Forwarder:_\n"
+                    f"• Set sebagai Source Channel\n"
+                    f"• Set sebagai Target Group"
+                )
+                
+                keyboard = [
+                    [InlineKeyboardButton("📡 Setup Forwarder", callback_data="forwarder_menu")],
+                    [InlineKeyboardButton("❌ Dismiss", callback_data="close_panel")]
+                ]
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=owner_id,
+                        text=text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+                    self.logger.info(f"📬 Notified owner {owner_id} about admin promotion in {chat_title}")
+                except Exception as e:
+                    self.logger.error(f"Failed to notify owner about admin promotion: {e}")
+            
+            elif was_admin and not is_admin:
+                # Bot was demoted from admin
+                text = (
+                    f"⚠️ **BOT DEMOTED FROM ADMIN**\n\n"
+                    f"{chat_emoji} **Chat:** {chat_title}\n"
+                    f"🆔 **Chat ID:** `{chat_id}`\n\n"
+                    f"_Bot tidak lagi admin dalam chat ini._"
+                )
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=owner_id,
+                        text=text,
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to notify owner about demotion: {e}")
+            
+            elif new_status == 'left' or new_status == 'kicked':
+                # Bot was removed from chat
+                text = (
+                    f"🚫 **BOT REMOVED FROM CHAT**\n\n"
+                    f"{chat_emoji} **Chat:** {chat_title}\n"
+                    f"🆔 **Chat ID:** `{chat_id}`"
+                )
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=owner_id,
+                        text=text,
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to notify owner about removal: {e}")
+            
+            elif old_status in ['left', 'kicked'] and new_status == 'member':
+                # Bot was added to chat (not as admin yet)
+                text = (
+                    f"✅ **BOT ADDED TO CHAT**\n\n"
+                    f"{chat_emoji} **Chat:** {chat_title}\n"
+                    f"🆔 **Chat ID:** `{chat_id}`\n"
+                    f"📊 **Type:** {chat_type}\n\n"
+                    f"ℹ️ _Promote bot sebagai admin untuk aktifkan Forwarder._"
+                )
+                
+                try:
+                    await context.bot.send_message(
+                        chat_id=owner_id,
+                        text=text,
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to notify owner about addition: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"Bot status change handler error: {e}")
