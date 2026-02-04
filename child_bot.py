@@ -142,9 +142,9 @@ class ChildBot:
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
         # Support System & Text
-        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.FORWARDED, self.handle_message))
         
-        # Forwarded Message Handler (for forwarder setup)
+        # Forwarded Message Handler (for forwarder setup) - MUST catch all forwarded messages including media
         self.app.add_handler(MessageHandler(filters.FORWARDED, self.handle_forwarded_message))
         
         # Channel Post Handler (for forwarder)
@@ -3093,15 +3093,22 @@ class ChildBot:
 
     async def handle_forwarded_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle forwarded messages - used for forwarder channel/group setup"""
+        self.logger.info(f"📩 Forwarded message received from user {update.effective_user.id}")
+        
         # Check if waiting for forwarder source channel
         if context.user_data.get('waiting_forwarder_source'):
+            self.logger.info("Processing as forwarder source...")
             await self.save_forwarder_source(update, context)
             return
         
         # Check if waiting for forwarder target group
         if context.user_data.get('waiting_forwarder_target'):
+            self.logger.info("Processing as forwarder target...")
             await self.save_forwarder_target(update, context)
             return
+        
+        # Not waiting for anything - just acknowledge
+        self.logger.info("Forwarded message ignored - not in setup mode")
 
     # ==================== FORWARDER FUNCTIONS ====================
     
