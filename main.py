@@ -121,6 +121,26 @@ class BotManager:
         update = Update.de_json(update_data, app.bot)
         await app.process_update(update)
 
+    async def stop_bot(self, bot_id):
+        """Stop a running child bot by ID"""
+        # Find bot by ID
+        bot_data = self.db.get_bot_by_id(bot_id)
+        if not bot_data:
+            logger.warning(f"⚠️ Bot {bot_id} not found in database")
+            return
+        
+        token = bot_data['token']
+        if token in self.bots:
+            try:
+                child = self.bots[token]
+                await child.stop()
+                del self.bots[token]
+                logger.info(f"🔴 Child Bot {bot_id} stopped")
+            except Exception as e:
+                logger.error(f"❌ Failed to stop bot {bot_id}: {e}")
+        else:
+            logger.warning(f"⚠️ Bot {bot_id} not running (token not in active bots)")
+
     async def shutdown(self):
         logger.info("🔻 Shutting down platform...")
         self.scheduler.shutdown()

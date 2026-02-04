@@ -312,14 +312,6 @@ class Database:
         conn.close()
         return dict(withdraw) if withdraw else None
 
-    def edit_company(self, company_id, field, value):
-        with self.lock:
-            conn = self.get_connection()
-            query = f"UPDATE companies SET {field} = ? WHERE id = ?" # simplified for brevity, assume safe field input
-            conn.execute(query, (value, company_id))
-            conn.commit()
-            conn.close()
-
     # --- User & Referral ---
     def add_user(self, bot_id, telegram_id, referrer_id=None):
         with self.lock:
