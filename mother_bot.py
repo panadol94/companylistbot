@@ -387,10 +387,18 @@ class MotherBot:
             
             # Bot info line - sqlite3.Row doesn't support .get()
             try:
-                bot_name = bot['bot_username'] if bot['bot_username'] else f"Bot #{bot['id']}"
+                bot_username = bot['bot_username'] if bot['bot_username'] else None
             except:
-                bot_name = f"Bot #{bot['id']}"
-            text += f"**{bot_name}** {status}\n"
+                bot_username = None
+            
+            if bot_username:
+                bot_name = f"@{bot_username}"
+                bot_link = f"https://t.me/{bot_username}"
+                text += f"**{bot_name}** {status}\n"
+                text += f"🔗 {bot_link}\n"
+            else:
+                text += f"**Bot #{bot['id']}** {status}\n"
+            
             text += f"👥 Users: {user_count} | 🏢 Companies: {company_count}\n"
             
             # Show owner for admin view
@@ -462,10 +470,19 @@ class MotherBot:
             
             # Bot info line - sqlite3.Row doesn't support .get()
             try:
-                bot_name = bot['bot_username'] if bot['bot_username'] else f"Bot #{bot['id']}"
+                bot_username = bot['bot_username'] if bot['bot_username'] else None
             except:
+                bot_username = None
+            
+            if bot_username:
+                bot_name = f"@{bot_username}"
+                bot_link = f"https://t.me/{bot_username}"
+                text += f"**{bot_name}** {status}\n"
+                text += f"🔗 {bot_link}\n"
+            else:
                 bot_name = f"Bot #{bot['id']}"
-            text += f"**{bot_name}** {status}\n"
+                text += f"**{bot_name}** {status}\n"
+            
             text += f"👥 Users: {user_count} | 🏢 Companies: {company_count}\n"
             
             # Show owner for admin view
