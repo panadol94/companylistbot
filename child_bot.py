@@ -986,6 +986,8 @@ class ChildBot:
 
     async def start_4d_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start check number flow - ask user for number"""
+        self.logger.info("start_4d_check called")
+        
         text = (
             "🔍 **CHECK YOUR NUMBER**\n\n"
             "Masukkan nombor 4D anda:\n"
@@ -997,7 +999,9 @@ class ChildBot:
         
         try:
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except:
+            self.logger.info("start_4d_check edit_text success")
+        except Exception as e:
+            self.logger.error(f"start_4d_check edit failed: {e}")
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         
         # Set state to wait for number input
