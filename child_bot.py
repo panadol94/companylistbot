@@ -1993,6 +1993,21 @@ class ChildBot:
             await update.callback_query.message.edit_text("❌ Recurring broadcast dibatalkan.")
             return ConversationHandler.END
         
+        # Back to recurring main menu
+        if action == "broadcast_recurring":
+            keyboard = [
+                [InlineKeyboardButton("⏰ Setiap X Jam", callback_data="recur_type_hours")],
+                [InlineKeyboardButton("📅 Setiap Hari", callback_data="recur_type_daily")],
+                [InlineKeyboardButton("⏱️ Setiap X Minit", callback_data="recur_type_minutes")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
+            ]
+            await update.callback_query.message.edit_text(
+                "🔁 **RECURRING BROADCAST**\n\nPilih jenis recurring:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return RECURRING_TYPE
+        
         # Type selection
         if action == "recur_type_hours":
             keyboard = [
