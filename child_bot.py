@@ -3206,7 +3206,15 @@ class ChildBot:
         )
         
         if success:
-            await update.message.reply_text(f"✅ Source channel ditetapkan: `{channel_name}`", parse_mode='Markdown')
+            # Check if setup is complete (both source and target set)
+            if target_id:
+                await self.show_forwarder_complete_notification(update, channel_name, target_name, filter_keywords)
+            else:
+                await update.message.reply_text(
+                    f"✅ Source channel ditetapkan: `{channel_name}`\n\n"
+                    f"💡 Seterusnya, set Target Group untuk complete setup.",
+                    parse_mode='Markdown'
+                )
         else:
             await update.message.reply_text("❌ Gagal menyimpan. Cuba lagi.")
     
@@ -3252,9 +3260,44 @@ class ChildBot:
         )
         
         if success:
-            await update.message.reply_text(f"✅ Target group ditetapkan: `{group_name}`", parse_mode='Markdown')
+            # Check if setup is complete (both source and target set)
+            if source_id:
+                await self.show_forwarder_complete_notification(update, source_name, group_name, filter_keywords)
+            else:
+                await update.message.reply_text(
+                    f"✅ Target group ditetapkan: `{group_name}`\n\n"
+                    f"💡 Seterusnya, set Source Channel untuk complete setup.",
+                    parse_mode='Markdown'
+                )
         else:
             await update.message.reply_text("❌ Gagal menyimpan. Cuba lagi.")
+    
+    async def show_forwarder_complete_notification(self, update: Update, source_name: str, target_name: str, filter_keywords: str = None):
+        """Show notification when forwarder setup is complete"""
+        config = self.db.get_forwarder_config(self.bot_id)
+        is_active = config.get('is_active', False) if config else False
+        
+        filter_text = filter_keywords if filter_keywords else "None (Semua message)"
+        status_text = "🟢 Aktif" if is_active else "🔴 Tidak Aktif"
+        
+        text = (
+            f"🎉 **FORWARDER SETUP COMPLETE!**\n\n"
+            f"📢 **Source Channel:** {source_name}\n"
+            f"💬 **Target Group:** {target_name}\n"
+            f"🔍 **Filter:** {filter_text}\n"
+            f"📊 **Status:** {status_text}\n\n"
+        )
+        
+        if not is_active:
+            text += "👇 Tekan butang untuk aktifkan forwarder!"
+        
+        keyboard = []
+        if not is_active:
+            keyboard.append([InlineKeyboardButton("🟢 Activate Forwarder", callback_data="forwarder_toggle")])
+        keyboard.append([InlineKeyboardButton("📡 Forwarder Menu", callback_data="forwarder_menu")])
+        keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_panel")])
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     async def forwarder_set_filter_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start set filter flow"""
