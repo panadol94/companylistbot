@@ -141,11 +141,14 @@ class ChildBot:
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
-        # Support System & Text
-        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.FORWARDED, self.handle_message))
+        # Support System & Text (handles both regular and forwarded messages)
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         
-        # Forwarded Message Handler (for forwarder setup) - MUST catch all forwarded messages including media
-        self.app.add_handler(MessageHandler(filters.FORWARDED, self.handle_forwarded_message))
+        # Media Message Handler (for forwarded media - photos, videos, etc)
+        self.app.add_handler(MessageHandler(
+            (filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.Document.ALL) & ~filters.COMMAND, 
+            self.handle_media_message
+        ))
         
         # Channel Post Handler (for forwarder)
         self.app.add_handler(MessageHandler(
@@ -3069,12 +3072,14 @@ class ChildBot:
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages"""
-        self.logger.info(f"📨 Text message received: {update.message.text[:50] if update.message.text else 'No text'}")
-        self.logger.info(f"📨 User data states: waiting_forwarder_source={context.user_data.get('waiting_forwarder_source')}, waiting_forwarder_target={context.user_data.get('waiting_forwarder_target')}")
+        msg_text = update.message.text[:50] if update.message.text else 'No text'
+        is_forwarded = update.message.forward_from_chat or update.message.forward_origin or update.message.forward_date
+        self.logger.info(f"📨 Text message: {msg_text} | Forwarded: {is_forwarded}")
+        self.logger.info(f"📨 States: source={context.user_data.get('waiting_forwarder_source')}, target={context.user_data.get('waiting_forwarder_target')}")
         
         # Check if waiting for forwarder source channel
         if context.user_data.get('waiting_forwarder_source'):
-            self.logger.info("✅ Processing as forwarder source (text input)")
+            self.logger.info("✅ Processing as forwarder source")
             await self.save_forwarder_source(update, context)
             return
         
@@ -3096,24 +3101,27 @@ class ChildBot:
         
         # Add other message handlers here if needed
 
-    async def handle_forwarded_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle forwarded messages - used for forwarder channel/group setup"""
-        self.logger.info(f"📩 Forwarded message received from user {update.effective_user.id}")
+    async def handle_media_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle media messages - for forwarded photos/videos/docs from channels"""
+        self.logger.info(f"📷 Media message received from user {update.effective_user.id}")
         
-        # Check if waiting for forwarder source channel
-        if context.user_data.get('waiting_forwarder_source'):
-            self.logger.info("Processing as forwarder source...")
-            await self.save_forwarder_source(update, context)
-            return
+        # Check if this is a forwarded message for forwarder setup
+        is_forwarded = update.message.forward_from_chat or update.message.forward_origin or update.message.forward_date
         
-        # Check if waiting for forwarder target group
-        if context.user_data.get('waiting_forwarder_target'):
-            self.logger.info("Processing as forwarder target...")
-            await self.save_forwarder_target(update, context)
-            return
-        
-        # Not waiting for anything - just acknowledge
-        self.logger.info("Forwarded message ignored - not in setup mode")
+        if is_forwarded:
+            self.logger.info(f"📩 Forwarded media detected")
+            
+            # Check if waiting for forwarder source channel
+            if context.user_data.get('waiting_forwarder_source'):
+                self.logger.info("Processing as forwarder source (media)...")
+                await self.save_forwarder_source(update, context)
+                return
+            
+            # Check if waiting for forwarder target group
+            if context.user_data.get('waiting_forwarder_target'):
+                self.logger.info("Processing as forwarder target (media)...")
+                await self.save_forwarder_target(update, context)
+                return
 
     # ==================== FORWARDER FUNCTIONS ====================
     
