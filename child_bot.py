@@ -587,6 +587,10 @@ class ChildBot:
     # --- Wallet & Referral ---
     async def show_wallet(self, update: Update):
         user = self.db.get_user(self.bot_id, update.effective_user.id)
+        if not user:
+            await update.callback_query.answer("⚠️ Data not found. Type /start again.", show_alert=True)
+            return
+            
         text = f"💰 **DOMPET ANDA**\n\n👤 **ID:** `{user['telegram_id']}`\n📊 **Total Invite:** {user['total_invites']} Orang\n💵 **Baki Wallet:** RM {user['balance']:.2f}\n\n*Min withdrawal: RM 50.00*"
         
         keyboard = []
@@ -600,12 +604,12 @@ class ChildBot:
             pass
         await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
-    async def share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def show_share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         bot_uname = context.bot.username
         link = f"https://t.me/{bot_uname}?start={update.effective_user.id}"
         await update.callback_query.message.reply_text(f"🔗 Link Referral Anda:\n{link}\n\nShare link ini dan dapatkan RM1.00 setiap invite!")
 
-    async def leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Simple Logic: Top users by invite
         conn = self.db.get_connection()
         top = conn.execute("SELECT telegram_id, total_invites FROM users WHERE bot_id = ? ORDER BY total_invites DESC LIMIT 10", (self.bot_id,)).fetchall()
@@ -745,7 +749,7 @@ class ChildBot:
         elif data == "wallet":
             await self.show_wallet(update)
         elif data == "share_link":
-            await self.show_share_link(update)
+            await self.show_share_link(update, context)
         elif data == "leaderboard":
             await self.show_leaderboard(update, context)
         
