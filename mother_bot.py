@@ -67,8 +67,7 @@ class MotherBot:
             "/createbot - Create new bot\n"
             "/mybots - Manage your bots\n\n"
             "━━━━━━━━━━━━━━━━━\n"
-            "🔧 Powered by **MASUK10**\n"
-            "💬 Support: @cyberslotadmin"
+            "🔧 Powered by **MASUK10**"
         )
         await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -132,8 +131,7 @@ class MotherBot:
                     f"⏰ **Expires:** {bot_data['subscription_end'][:10]}\n\n"
                     f"✨ Go to your bot and type /start to begin!\n\n"
                     f"━━━━━━━━━━━━━━━━━\n"
-                    f"🔧 Powered by **MASUK10 ROBOT**\n"
-                    f"💬 Support: @cyberslotadmin"
+                    f"🔧 Powered by **MASUK10 ROBOT**"
                 )
                 await update.message.reply_text(success_msg, parse_mode='Markdown')
             except Exception as e:
