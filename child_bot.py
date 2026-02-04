@@ -3073,7 +3073,14 @@ class ChildBot:
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages"""
         msg_text = update.message.text[:50] if update.message.text else 'No text'
-        is_forwarded = update.message.forward_from_chat or update.message.forward_origin or update.message.forward_date
+        
+        # Safe forwarded check for PTB v20+
+        forward_from_chat = getattr(update.message, 'forward_from_chat', None)
+        forward_origin = getattr(update.message, 'forward_origin', None)
+        forward_date = getattr(update.message, 'forward_date', None)
+        
+        is_forwarded = bool(forward_from_chat or forward_origin or forward_date)
+        
         self.logger.info(f"📨 Text message: {msg_text} | Forwarded: {is_forwarded}")
         self.logger.info(f"📨 States: source={context.user_data.get('waiting_forwarder_source')}, target={context.user_data.get('waiting_forwarder_target')}")
         
@@ -3106,7 +3113,11 @@ class ChildBot:
         self.logger.info(f"📷 Media message received from user {update.effective_user.id}")
         
         # Check if this is a forwarded message for forwarder setup
-        is_forwarded = update.message.forward_from_chat or update.message.forward_origin or update.message.forward_date
+        forward_from_chat = getattr(update.message, 'forward_from_chat', None)
+        forward_origin = getattr(update.message, 'forward_origin', None)
+        forward_date = getattr(update.message, 'forward_date', None)
+        
+        is_forwarded = bool(forward_from_chat or forward_origin or forward_date)
         
         if is_forwarded:
             self.logger.info(f"📩 Forwarded media detected")
@@ -3205,18 +3216,22 @@ class ChildBot:
         channel_id = None
         channel_name = None
         
+        # Get forwarded attributes safely
+        forward_from_chat = getattr(update.message, 'forward_from_chat', None)
+        forward_origin = getattr(update.message, 'forward_origin', None)
+        
         # Try forward_from_chat first (older but more reliable)
-        if update.message.forward_from_chat:
-            channel = update.message.forward_from_chat
+        if forward_from_chat:
+            channel = forward_from_chat
             channel_id = channel.id
             channel_name = channel.title or channel.username or str(channel_id)
         # Try forward_origin (newer API)
-        elif hasattr(update.message, 'forward_origin') and update.message.forward_origin:
-            origin = update.message.forward_origin
-            if hasattr(origin, 'chat'):
+        elif forward_origin:
+            origin = forward_origin
+            if hasattr(origin, 'chat') and origin.chat:
                 channel_id = origin.chat.id
                 channel_name = origin.chat.title or origin.chat.username or str(channel_id)
-            elif hasattr(origin, 'sender_chat'):
+            elif hasattr(origin, 'sender_chat') and origin.sender_chat:
                 channel_id = origin.sender_chat.id
                 channel_name = origin.sender_chat.title or origin.sender_chat.username or str(channel_id)
         
@@ -3277,18 +3292,22 @@ class ChildBot:
         group_id = None
         group_name = None
         
+        # Get forwarded attributes safely
+        forward_from_chat = getattr(update.message, 'forward_from_chat', None)
+        forward_origin = getattr(update.message, 'forward_origin', None)
+        
         # Try forward_from_chat first (older but more reliable)
-        if update.message.forward_from_chat:
-            group = update.message.forward_from_chat
+        if forward_from_chat:
+            group = forward_from_chat
             group_id = group.id
             group_name = group.title or group.username or str(group_id)
         # Try forward_origin (newer API)
-        elif hasattr(update.message, 'forward_origin') and update.message.forward_origin:
-            origin = update.message.forward_origin
-            if hasattr(origin, 'chat'):
+        elif forward_origin:
+            origin = forward_origin
+            if hasattr(origin, 'chat') and origin.chat:
                 group_id = origin.chat.id
                 group_name = origin.chat.title or origin.chat.username or str(group_id)
-            elif hasattr(origin, 'sender_chat'):
+            elif hasattr(origin, 'sender_chat') and origin.sender_chat:
                 group_id = origin.sender_chat.id
                 group_name = origin.sender_chat.title or origin.sender_chat.username or str(group_id)
         
