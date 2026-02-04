@@ -62,9 +62,15 @@ class ChildBot:
         self.app.add_handler(CommandHandler("settings", self.admin_dashboard))
         self.app.add_handler(CommandHandler("admin", self.admin_dashboard))
 
-        # Main User Commands
+        # Main User Commands (work in both private and group)
         self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("company", self.main_menu))
+        
+        # Group-friendly commands
+        self.app.add_handler(CommandHandler("list", self.cmd_list_companies))
+        self.app.add_handler(CommandHandler("menu", self.cmd_show_menu))
+        self.app.add_handler(CommandHandler("4d", self.cmd_4d_menu))
+        self.app.add_handler(CommandHandler("wallet", self.cmd_wallet_private))
 
         # Admin Add Company Wizard
         add_conv = ConversationHandler(
@@ -137,6 +143,136 @@ class ChildBot:
 
         # Support System & Text
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+
+    # --- Group Commands ---
+    async def cmd_list_companies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show companies list - works in groups"""
+        if not await self.check_subscription(update): return
+        
+        companies = self.db.get_companies(self.bot_id)
+        if not companies:
+            await update.message.reply_text("📭 Tiada company didaftarkan.")
+            return
+        
+        text = "📋 **SENARAI COMPANY**\n\n"
+        for i, comp in enumerate(companies[:10], 1):
+            text += f"{i}. **{comp['name']}**\n"
+        
+        if len(companies) > 10:
+            text += f"\n_...dan {len(companies) - 10} lagi_"
+        
+        text += "\n\n💬 Klik butang untuk lihat detail:"
+        
+        keyboard = []
+        for comp in companies[:5]:
+            keyboard.append([InlineKeyboardButton(f"👁️ {comp['name'][:25]}", callback_data=f"view_{comp['id']}")])
+        keyboard.append([InlineKeyboardButton("📖 Lihat Semua", callback_data="list_page_0")])
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def cmd_show_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show main menu - works in groups"""
+        await self.main_menu(update, context)
+
+    async def cmd_4d_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show 4D menu - works in groups"""
+        if not await self.check_subscription(update): return
+        
+        stats = self.db.get_4d_statistics()
+        
+        if stats:
+            stats_text = f"📊 Data: {stats['total_draws']} draws analyzed"
+        else:
+            stats_text = "⚠️ Belum ada data. Tekan Refresh untuk load."
+        
+        text = (
+            "🎰 **4D STATISTICAL ANALYZER**\n\n"
+            f"{stats_text}\n\n"
+            "Pilih analisis yang anda mahu:\n\n"
+            "⚠️ _Disclaimer: Ini untuk hiburan sahaja._\n"
+            "_Tiada jaminan menang._"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🏆 Latest Results", callback_data="4d_latest")],
+            [InlineKeyboardButton("🔍 Check Number", callback_data="4d_check")],
+            [InlineKeyboardButton("🔥 Hot Numbers", callback_data="4d_hot_numbers"), 
+             InlineKeyboardButton("❄️ Cold Numbers", callback_data="4d_cold_numbers")],
+            [InlineKeyboardButton("📊 Digit Frequency", callback_data="4d_digit_freq")],
+            [InlineKeyboardButton("🎯 Generate Lucky Number", callback_data="4d_lucky_gen")],
+            [InlineKeyboardButton("🔄 Refresh Data", callback_data="4d_refresh")]
+        ]
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def cmd_wallet_private(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show wallet - PRIVATE MESSAGE ONLY for privacy"""
+        chat_type = update.effective_chat.type
+        user_id = update.effective_user.id
+        
+        # If in group, send private message instead
+        if chat_type != 'private':
+            await update.message.reply_text(
+                "🔒 **PRIVACY PROTECTION**\n\n"
+                "Maklumat wallet & referral adalah sulit.\n"
+                "Saya akan hantar ke PM anda.",
+                parse_mode='Markdown'
+            )
+            
+            # Send to private chat
+            try:
+                user = self.db.get_user(self.bot_id, user_id)
+                if user:
+                    balance = user.get('balance', 0)
+                    total_invites = user.get('total_invites', 0)
+                    total_earned = total_invites * 1.00
+                    
+                    bot_data = self.db.get_bot_by_token(self.token)
+                    bot_username = bot_data.get('bot_username', 'bot') if bot_data else 'bot'
+                    referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+                    
+                    text = (
+                        f"💰 **YOUR WALLET**\n\n"
+                        f"💵 Balance: **RM {balance:.2f}**\n"
+                        f"👥 Total Referrals: **{total_invites}**\n"
+                        f"💎 Total Earned: **RM {total_earned:.2f}**\n\n"
+                        f"🔗 **Referral Link:**\n"
+                        f"`{referral_link}`\n\n"
+                        f"_Minimum withdrawal: RM10_"
+                    )
+                    
+                    await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
+                else:
+                    await context.bot.send_message(chat_id=user_id, text="❌ Sila /start bot dulu.")
+            except Exception as e:
+                self.logger.error(f"Failed to send wallet PM: {e}")
+                await update.message.reply_text("❌ Sila /start bot dalam PM dulu.")
+            return
+        
+        # Private chat - show normally
+        user = self.db.get_user(self.bot_id, user_id)
+        if not user:
+            await update.message.reply_text("❌ User not found. Type /start first.")
+            return
+        
+        balance = user.get('balance', 0)
+        total_invites = user.get('total_invites', 0)
+        total_earned = total_invites * 1.00
+        
+        text = (
+            f"💰 **YOUR WALLET**\n\n"
+            f"💵 Balance: **RM {balance:.2f}**\n"
+            f"👥 Total Referrals: **{total_invites}**\n"
+            f"💎 Total Earned: **RM {total_earned:.2f}**\n\n"
+            f"_Minimum withdrawal: RM10_"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("📤 WITHDRAW", callback_data="withdraw")],
+            [InlineKeyboardButton("🔗 Share Link", callback_data="share_link")],
+            [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
+        ]
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Start & Menu ---
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
