@@ -202,6 +202,77 @@ class MotherBot:
         elif data.startswith("analytics_"):
             bot_id = int(data.split("_")[1])
             await self.show_bot_analytics(update, bot_id)
+        elif data.startswith("extend_sub_"):
+            # Show extend subscription options
+            bot_id = int(data.split("_")[2])
+            bot = self.db.get_bot_by_id(bot_id)
+            
+            # Calculate current expiry
+            try:
+                expiry = datetime.datetime.fromisoformat(bot['subscription_end'])
+                days_left = (expiry - datetime.datetime.now()).days
+                expiry_text = f"{expiry.strftime('%Y-%m-%d')} ({days_left} days left)"
+            except:
+                expiry_text = bot['subscription_end'][:10]
+            
+            text = (
+                f"📅 **EXTEND SUBSCRIPTION**\n\n"
+                f"**Bot:** #{bot_id}\n"
+                f"**Current Expiry:** {expiry_text}\n\n"
+                f"Select days to add:"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("➕ 7 Days", callback_data=f"add_days_{bot_id}_7"),
+                 InlineKeyboardButton("➕ 14 Days", callback_data=f"add_days_{bot_id}_14")],
+                [InlineKeyboardButton("➕ 30 Days", callback_data=f"add_days_{bot_id}_30"),
+                 InlineKeyboardButton("➕ 60 Days", callback_data=f"add_days_{bot_id}_60")],
+                [InlineKeyboardButton("➕ 90 Days", callback_data=f"add_days_{bot_id}_90"),
+                 InlineKeyboardButton("➕ 180 Days", callback_data=f"add_days_{bot_id}_180")],
+                [InlineKeyboardButton("➕ 365 Days (1 Year)", callback_data=f"add_days_{bot_id}_365")],
+                [InlineKeyboardButton("« Back", callback_data=f"manage_bot_{bot_id}")]
+            ]
+            
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        elif data.startswith("add_days_"):
+            # Actually extend subscription
+            parts = data.split("_")
+            bot_id = int(parts[2])
+            days = int(parts[3])
+            
+            # Check if user is admin
+            if update.effective_user.id not in MASTER_ADMIN_IDS:
+                await query.message.reply_text("⛔ Access Denied")
+                return
+            
+            # Get current expiry
+            bot = self.db.get_bot_by_id(bot_id)
+            try:
+                current_expiry = datetime.datetime.fromisoformat(bot['subscription_end'])
+                # If expired, start from now
+                if current_expiry < datetime.datetime.now():
+                    current_expiry = datetime.datetime.now()
+            except:
+                current_expiry = datetime.datetime.now()
+            
+            # Calculate new expiry
+            new_expiry = current_expiry + datetime.timedelta(days=days)
+            
+            # Update database
+            conn = self.db.get_connection()
+            conn.execute("UPDATE bots SET subscription_end = ? WHERE id = ?", 
+                        (new_expiry.isoformat(), bot_id))
+            conn.commit()
+            conn.close()
+            
+            await query.message.edit_text(
+                f"✅ **Subscription Extended!**\n\n"
+                f"**Bot:** #{bot_id}\n"
+                f"**Added:** {days} days\n"
+                f"**New Expiry:** {new_expiry.strftime('%Y-%m-%d')}\n\n"
+                f"Use /mybots to see updated info.",
+                parse_mode='Markdown'
+            )
         elif data == "close_panel":
             # Carousel style - edit to show main menu instead of delete
             text = (
@@ -405,9 +476,15 @@ class MotherBot:
              InlineKeyboardButton("👥 Users", callback_data=f"users_{bot_id}")],
             [InlineKeyboardButton("📈 Analytics", callback_data=f"analytics_{bot_id}")],
             [InlineKeyboardButton(toggle_text, callback_data=f"toggle_bot_{bot_id}")],
-            [InlineKeyboardButton("🗑️ Delete Bot", callback_data=f"delete_bot_{bot_id}")],
-            [InlineKeyboardButton("« Back to My Bots", callback_data="my_bots_panel")]
         ]
+        
+        # Master Admin can extend subscription
+        user_id = update.effective_user.id
+        if user_id in MASTER_ADMIN_IDS:
+            keyboard.append([InlineKeyboardButton("📅 Extend Subscription", callback_data=f"extend_sub_{bot_id}")])
+        
+        keyboard.append([InlineKeyboardButton("🗑️ Delete Bot", callback_data=f"delete_bot_{bot_id}")])
+        keyboard.append([InlineKeyboardButton("« Back to My Bots", callback_data="my_bots_panel")])
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     async def toggle_bot_status(self, update: Update, bot_id: int):
