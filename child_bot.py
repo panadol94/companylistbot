@@ -3069,13 +3069,18 @@ class ChildBot:
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle incoming text messages"""
+        self.logger.info(f"📨 Text message received: {update.message.text[:50] if update.message.text else 'No text'}")
+        self.logger.info(f"📨 User data states: waiting_forwarder_source={context.user_data.get('waiting_forwarder_source')}, waiting_forwarder_target={context.user_data.get('waiting_forwarder_target')}")
+        
         # Check if waiting for forwarder source channel
         if context.user_data.get('waiting_forwarder_source'):
+            self.logger.info("✅ Processing as forwarder source (text input)")
             await self.save_forwarder_source(update, context)
             return
         
         # Check if waiting for forwarder target group
         if context.user_data.get('waiting_forwarder_target'):
+            self.logger.info("✅ Processing as forwarder target (text input)")
             await self.save_forwarder_target(update, context)
             return
         
@@ -3183,6 +3188,7 @@ class ChildBot:
         
         await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         context.user_data['waiting_forwarder_source'] = True
+        self.logger.info(f"🎯 Set waiting_forwarder_source=True for user {update.effective_user.id}")
     
     async def save_forwarder_source(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Save source channel from forwarded message or ID"""
