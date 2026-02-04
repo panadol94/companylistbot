@@ -910,7 +910,16 @@ class ChildBot:
             [InlineKeyboardButton("🔄 Refresh Data", callback_data="4d_refresh")],
             [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
         ]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            # Message has media, delete and send new
+            try:
+                await update.callback_query.message.delete()
+            except:
+                pass
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def show_4d_hot_numbers(self, update: Update):
         """Show frequently appearing numbers"""
@@ -933,7 +942,10 @@ class ChildBot:
             text += f"`{num}` - {count}x keluar\n"
         
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def show_4d_cold_numbers(self, update: Update):
         """Show rarely appearing numbers"""
@@ -953,7 +965,10 @@ class ChildBot:
         text += "\n💡 _Cold numbers mungkin akan keluar soon!_"
         
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def show_4d_digit_frequency(self, update: Update):
         """Show digit frequency chart"""
@@ -975,7 +990,10 @@ class ChildBot:
             text += f"`{digit}` {bar} {count}\n"
         
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def generate_4d_lucky(self, update: Update):
         """Generate lucky numbers based on statistics"""
@@ -1018,7 +1036,10 @@ class ChildBot:
             [InlineKeyboardButton("🔄 Generate Lagi", callback_data="4d_lucky_gen")],
             [InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]
         ]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def refresh_4d_data(self, update: Update):
         """Fetch latest 4D data from web sources"""
