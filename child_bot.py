@@ -839,6 +839,7 @@ class ChildBot:
         elif data == "forwarder_toggle": await self.toggle_forwarder(update)
         elif data == "forwarder_set_source": await self.forwarder_set_source_start(update, context)
         elif data == "forwarder_set_target": await self.forwarder_set_target_start(update, context)
+        elif data == "forwarder_set_this_group": await self.set_current_forwarder_target_group(update, context)
         elif data == "forwarder_set_filter": await self.forwarder_set_filter_start(update, context)
         elif data == "forwarder_clear_filter": await self.forwarder_clear_filter(update)
         elif data == "forwarder_back": await self.forwarder_back_to_admin(update, context)
@@ -3158,24 +3159,50 @@ class ChildBot:
             f"💬 Target: `{target_name}`\n"
             f"🔍 Filter: {filter_keywords}\n"
             f"📊 Status: {status}\n\n"
-            "ℹ️ _Bot mesti jadi admin di source channel & target group_"
         )
         
-        toggle_text = "🔴 OFF" if (config and config.get('is_active')) else "🟢 ON"
+        if not (config and config.get('is_active')):
+             text += "👇 Klik 'Activate' untuk memulakan forwarder!\n"
+
+        # Check chat type (Group vs Private)
+        chat = update.effective_chat
+        is_group = chat.type in ['group', 'supergroup']
         
-        keyboard = [
-            [InlineKeyboardButton("📢 Set Source Channel", callback_data="forwarder_set_source")],
-            [InlineKeyboardButton("💬 Set Target Group", callback_data="forwarder_set_target")],
-            [InlineKeyboardButton("🔍 Set Filter Keywords", callback_data="forwarder_set_filter")],
-            [InlineKeyboardButton("🗑️ Clear Filter", callback_data="forwarder_clear_filter")],
-            [InlineKeyboardButton(f"Toggle {toggle_text}", callback_data="forwarder_toggle")],
-            [InlineKeyboardButton("« Back", callback_data="forwarder_back")]
-        ]
+        keyboard = []
+        
+        # Source is usually set from DM or by forwarding
+        keyboard.append([InlineKeyboardButton("📢 Set Source Channel", callback_data="forwarder_set_source")])
+        
+        if is_group:
+            # Smart Feature: Set CURRENT group as target
+            keyboard.append([InlineKeyboardButton("🎯 Set THIS Group as Target", callback_data="forwarder_set_this_group")])
+        else:
+            # Private chat: Allow manual setting
+            keyboard.append([InlineKeyboardButton("💬 Set Target Group", callback_data="forwarder_set_target")])
+            
+        keyboard.append([InlineKeyboardButton("🔍 Set Filter Keywords", callback_data="forwarder_set_filter")])
+        
+        if config and config.get('filter_keywords'):
+             keyboard.append([InlineKeyboardButton("🗑️ Clear Filter", callback_data="forwarder_clear_filter")])
+
+        if config:
+            btn_text = "🔴 Deactivate" if is_active else "🟢 Activate"
+            keyboard.append([InlineKeyboardButton(btn_text, callback_data="forwarder_toggle")])
+            
+        # Back button logic
+        if is_group:
+             keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_panel")])
+        else:
+             keyboard.append([InlineKeyboardButton("« Back", callback_data="forwarder_back")])
         
         try:
-            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            if update.callback_query:
+                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            else:
+                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         except Exception:
-            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            # Fallback if edit fails (e.g. message too old)
+             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     
     async def toggle_forwarder(self, update: Update):
         """Toggle forwarder on/off"""
@@ -3209,7 +3236,47 @@ class ChildBot:
         context.user_data['waiting_forwarder_source'] = True
         self.logger.info(f"🎯 Set waiting_forwarder_source=True for user {update.effective_user.id}")
     
-    async def save_forwarder_source(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def set_current_forwarder_target_group(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Set the current group as the forwarder target (Auto-Detect)"""
+        chat = update.effective_chat
+        
+        # Validate we are in a group
+        if chat.type not in ['group', 'supergroup']:
+            await update.callback_query.answer("❌ Fungsi ini hanya untuk dalam Group!", show_alert=True)
+            return
+            
+        group_id = chat.id
+        group_name = chat.title or str(group_id)
+        
+        # Get existing config
+        config = self.db.get_forwarder_config(self.bot_id)
+        source_id = config.get('source_channel_id') if config else None
+        source_name = config.get('source_channel_name') if config else None
+        filter_keywords = config.get('filter_keywords') if config else None
+        
+        # Save config
+        success = self.db.save_forwarder_config(
+            self.bot_id, source_id, source_name, group_id, group_name, filter_keywords
+        )
+        
+        if success:
+            await update.callback_query.answer("✅ Target Group ditetapkan!")
+            
+            # Check if setup is complete -> Auto Activate Logic handled in show_forwarder_complete_notification
+            if source_id:
+                # Need to update message to remove the button and show completion
+                # But show_forwarder_complete_notification is designed for message reply, not edit
+                # So we can just call show_forwarder_menu again, or custom logic
+                
+                # Check for Auto-Activation
+                if not config or not config.get('is_active'):
+                     self.db.toggle_forwarder(self.bot_id) # Auto activate
+
+                await self.show_forwarder_complete_notification(update, source_name, group_name, filter_keywords)
+            else:
+                 await self.show_forwarder_menu(update) # Refresh menu
+        else:
+            await update.callback_query.answer("❌ Gagal menyimpan setting.", show_alert=True)
         """Save source channel from forwarded message or ID"""
         # DON'T pop state yet - user might need to retry if detection fails
         
@@ -3265,6 +3332,11 @@ class ChildBot:
             
             # Check if setup is complete (both source and target set)
             if target_id:
+                # Check for Auto-Activation
+                config = self.db.get_forwarder_config(self.bot_id)
+                if not config or not config.get('is_active'):
+                     self.db.toggle_forwarder(self.bot_id) # Auto activate
+                
                 await self.show_forwarder_complete_notification(update, channel_name, target_name, filter_keywords)
             else:
                 await update.message.reply_text(
@@ -3344,6 +3416,11 @@ class ChildBot:
             
             # Check if setup is complete (both source and target set)
             if source_id:
+                # Check for Auto-Activation
+                config = self.db.get_forwarder_config(self.bot_id)
+                if not config or not config.get('is_active'):
+                     self.db.toggle_forwarder(self.bot_id) # Auto activate
+
                 await self.show_forwarder_complete_notification(update, source_name, group_name, filter_keywords)
             else:
                 await update.message.reply_text(
@@ -3473,24 +3550,35 @@ class ChildBot:
     async def handle_channel_post(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle channel posts for forwarding to target group"""
         try:
+            # Debug log
+            self.logger.info(f"📨 Channel Post Received | Chat ID: {update.effective_chat.id} | Msg ID: {update.effective_message.message_id}")
+            
             # Get forwarder config
             config = self.db.get_forwarder_config(self.bot_id)
             
-            if not config or not config.get('is_active'):
-                return  # Forwarder not configured or inactive
+            if not config:
+                self.logger.debug("⏩ Forwarder skipped: No config found")
+                return
+                
+            if not config.get('is_active'):
+                self.logger.debug("⏩ Forwarder skipped: Inactive")
+                return
             
             source_channel_id = config.get('source_channel_id')
             target_group_id = config.get('target_group_id')
             filter_keywords = config.get('filter_keywords')
             
             if not source_channel_id or not target_group_id:
+                self.logger.warning("⚠️ Forwarder incomplete config")
                 return  # Not properly configured
             
             # Check if message is from source channel
             if update.effective_chat.id != source_channel_id:
+                self.logger.debug(f"⏩ Skipped: Chat ID {update.effective_chat.id} != Source {source_channel_id}")
                 return  # Not from our source channel
             
             message = update.effective_message
+            self.logger.info(f"✅ Processing forwarding for message detected from Source Channel {source_channel_id}")
             
             # Apply keyword filter if set
             if filter_keywords:
@@ -3499,7 +3587,7 @@ class ChildBot:
                 
                 # Check if any keyword is in the message
                 if not any(keyword in message_text for keyword in keywords):
-                    self.logger.debug(f"Message filtered out - no matching keywords")
+                    self.logger.info(f"✋ Message filtered out - no matching keywords in '{message_text[:20]}...'")
                     return  # Message doesn't match filter
             
             # Forward message content (copy, not forward) to target group
@@ -3569,13 +3657,13 @@ class ChildBot:
                     # Fallback - try to copy message
                     await message.copy(chat_id=target_group_id)
                 
-                self.logger.info(f"📡 Forwarded message from {source_channel_id} to {target_group_id}")
+                self.logger.info(f"🚀 SUCCESS: Forwarded message to Group {target_group_id}")
                 
             except Exception as e:
-                self.logger.error(f"Failed to forward message: {e}")
+                self.logger.error(f"❌ Failed to forward message: {e}")
                 
         except Exception as e:
-            self.logger.error(f"Channel post handler error: {e}")
+            self.logger.error(f"❌ Channel post handler error: {e}")
 
     async def handle_bot_status_change(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle when bot's status changes in a chat (added/removed/promoted/demoted)"""
