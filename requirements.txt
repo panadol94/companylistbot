@@ -6,3 +6,5 @@ fastapi
 uvicorn
 aiohttp
 beautifulsoup4
+playwright
+lxml

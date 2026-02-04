@@ -926,8 +926,8 @@ class ChildBot:
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def show_4d_latest_results(self, update: Update):
-        """Show latest 4D results from all companies"""
-        results = self.db.get_4d_results(limit=3)  # Get latest from each company
+        """Show latest 4D results from all companies - organized by region"""
+        results = self.db.get_4d_results(limit=33)  # Get latest from each company
         
         if not results:
             await update.callback_query.answer("Tiada data! Sila Refresh dulu.", show_alert=True)
@@ -941,26 +941,37 @@ class ChildBot:
                 by_company[company] = r
         
         text = "🏆 **KEPUTUSAN 4D TERKINI**\n"
-        text += f"📅 _{datetime.datetime.now().strftime('%d/%m/%Y')}_\n\n"
+        text += f"📅 _{datetime.datetime.now().strftime('%d/%m/%Y')}_\n"
         
-        company_icons = {'MAGNUM': '🔴', 'TOTO': '🟢', 'DAMACAI': '🟡'}
+        # Provider icons for all 11 providers
+        company_icons = {
+            'MAGNUM': '🔴', 'TOTO': '🟢', 'DAMACAI': '🟡',
+            'CASHSWEEP': '💜', 'SABAH88': '🟤', 'STC': '🔵',
+            'SG4D': '🩷', 'SGTOTO': '🩵',
+            'GD': '🐉', 'PERDANA': '🎰', 'LUCKY': '🍀'
+        }
         
-        for company in ['MAGNUM', 'TOTO', 'DAMACAI']:
-            if company in by_company:
-                r = by_company[company]
-                icon = company_icons.get(company, '⚪')
-                
-                text += f"{icon} **{company}**\n"
-                text += f"🥇 `{r['first_prize']}`  🥈 `{r['second_prize']}`  🥉 `{r['third_prize']}`\n"
-                
-                # Special prizes (first 5 only for display)
-                if r['special_prizes']:
-                    specials = r['special_prizes'].split(',')[:5]
-                    text += f"✨ {' '.join([f'`{s.strip()}`' for s in specials])}...\n"
-                
-                text += "\n"
+        # Region groupings
+        regions = {
+            '🇲🇾 West Malaysia': ['MAGNUM', 'DAMACAI', 'TOTO'],
+            '🇲🇾 East Malaysia': ['CASHSWEEP', 'SABAH88', 'STC'],
+            '🇸🇬 Singapore': ['SG4D', 'SGTOTO'],
+            '🇰🇭 Cambodia': ['GD', 'PERDANA', 'LUCKY']
+        }
         
-        text += "_Tekan Refresh Data untuk update terkini_"
+        for region_name, companies in regions.items():
+            has_results = any(c in by_company for c in companies)
+            if has_results:
+                text += f"\n**{region_name}**\n"
+                for company in companies:
+                    if company in by_company:
+                        r = by_company[company]
+                        icon = company_icons.get(company, '⚪')
+                        
+                        text += f"{icon} **{company}**\n"
+                        text += f"🥇 `{r['first_prize']}`  🥈 `{r['second_prize']}`  🥉 `{r['third_prize']}`\n"
+        
+        text += "\n_Tekan Refresh Data untuk update terkini_"
         
         keyboard = [
             [InlineKeyboardButton("🔍 Check My Number", callback_data="4d_check")],
@@ -1209,10 +1220,16 @@ class ChildBot:
         await self.show_4d_menu(update)
 
     async def _load_sample_4d_data(self):
-        """Load sample 4D data for demo purposes"""
+        """Load sample 4D data for demo purposes - all 11 providers"""
         import random
         
-        companies = ['MAGNUM', 'TOTO', 'DAMACAI']
+        # All 11 providers
+        companies = [
+            'MAGNUM', 'TOTO', 'DAMACAI',  # West MY
+            'CASHSWEEP', 'SABAH88', 'STC',  # East MY
+            'SG4D', 'SGTOTO',  # Singapore
+            'GD', 'PERDANA', 'LUCKY'  # Cambodia
+        ]
         
         for company in companies:
             for days_ago in range(30):
