@@ -165,6 +165,21 @@ class ChildBot:
         )
         self.app.add_handler(edit_company_conv)
         
+        # Withdrawal Conversation Handler
+        withdrawal_handler = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.start_withdrawal, pattern="^req_withdraw$")],
+            states={
+                WD_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.withdrawal_input_amount)],
+                WD_METHOD: [CallbackQueryHandler(self.withdrawal_select_method, pattern="^wd_method_")],
+                WD_ACCOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.withdrawal_input_account)],
+                WD_CONFIRM: [CallbackQueryHandler(self.withdrawal_submit, pattern="^wd_submit$")],
+            },
+            fallbacks=[CallbackQueryHandler(self.cancel_withdrawal, pattern="^cancel_wd$")],
+            name="withdrawal_conversation",
+            persistent=False
+        )
+        self.app.add_handler(withdrawal_handler)
+        
         # Add Menu Button Wizard
         menu_btn_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.add_menu_btn_start, pattern=r'^menu_add_btn$')],
@@ -1126,7 +1141,13 @@ class ChildBot:
         elif data == "4d_unsub": await self.unsubscribe_4d_notification(update)
         
         # Admin Actions
-        elif data == "admin_withdrawals": await self.show_withdrawals(update)
+        elif data == "admin_withdrawals": await self.show_admin_withdrawals(update)
+        elif data.startswith("wd_detail_"): await self.show_withdrawal_detail(update, int(data.split("_")[2]))
+        elif data.startswith("wd_approve_"): await self.admin_approve_withdrawal(update, int(data.split("_")[2]))
+        elif data.startswith("wd_reject_"): await self.admin_reject_withdrawal(update, int(data.split("_")[2]))
+        elif data.startswith("wd_method_"): await self.withdrawal_select_method(update, context)
+        elif data == "wd_submit": await self.withdrawal_submit(update, context)
+        elif data == "cancel_wd": await self.cancel_withdrawal(update, context)
         elif data.startswith("approve_wd_"): await self.process_withdrawal(update, data, True)
         elif data.startswith("reject_wd_"): await self.process_withdrawal(update, data, False)
         elif data == "admin_del_list": await self.show_delete_company_list(update)
@@ -2141,6 +2162,129 @@ class ChildBot:
             self.logger.error(f"Error in show_admin_settings: {e}")
             # Fallback: send new message if edit fails
             await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    # === ADMIN WITHDRAWAL MANAGEMENT ===
+    
+    async def show_admin_withdrawals(self, update: Update):
+        """Show list of pending withdrawals"""
+        withdrawals = self.db.get_pending_withdrawals(self.bot_id)
+        
+        if not withdrawals:
+            text = "📭 No pending withdrawals"
+            keyboard = [[InlineKeyboardButton("« Back", callback_data="admin")]]
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        
+        text = f"💳 <b>PENDING WITHDRAWALS ({len(withdrawals)})</b>\n\n"
+        keyboard = []
+        
+        for wd in withdrawals:
+            user_id = wd['user_id']
+            amount = wd['amount']
+            method = wd.get('method', 'TNG')
+            
+            text += f"ID: {wd['id']} | User: {user_id} | RM {amount:.2f} | {method}\n"
+            keyboard.append([InlineKeyboardButton(
+                f"🔍 #{wd['id']} - RM {amount:.2f}",
+                callback_data=f"wd_detail_{wd['id']}"
+            )])
+        
+        keyboard.append([InlineKeyboardButton("« Back to Admin", callback_data="admin")])
+        
+        await update.callback_query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+    
+    async def show_withdrawal_detail(self, update: Update, withdrawal_id: int):
+        """Show single withdrawal with approve/reject buttons"""
+        wd = self.db.get_withdrawal_by_id(withdrawal_id)
+        
+        if not wd:
+            await update.callback_query.answer("Withdrawal not found", show_alert=True)
+            return
+        
+        text = (
+            f"💳 <b>WITHDRAWAL DETAIL</b>\n\n"
+            f"🆔 <b>ID:</b> {wd['id']}\n"
+            f"👤 <b>User ID:</b> <code>{wd['user_id']}</code>\n"
+            f"💵 <b>Amount:</b> RM {wd['amount']:.2f}\n"
+            f"📝 <b>Method:</b> {wd.get('method', 'TNG')}\n"
+            f"📋 <b>Account:</b> <code>{wd.get('account', 'N/A')}</code>\n"
+            f"📊 <b>Status:</b> {wd['status']}\n"
+            f"🕐 <b>Requested:</b> {wd.get('created_at', 'N/A')}\n"
+            f"💰 <b>User Balance:</b> RM {wd.get('current_balance', 0):.2f}"
+        )
+        
+        keyboard = []
+        if wd['status'] == 'PENDING':
+            keyboard.append([
+                InlineKeyboardButton("✅ APPROVE", callback_data=f"wd_approve_{wd['id']}"),
+                InlineKeyboardButton("❌ REJECT", callback_data=f"wd_reject_{wd['id']}")
+            ])
+        
+        keyboard.append([InlineKeyboardButton("« Back to List", callback_data="admin_withdrawals")])
+        
+        await update.callback_query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+    
+    async def admin_approve_withdrawal(self, update: Update, withdrawal_id: int):
+        """Approve withdrawal and notify user"""
+        success = self.db.update_withdrawal_status(withdrawal_id, 'APPROVED', update.effective_user.id)
+        
+        if success:
+            wd = self.db.get_withdrawal_by_id(withdrawal_id)
+            if wd:
+                try:
+                    await self.app.bot.send_message(
+                        chat_id=wd['user_id'],
+                        text=(
+                            f"✅ <b>WITHDRAWAL APPROVED!</b>\n\n"
+                            f"💵 Amount: RM {wd['amount']:.2f}\n"
+                            f"📝 Method: {wd.get('method', 'TNG')}\n"
+                            f"📋 Account: <code>{wd.get('account', 'N/A')}</code>\n\n"
+                            f"Payment will be processed soon."
+                        ),
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
+            
+            await update.callback_query.answer("✅ Approved!", show_alert=True)
+        else:
+            await update.callback_query.answer("❌ Failed to approve", show_alert=True)
+        
+        await self.show_admin_withdrawals(update)
+    
+    async def admin_reject_withdrawal(self, update: Update, withdrawal_id: int):
+        """Reject withdrawal, refund balance, and notify user"""
+        success = self.db.update_withdrawal_status(withdrawal_id, 'REJECTED', update.effective_user.id)
+        
+        if success:
+            wd = self.db.get_withdrawal_by_id(withdrawal_id)
+            if wd:
+                try:
+                    await self.app.bot.send_message(
+                        chat_id=wd['user_id'],
+                        text=(
+                            f"❌ <b>WITHDRAWAL REJECTED</b>\n\n"
+                            f"💵 Amount: RM {wd['amount']:.2f}\n"
+                            f"Balance has been refunded to your wallet."
+                        ),
+                        parse_mode='HTML'
+                    )
+                except:
+                    pass
+            
+            await update.callback_query.answer("❌ Rejected & Refunded", show_alert=True)
+        else:
+            await update.callback_query.answer("❌ Failed to reject", show_alert=True)
+        
+        await self.show_admin_withdrawals(update)
     
     async def toggle_livegram_system(self, update: Update):
         """Toggle livegram system on/off"""
