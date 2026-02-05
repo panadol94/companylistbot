@@ -964,6 +964,16 @@ class ChildBot:
         elif data == "admin_settings": await self.show_admin_settings(update)
         # Edit Company List (Admin)
         elif data == "admin_edit_company_list": await self.show_edit_company_list(update)
+        # Reorder Companies
+        elif data == "reorder_companies": await self.show_reorder_companies(update)
+        elif data.startswith("reorder_select_"): 
+            company_id = int(data.split("_")[2])
+            await self.show_reorder_positions(update, company_id)
+        elif data.startswith("reorder_move_"): 
+            parts = data.split("_")
+            company_id = int(parts[2])
+            new_position = int(parts[3])
+            await self.execute_reorder(update, company_id, new_position)
         # Admin Management
         elif data == "manage_admins": await self.show_manage_admins(update)
         elif data == "add_admin_start": await self.add_admin_start(update, context)
@@ -1724,6 +1734,80 @@ class ChildBot:
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
     
+    # --- Reorder Companies Logic ---
+    async def show_reorder_companies(self, update: Update):
+        """Show company list for reordering"""
+        companies = self.db.get_companies(self.bot_id)
+        
+        if not companies:
+            await update.callback_query.answer("📭 No companies to reorder", show_alert=True)
+            return
+        
+        text = "🔢 <b>REORDER COMPANIES</b>\n\nSelect company to move:"
+        
+        keyboard = []
+        for idx, company in enumerate(companies, 1):
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{idx}. {company['name']}", 
+                    callback_data=f"reorder_select_{company['id']}"
+                )
+            ])
+        
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="admin_settings")])
+        
+        await update.callback_query.message.edit_text(
+            text, 
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+
+    async def show_reorder_positions(self, update: Update, company_id: int):
+        """Show available positions for selected company"""
+        companies = self.db.get_companies(self.bot_id)
+        total = len(companies)
+        
+        company = next((c for c in companies if c['id'] == company_id), None)
+        if not company:
+            await update.callback_query.answer("❌ Company not found", show_alert=True)
+            return
+        
+        # Find current position (1-indexed)
+        current_pos = next((idx for idx, c in enumerate(companies, 1) if c['id'] == company_id), 1)
+        
+        text = f"📍 Move <b>{company['name']}</b> to position:"
+        
+        keyboard = []
+        for i in range(1, total + 1):
+            label = f"{i}"
+            if i == current_pos:
+                label += " (current ✓)"
+            
+            keyboard.append([
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"reorder_move_{company_id}_{i}"
+                )
+            ])
+        
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="reorder_companies")])
+        
+        await update.callback_query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
+        )
+
+    async def execute_reorder(self, update: Update, company_id: int, new_position: int):
+        """Execute the reorder operation"""
+        success = self.db.update_company_position(company_id, new_position, self.bot_id)
+        
+        if success:
+            await update.callback_query.answer("✅ Position updated!")
+            await self.show_reorder_companies(update)
+        else:
+            await update.callback_query.answer("❌ Failed to reorder", show_alert=True)
+    
     # --- Customize Menu Logic ---
     async def show_customize_menu(self, update: Update):
         """Show customization options"""
@@ -1849,6 +1933,7 @@ class ChildBot:
             keyboard = [
                 [InlineKeyboardButton("➕ Add Company", callback_data="admin_add_company")],
                 [InlineKeyboardButton("✏️ Edit Company", callback_data="admin_edit_company_list"), InlineKeyboardButton("🗑️ Delete Company", callback_data="admin_del_list")],
+                [InlineKeyboardButton("🔢 Reorder Companies", callback_data="reorder_companies")],
                 [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"), InlineKeyboardButton("⚙️ Customize Menu", callback_data="customize_menu")],
                 [InlineKeyboardButton("🎨 Media Manager", callback_data="admin_media_manager"), InlineKeyboardButton(schedule_text, callback_data="reset_schedule")],
                 [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],

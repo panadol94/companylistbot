@@ -289,6 +289,12 @@ class Database:
             except:
                 pass  # Column already exists
             
+            # Migration: Add display_order column to companies
+            try:
+                cursor.execute("ALTER TABLE companies ADD COLUMN display_order INTEGER DEFAULT 0")
+            except:
+                pass  # Column already exists
+            
             # Migration: Add required channel columns to bots
             try:
                 cursor.execute("ALTER TABLE bots ADD COLUMN required_channel_id INTEGER")
@@ -394,7 +400,7 @@ class Database:
 
     def get_companies(self, bot_id):
         conn = self.get_connection()
-        rows = conn.execute("SELECT * FROM companies WHERE bot_id = ?", (bot_id,)).fetchall()
+        rows = conn.execute("SELECT * FROM companies WHERE bot_id = ? ORDER BY display_order ASC, id ASC", (bot_id,)).fetchall()
         conn.close()
         return [dict(row) for row in rows]
     
@@ -406,6 +412,57 @@ class Database:
         with self.lock:
             conn = self.get_connection()
             conn.execute(f"UPDATE companies SET {field} = ? WHERE id = ?", (value, company_id))
+            conn.commit()
+            conn.close()
+            return True
+    
+    def update_company_position(self, company_id, new_position, bot_id):
+        """Update company display order (1-indexed position)"""
+        with self.lock:
+            conn = self.get_connection()
+            
+            # Get current position
+            current = conn.execute(
+                "SELECT display_order FROM companies WHERE id = ? AND bot_id = ?",
+                (company_id, bot_id)
+            ).fetchone()
+            
+            if not current:
+                conn.close()
+                return False
+                
+            old_position = current['display_order'] or 0
+            # Convert 1-indexed to 0-indexed
+            new_pos_idx = new_position - 1
+            
+            # Shift other companies
+            if new_pos_idx > old_position:
+                # Moving down - shift up the ones in between
+                conn.execute(
+                    """UPDATE companies 
+                       SET display_order = display_order - 1 
+                       WHERE bot_id = ? 
+                       AND display_order > ? 
+                       AND display_order <= ?""",
+                    (bot_id, old_position, new_pos_idx)
+                )
+            else:
+                # Moving up - shift down the ones in between
+                conn.execute(
+                    """UPDATE companies 
+                       SET display_order = display_order + 1 
+                       WHERE bot_id = ? 
+                       AND display_order >= ? 
+                       AND display_order < ?""",
+                    (bot_id, new_pos_idx, old_position)
+                )
+            
+            # Update target company
+            conn.execute(
+                "UPDATE companies SET display_order = ? WHERE id = ?",
+                (new_pos_idx, company_id)
+            )
+            
             conn.commit()
             conn.close()
             return True
