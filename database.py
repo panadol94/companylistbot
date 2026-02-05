@@ -566,22 +566,27 @@ class Database:
         return rank['rank'] if rank else None
 
     # --- Withdrawal ---
-    def request_withdrawal(self, bot_id, user_id, amount):
+    def request_withdrawal(self, bot_id, user_id, amount, method="TNG", account_details=""):
+        """Request withdrawal with method and account details"""
         with self.lock:
             conn = self.get_connection()
-            user = conn.execute("SELECT balance, phone_number FROM users WHERE bot_id = ? AND telegram_id = ?", (bot_id, user_id)).fetchone()
+            user = conn.execute("SELECT balance FROM users WHERE bot_id = ? AND telegram_id = ?", (bot_id, user_id)).fetchone()
             if not user or user['balance'] < amount:
                 conn.close()
                 return False, "Insufficient balance."
             
-            if not user['phone_number']:
-                conn.close()
-                return False, "Please verify phone number first."
-
-            conn.execute("INSERT INTO withdrawals (bot_id, user_id, amount) VALUES (?, ?, ?)", (bot_id, user_id, amount))
+            # Deduct balance immediately
+            conn.execute("UPDATE users SET balance = balance - ? WHERE bot_id = ? AND telegram_id = ?", (amount, bot_id, user_id))
+            
+            # Create withdrawal record
+            conn.execute(
+                "INSERT INTO withdrawals (bot_id, user_id, amount, method, account, status) VALUES (?, ?, ?, ?, ?, 'PENDING')",
+                (bot_id, user_id, amount, method, account_details)
+            )
             conn.commit()
+            withdrawal_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             conn.close()
-            return True, "Withdrawal requested."
+            return True, f"Withdrawal requested. ID: {withdrawal_id}"
 
     def process_withdrawal(self, withdrawal_id, action):
         with self.lock:
@@ -607,6 +612,53 @@ class Database:
         rows = conn.execute("SELECT * FROM withdrawals WHERE bot_id = ? AND status = 'PENDING'", (bot_id,)).fetchall()
         conn.close()
         return [dict(row) for row in rows]
+    
+    def get_all_withdrawals(self, bot_id, status=None):
+        """Get all withdrawals, optionally filtered by status"""
+        conn = self.get_connection()
+        if status:
+            rows = conn.execute("SELECT * FROM withdrawals WHERE bot_id = ? AND status = ? ORDER BY created_at DESC", (bot_id, status)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM withdrawals WHERE bot_id = ? ORDER BY created_at DESC", (bot_id,)).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+    
+    def get_withdrawal_by_id(self, withdrawal_id):
+        """Get single withdrawal with user details"""
+        conn = self.get_connection()
+        row = conn.execute(
+            """SELECT w.*, u.telegram_id, u.balance as current_balance 
+               FROM withdrawals w 
+               JOIN users u ON w.user_id = u.telegram_id AND w.bot_id = u.bot_id
+               WHERE w.id = ?""",
+            (withdrawal_id,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+    
+    def update_withdrawal_status(self, withdrawal_id, status, admin_id=None):
+        """Update withdrawal status (APPROVED/REJECTED)"""
+        with self.lock:
+            conn = self.get_connection()
+            
+            # If rejecting, refund the balance
+            if status == 'REJECTED':
+                withdrawal = conn.execute("SELECT bot_id, user_id, amount FROM withdrawals WHERE id = ?", (withdrawal_id,)).fetchone()
+                if withdrawal:
+                    conn.execute(
+                        "UPDATE users SET balance = balance + ? WHERE bot_id = ? AND telegram_id = ?",
+                        (withdrawal['amount'], withdrawal['bot_id'], withdrawal['user_id'])
+                    )
+            
+            # Update withdrawal status
+            conn.execute(
+                "UPDATE withdrawals SET status = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ? WHERE id = ?",
+                (status, admin_id, withdrawal_id)
+            )
+            conn.commit()
+            conn.close()
+            return True
+
 
     # --- Settings ---
     def update_phone(self, bot_id, user_id, phone):

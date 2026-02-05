@@ -683,6 +683,189 @@ class ChildBot:
             try: await update.effective_chat.send_message("❌ Error loading wallet.", parse_mode='HTML')
             except: pass
 
+    # === WITHDRAWAL CONVERSATION HANDLERS ===
+    
+    async def start_withdrawal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Entry point for withdrawal conversation"""
+        user = self.db.get_user(self.bot_id, update.effective_user.id)
+        if not user:
+            await update.callback_query.answer("⚠️ Data not found", show_alert=True)
+            return ConversationHandler.END
+        
+        if user['balance'] < 50.0:
+            await update.callback_query.answer("⚠️ Minimum withdrawal RM 50", show_alert=True)
+            return ConversationHandler.END
+        
+        text = (
+            f"📤 <b>REQUEST WITHDRAWAL</b>\n\n"
+            f"💵 <b>Balance:</b> RM {user['balance']:.2f}\n"
+            f"💰 <b>Min Amount:</b> RM 50.00\n\n"
+            f"Masukkan amount yang nak withdraw:"
+        )
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_wd")]]
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        except:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        
+        return WD_AMOUNT
+    
+    async def withdrawal_input_amount(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle amount input"""
+        try:
+            amount = float(update.message.text.strip().replace("RM", "").replace("rm", "").strip())
+        except ValueError:
+            await update.message.reply_text("⚠️ Format tidak sah. Masukkan nombor sahaja.\n\nContoh: 50")
+            return WD_AMOUNT
+        
+        user = self.db.get_user(self.bot_id, update.effective_user.id)
+        if amount < 50.0:
+            await update.message.reply_text("⚠️ Minimum withdrawal RM 50.00")
+            return WD_AMOUNT
+        
+        if amount > user['balance']:
+            await update.message.reply_text(f"⚠️ Balance tidak mencukupi.\n\nBalance: RM {user['balance']:.2f}")
+            return WD_AMOUNT
+        
+        context.user_data['wd_amount'] = amount
+        
+        text = f"✅ <b>Amount: RM {amount:.2f}</b>\n\nPilih payment method:"
+        keyboard = [
+            [InlineKeyboardButton("📱 TNG E-Wallet", callback_data="wd_method_TNG")],
+            [InlineKeyboardButton("🏦 Bank Transfer", callback_data="wd_method_Bank")],
+            [InlineKeyboardButton("₿ USDT (TRC20)", callback_data="wd_method_USDT")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_wd")]
+        ]
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        return WD_METHOD
+    
+    async def withdrawal_select_method(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle method selection"""
+        query = update.callback_query
+        await query.answer()
+        
+        method = query.data.split("_")[2]
+        context.user_data['wd_method'] = method
+        
+        if method == "TNG":
+            prompt = "📱 <b>TNG E-Wallet</b>\n\nSila masukkan nombor telefon TNG:\n\nContoh: 0123456789"
+        elif method == "Bank":
+            prompt = "🏦 <b>Bank Transfer</b>\n\nSila masukkan nombor akaun bank:\n\nContoh: 1234567890 (Maybank)"
+        else:
+            prompt = "₿ <b>USDT (TRC20)</b>\n\nSila masukkan USDT wallet address:\n\nContoh: TXyz123..."
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_wd")]]
+        await query.message.edit_text(prompt, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        
+        return WD_ACCOUNT
+    
+    async def withdrawal_input_account(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle account details input"""
+        account = update.message.text.strip()
+        method = context.user_data.get('wd_method', 'TNG')
+        
+        if method == "TNG" and (len(account) < 10 or not account.replace("-", "").isdigit()):
+            await update.message.reply_text("⚠️ Format nombor telefon tidak sah.\n\nContoh: 0123456789")
+            return WD_ACCOUNT
+        
+        if method == "Bank" and len(account) < 8:
+            await update.message.reply_text("⚠️ Nombor akaun terlalu pendek.")
+            return WD_ACCOUNT
+        
+        if method == "USDT" and len(account) < 20:
+            await update.message.reply_text("⚠️ Wallet address tidak sah.")
+            return WD_ACCOUNT
+        
+        context.user_data['wd_account'] = account
+        amount = context.user_data.get('wd_amount', 0)
+        method_icon = {"TNG": "📱", "Bank": "🏦", "USDT": "₿"}.get(method, "💳")
+        
+        text = (
+            f"📋 <b>CONFIRM WITHDRAWAL</b>\n\n"
+            f"💵 <b>Amount:</b> RM {amount:.2f}\n"
+            f"{method_icon} <b>Method:</b> {method}\n"
+            f"📝 <b>Account:</b> <code>{account}</code>\n\n"
+            f"⚠️ Pastikan maklumat betul!"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ CONFIRM & SUBMIT", callback_data="wd_submit")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_wd")]
+        ]
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        return WD_CONFIRM
+    
+    async def withdrawal_submit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Submit withdrawal request"""
+        query = update.callback_query
+        await query.answer()
+        
+        amount = context.user_data.get('wd_amount')
+        method = context.user_data.get('wd_method')
+        account = context.user_data.get('wd_account')
+        
+        success, message = self.db.request_withdrawal(self.bot_id, update.effective_user.id, amount, method, account)
+        
+        if success:
+            text = (
+                f"✅ <b>WITHDRAWAL REQUESTED!</b>\n\n"
+                f"💵 <b>Amount:</b> RM {amount:.2f}\n"
+                f"📝 <b>Method:</b> {method}\n"
+                f"📊 <b>Status:</b> PENDING\n\n"
+                f"📬 Admin akan process dalam 24 jam."
+            )
+            
+            try:
+                admins = self.db.get_admins(self.bot_id)
+                admin_text = (
+                    f"🔔 <b>NEW WITHDRAWAL REQUEST</b>\n\n"
+                    f"👤 User: <code>{update.effective_user.id}</code>\n"
+                    f"💵 Amount: RM {amount:.2f}\n"
+                    f"📝 Method: {method}\n"
+                    f"📋 Account: <code>{account}</code>\n\n"
+                    f"Check /admin → 💳 Withdrawals"
+                )
+                for admin in admins:
+                    try:
+                        await self.app.bot.send_message(admin['telegram_id'], admin_text, parse_mode='HTML')
+                    except:
+                        pass
+            except Exception as e:
+                self.logger.error(f"Failed to notify admins: {e}")
+        else:
+            text = f"❌ {message}"
+        
+        keyboard = [[InlineKeyboardButton("🔙 Back to Wallet", callback_data="wallet")]]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        
+        context.user_data.pop('wd_amount', None)
+        context.user_data.pop('wd_method', None)
+        context.user_data.pop('wd_account', None)
+        
+        return ConversationHandler.END
+    
+    async def cancel_withdrawal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Cancel withdrawal conversation"""
+        query = update.callback_query
+        await query.answer()
+        
+        context.user_data.pop('wd_amount', None)
+        context.user_data.pop('wd_method', None)
+        context.user_data.pop('wd_account', None)
+        
+        text = "❌ Withdrawal cancelled."
+        keyboard = [
+            [InlineKeyboardButton("💰 My Wallet", callback_data="wallet")],
+            [InlineKeyboardButton("🔙 Main Menu", callback_data="main_menu")]
+        ]
+        
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        return ConversationHandler.END
+
     async def show_share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             bot_uname = context.bot.username
