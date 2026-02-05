@@ -1140,13 +1140,23 @@ class ChildBot:
     async def edit_company_save_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         company_id = context.user_data.get('edit_company_id')
         self.db.edit_company(company_id, 'name', update.message.text)
-        await update.message.reply_text("✅ Nama company berjaya dikemaskini!")
+        
+        keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
+        await update.message.reply_text(
+            "✅ Nama company berjaya dikemaskini!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return ConversationHandler.END
     
     async def edit_company_save_desc(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         company_id = context.user_data.get('edit_company_id')
         self.db.edit_company(company_id, 'description', update.message.text)
-        await update.message.reply_text("✅ Deskripsi company berjaya dikemaskini!")
+        
+        keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
+        await update.message.reply_text(
+            "✅ Deskripsi company berjaya dikemaskini!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return ConversationHandler.END
     
     async def edit_company_save_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1177,19 +1187,34 @@ class ChildBot:
         await file_obj.download_to_drive(file_path)
         self.db.edit_company(company_id, 'media_file_id', file_path)
         self.db.edit_company(company_id, 'media_type', media_type)
-        await update.message.reply_text("✅ Media company berjaya dikemaskini!")
+        
+        keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
+        await update.message.reply_text(
+            "✅ Media company berjaya dikemaskini!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return ConversationHandler.END
     
     async def edit_company_save_btn_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         company_id = context.user_data.get('edit_company_id')
         self.db.edit_company(company_id, 'button_text', update.message.text)
-        await update.message.reply_text("✅ Button text berjaya dikemaskini!")
+        
+        keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
+        await update.message.reply_text(
+            "✅ Button text berjaya dikemaskini!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return ConversationHandler.END
     
     async def edit_company_save_btn_url(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         company_id = context.user_data.get('edit_company_id')
         self.db.edit_company(company_id, 'button_url', update.message.text)
-        await update.message.reply_text("✅ Button URL berjaya dikemaskini!")
+        
+        keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
+        await update.message.reply_text(
+            "✅ Button URL berjaya dikemaskini!",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return ConversationHandler.END
     
 
@@ -1682,10 +1707,22 @@ class ChildBot:
     async def confirm_delete_company(self, update: Update, company_id: int):
         """Delete company from database"""
         success = self.db.delete_company(company_id, self.bot_id)
+        
+        keyboard = [
+            [InlineKeyboardButton("🗑️ Delete Another", callback_data="admin_del_list")],
+            [InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]
+        ]
+        
         if success:
-            await update.callback_query.message.edit_text("✅ Company deleted successfully!")
+            await update.callback_query.message.edit_text(
+                "✅ Company deleted successfully!",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         else:
-            await update.callback_query.message.edit_text("❌ Error deleting company.")
+            await update.callback_query.message.edit_text(
+                "❌ Error deleting company.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
     
     # --- Customize Menu Logic ---
     async def show_customize_menu(self, update: Update):
