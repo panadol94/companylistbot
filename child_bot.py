@@ -519,7 +519,7 @@ class ChildBot:
                 keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
         
         # Admin-only: Referral Settings button (only show to bot owner)
-        if update.effective_user.id == bot_data['owner_id']:
+        if update.effective_user.id == int(bot_data['owner_id']):
             keyboard.append([InlineKeyboardButton("⚙️ REFERRAL SETTINGS", callback_data="ref_settings")])
 
         if update.callback_query:
