@@ -5,6 +5,65 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMe
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatMemberHandler
 from database import Database
 from config import DEFAULT_GLOBAL_AD
+from html import escape as html_escape
+
+def message_to_html(message) -> str:
+    """
+    Convert Telegram message with entities to HTML format.
+    Preserves bold, italic, underline, strikethrough, code, and links.
+    """
+    if not message or not message.text:
+        return ""
+    
+    text = message.text
+    entities = message.entities or []
+    
+    if not entities:
+        return html_escape(text)
+    
+    # Sort entities by offset (reverse order for safe insertion)
+    sorted_entities = sorted(entities, key=lambda e: e.offset, reverse=True)
+    
+    # Convert text to list for manipulation
+    result = list(text)
+    
+    for entity in sorted_entities:
+        start = entity.offset
+        end = entity.offset + entity.length
+        content = text[start:end]
+        escaped_content = html_escape(content)
+        
+        if entity.type == "bold":
+            replacement = f"<b>{escaped_content}</b>"
+        elif entity.type == "italic":
+            replacement = f"<i>{escaped_content}</i>"
+        elif entity.type == "underline":
+            replacement = f"<u>{escaped_content}</u>"
+        elif entity.type == "strikethrough":
+            replacement = f"<s>{escaped_content}</s>"
+        elif entity.type == "code":
+            replacement = f"<code>{escaped_content}</code>"
+        elif entity.type == "pre":
+            replacement = f"<pre>{escaped_content}</pre>"
+        elif entity.type == "text_link":
+            url = entity.url or ""
+            replacement = f'<a href="{html_escape(url)}">{escaped_content}</a>'
+        elif entity.type == "text_mention":
+            user_id = entity.user.id if entity.user else ""
+            replacement = f'<a href="tg://user?id={user_id}">{escaped_content}</a>'
+        elif entity.type == "spoiler":
+            replacement = f"<tg-spoiler>{escaped_content}</tg-spoiler>"
+        else:
+            # For other entity types, just escape the content
+            replacement = escaped_content
+            continue  # Skip if no formatting needed
+        
+        # Replace the original content with formatted version
+        result[start:end] = list(replacement)
+    
+    # Join and escape remaining non-entity text
+    final_text = ''.join(result)
+    return final_text
 
 # States for Admin Add/Edit Company
 NAME, DESC, MEDIA, BUTTON_TEXT, BUTTON_URL = range(5)
@@ -503,9 +562,9 @@ class ChildBot:
         bot_data = self.db.get_bot_by_token(self.token)
         is_admin = update.effective_user.id == bot_data['owner_id']
         
-        # Build caption
+        # Build caption - Using HTML format to support rich text formatting in descriptions
         caption = (
-            f"🏢 **{comp['name']}**\n\n"
+            f"🏢 <b>{html_escape(comp['name'])}</b>\n\n"
             f"{comp['description']}"
         )
         
@@ -558,11 +617,11 @@ class ChildBot:
                  media_source = file_obj if file_obj else media_path
                  
                  if comp['media_type'] == 'video':
-                     return InputMediaVideo(media=media_source, caption=caption, parse_mode='Markdown')
+                     return InputMediaVideo(media=media_source, caption=caption, parse_mode='HTML')
                  elif comp['media_type'] == 'animation':
-                     return InputMediaAnimation(media=media_source, caption=caption, parse_mode='Markdown')
+                     return InputMediaAnimation(media=media_source, caption=caption, parse_mode='HTML')
                  else:
-                     return InputMediaPhoto(media=media_source, caption=caption, parse_mode='Markdown')
+                     return InputMediaPhoto(media=media_source, caption=caption, parse_mode='HTML')
 
             # EXECUTION BLOCK
             if is_local_file:
@@ -589,11 +648,11 @@ class ChildBot:
                     # Actually valid file handle needed.
                     f.seek(0)
                     if comp['media_type'] == 'video':
-                        await update.effective_chat.send_video(video=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                        await update.effective_chat.send_video(video=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                     elif comp['media_type'] == 'animation':
-                         await update.effective_chat.send_animation(animation=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                         await update.effective_chat.send_animation(animation=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                     else:
-                         await update.effective_chat.send_photo(photo=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                         await update.effective_chat.send_photo(photo=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
             else:
                  # Remote File ID
                  media_obj = get_input_media(None)
@@ -611,11 +670,11 @@ class ChildBot:
                      except: pass
                  
                  if comp['media_type'] == 'video':
-                     await update.effective_chat.send_video(video=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                     await update.effective_chat.send_video(video=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                  elif comp['media_type'] == 'animation':
-                     await update.effective_chat.send_animation(animation=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                     await update.effective_chat.send_animation(animation=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                  else:
-                     await update.effective_chat.send_photo(photo=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                     await update.effective_chat.send_photo(photo=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
         except Exception as e:
              self.logger.error(f"Media error in show_page: {e}")
@@ -623,7 +682,7 @@ class ChildBot:
              if update.callback_query:
                  try: await update.callback_query.message.delete()
                  except: pass
-             await update.effective_chat.send_message(f"{caption}\n\n(Media Error)", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+             await update.effective_chat.send_message(f"{caption}\n\n(Media Error)", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     async def view_company(self, update: Update, comp_id: int):
         # Redirect to Carousel View (find index)
@@ -1366,12 +1425,16 @@ class ChildBot:
     
     async def edit_company_save_desc(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         company_id = context.user_data.get('edit_company_id')
-        self.db.edit_company(company_id, 'description', update.message.text)
+        # Convert message entities to HTML format to preserve formatting
+        formatted_desc = message_to_html(update.message)
+        self.db.edit_company(company_id, 'description', formatted_desc)
         
         keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
         await update.message.reply_text(
-            "✅ Deskripsi company berjaya dikemaskini!",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "✅ Deskripsi company berjaya dikemaskini!\n\n"
+            "💡 <i>Formatting (bold, underline, italic) telah disimpan.</i>",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML'
         )
         return ConversationHandler.END
     
