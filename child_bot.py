@@ -2546,6 +2546,7 @@ class ChildBot:
     
     async def admin_approve_withdrawal(self, update: Update, withdrawal_id: int):
         """Approve withdrawal and notify user"""
+        await update.callback_query.answer()  # Acknowledge button click immediately
         success = self.db.update_withdrawal_status(withdrawal_id, 'APPROVED', update.effective_user.id)
         
         if success:
@@ -2574,6 +2575,7 @@ class ChildBot:
     
     async def admin_reject_withdrawal(self, update: Update, withdrawal_id: int):
         """Reject withdrawal, refund balance, and notify user"""
+        await update.callback_query.answer()  # Acknowledge button click immediately
         success = self.db.update_withdrawal_status(withdrawal_id, 'REJECTED', update.effective_user.id)
         
         if success:
