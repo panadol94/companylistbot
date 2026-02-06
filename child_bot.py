@@ -434,7 +434,7 @@ class ChildBot:
             if arg.startswith("ref_"):
                 try:
                     referrer_id = int(arg.replace("ref_", ""))
-                except:
+                except Exception:
                     pass
             # Also handle direct ID format (legacy)
             elif arg.isdigit():
@@ -823,7 +823,7 @@ class ChildBot:
         
         try:
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-        except:
+        except Exception:
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         
         return WD_AMOUNT
@@ -1334,7 +1334,7 @@ class ChildBot:
         # Defensive answer (ignore if too old)
         try:
             await query.answer()
-        except:
+        except Exception:
             pass
             
         self.logger.info(f"🔘 Callback received: {data}")
@@ -2048,7 +2048,7 @@ class ChildBot:
                         f"💾 Saved: {saved} new results",
                         parse_mode='Markdown'
                     )
-                except:
+                except Exception:
                     pass
             else:
                 await update.effective_chat.send_message("⚠️ Gagal fetch data. Cuba lagi.")
@@ -2670,7 +2670,7 @@ class ChildBot:
             job_id = f"broadcast_{b['id']}"
             try:
                 self.scheduler.remove_job(job_id)
-            except:
+            except Exception:
                 pass  # Job might not exist
         
         # Delete from database
@@ -3918,7 +3918,7 @@ class ChildBot:
         # Remove existing job if any
         try:
             self.scheduler.remove_job(job_id)
-        except:
+        except Exception:
             pass
         
         if interval_type == "hours":
