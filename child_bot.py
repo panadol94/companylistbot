@@ -429,16 +429,18 @@ class ChildBot:
         if is_new and referrer_id:
             # Notify referrer with fancy notification
             try:
-                # Get referrer's updated stats
+                # Get referrer's updated stats and reward amount
                 referrer_data = self.db.get_user(self.bot_id, referrer_id)
+                settings = self.db.get_referral_settings(self.bot_id)
+                reward_amount = settings['referral_reward']
                 total_invites = referrer_data.get('total_invites', 1) if referrer_data else 1
-                new_balance = referrer_data.get('balance', 1.0) if referrer_data else 1.0
+                new_balance = referrer_data.get('balance', reward_amount) if referrer_data else reward_amount
                 
                 notification = (
                     f"🎉 **REFERRAL BERJAYA!**\n\n"
                     f"━━━━━━━━━━━━━━━━━\n"
                     f"👤 **{user.first_name}** baru join!\n"
-                    f"💰 Anda dapat: **+RM1.00**\n"
+                    f"💰 Anda dapat: **+RM{reward_amount:.2f}**\n"
                     f"━━━━━━━━━━━━━━━━━\n\n"
                     f"📊 **Stats Anda:**\n"
                     f"👥 Total Referral: **{total_invites}**\n"
@@ -705,6 +707,10 @@ class ChildBot:
                 try: await update.callback_query.answer("⚠️ Data not found. Type /start again.", show_alert=True)
                 except: pass
                 return
+            
+            # Get custom settings
+            settings = self.db.get_referral_settings(self.bot_id)
+            min_wd = settings['min_withdrawal']
                 
             # Use HTML for safety
             text = (
@@ -712,7 +718,7 @@ class ChildBot:
                 f"👤 <b>ID:</b> <code>{user['telegram_id']}</code>\n"
                 f"📊 <b>Total Invite:</b> {user['total_invites']} Orang\n"
                 f"💵 <b>Baki Wallet:</b> RM {user['balance']:.2f}\n\n"
-                f"<i>Min withdrawal: RM 50.00</i>"
+                f"<i>Min withdrawal: RM {min_wd:.2f}</i>"
             )
             
             keyboard = []
@@ -768,9 +774,14 @@ class ChildBot:
             await update.callback_query.answer("⚠️ Data not found", show_alert=True)
             return ConversationHandler.END
         
-        if user['balance'] < 50.0:
+        # Get custom settings
+        settings = self.db.get_referral_settings(self.bot_id)
+        min_wd = settings['min_withdrawal']
+        context.user_data['min_withdrawal'] = min_wd  # Store for later validation
+        
+        if user['balance'] < min_wd:
             await update.callback_query.answer(
-                f"⚠️ Balance tidak mencukupi!\n\nBalance: RM {user['balance']:.2f}\nMinimum: RM 50.00", 
+                f"⚠️ Balance tidak mencukupi!\n\nBalance: RM {user['balance']:.2f}\nMinimum: RM {min_wd:.2f}", 
                 show_alert=True
             )
             return ConversationHandler.END
@@ -778,7 +789,7 @@ class ChildBot:
         text = (
             f"📤 <b>REQUEST WITHDRAWAL</b>\n\n"
             f"💵 <b>Balance:</b> RM {user['balance']:.2f}\n"
-            f"💰 <b>Min Amount:</b> RM 50.00\n\n"
+            f"💰 <b>Min Amount:</b> RM {min_wd:.2f}\n\n"
             f"Masukkan amount yang nak withdraw:"
         )
         
@@ -800,8 +811,10 @@ class ChildBot:
             return WD_AMOUNT
         
         user = self.db.get_user(self.bot_id, update.effective_user.id)
-        if amount < 50.0:
-            await update.message.reply_text("⚠️ Minimum withdrawal RM 50.00")
+        min_wd = context.user_data.get('min_withdrawal', 50.0)  # Get from context or default
+        
+        if amount < min_wd:
+            await update.message.reply_text(f"⚠️ Minimum withdrawal RM {min_wd:.2f}")
             return WD_AMOUNT
         
         if amount > user['balance']:

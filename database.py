@@ -52,6 +52,18 @@ class Database:
                 cursor.execute("ALTER TABLE bots ADD COLUMN livegram_enabled BOOLEAN DEFAULT 1")
             except:
                 pass  # Column already exists
+            
+            # Migration: Add referral_reward column if missing (RM per referral)
+            try:
+                cursor.execute("ALTER TABLE bots ADD COLUMN referral_reward REAL DEFAULT 1.0")
+            except:
+                pass  # Column already exists
+            
+            # Migration: Add min_withdrawal column if missing (minimum withdrawal amount)
+            try:
+                cursor.execute("ALTER TABLE bots ADD COLUMN min_withdrawal REAL DEFAULT 50.0")
+            except:
+                pass  # Column already exists
 
             # 2. Companies Table (Content for each bot)
             cursor.execute('''
@@ -508,11 +520,14 @@ class Database:
                 if not exists:
                     conn.execute("INSERT INTO users (bot_id, telegram_id, referrer_id) VALUES (?, ?, ?)", (bot_id, telegram_id, referrer_id))
                     
-                    # Reward Referrer
+                    # Reward Referrer with custom amount
                     if referrer_id and referrer_id != telegram_id:
                         referrer = conn.execute("SELECT id FROM users WHERE bot_id = ? AND telegram_id = ?", (bot_id, referrer_id)).fetchone()
                         if referrer:
-                            conn.execute("UPDATE users SET balance = balance + 1.0, total_invites = total_invites + 1 WHERE bot_id = ? AND telegram_id = ?", (bot_id, referrer_id))
+                            # Get custom referral reward amount
+                            bot_settings = conn.execute("SELECT referral_reward FROM bots WHERE id = ?", (bot_id,)).fetchone()
+                            reward_amount = bot_settings['referral_reward'] if bot_settings and bot_settings['referral_reward'] else 1.0
+                            conn.execute("UPDATE users SET balance = balance + ?, total_invites = total_invites + 1 WHERE bot_id = ? AND telegram_id = ?", (reward_amount, bot_id, referrer_id))
                     
                     conn.commit()
                     return True # New user added
@@ -715,6 +730,30 @@ class Database:
         bot = conn.execute("SELECT livegram_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
         conn.close()
         return bool(bot['livegram_enabled']) if bot and 'livegram_enabled' in bot.keys() else True  # Default True
+
+    def get_referral_settings(self, bot_id):
+        """Get referral reward and min withdrawal settings for a bot"""
+        conn = self.get_connection()
+        bot = conn.execute("SELECT referral_reward, min_withdrawal FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        if bot:
+            return {
+                'referral_reward': bot['referral_reward'] if bot['referral_reward'] is not None else 1.0,
+                'min_withdrawal': bot['min_withdrawal'] if bot['min_withdrawal'] is not None else 50.0
+            }
+        return {'referral_reward': 1.0, 'min_withdrawal': 50.0}  # Defaults
+
+    def update_referral_settings(self, bot_id, referral_reward=None, min_withdrawal=None):
+        """Update referral reward and/or min withdrawal for a bot"""
+        with self.lock:
+            conn = self.get_connection()
+            if referral_reward is not None:
+                conn.execute("UPDATE bots SET referral_reward = ? WHERE id = ?", (referral_reward, bot_id))
+            if min_withdrawal is not None:
+                conn.execute("UPDATE bots SET min_withdrawal = ? WHERE id = ?", (min_withdrawal, bot_id))
+            conn.commit()
+            conn.close()
+            return True
 
     # --- Menu Buttons ---
     def add_menu_button(self, bot_id, text, url):
