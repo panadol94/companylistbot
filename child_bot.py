@@ -3625,6 +3625,8 @@ class ChildBot:
             await update.callback_query.answer("⛔ Access Denied", show_alert=True)
             return ConversationHandler.END
         
+        await update.callback_query.answer()  # Acknowledge button click
+        
         # Ask for target type
         keyboard = [
             [InlineKeyboardButton("👤 All Users", callback_data="target_users")],
