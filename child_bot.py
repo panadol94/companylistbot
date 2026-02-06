@@ -1392,6 +1392,7 @@ class ChildBot:
         elif data == "export_users": await self.export_users_csv(update)
         elif data == "export_companies": await self.export_companies_csv(update)
         elif data == "admin_settings": await self.show_admin_settings(update)
+        elif data == "admin_ref_manage": await self.manage_ref_start(update, context)
         # Edit Company List (Admin)
         elif data == "admin_edit_company_list": await self.show_edit_company_list(update)
         # Reorder Companies
