@@ -1,10 +1,8 @@
 import logging
 import datetime
-import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, InputMediaAnimation, ChatMemberUpdated
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, InputMediaAnimation
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatMemberHandler
 from database import Database
-from config import DEFAULT_GLOBAL_AD
 from html import escape as html_escape
 
 def message_to_html(message) -> str:
@@ -4464,15 +4462,7 @@ class ChildBot:
             await self.show_forwarder_menu(update)
         else:
             await update.callback_query.answer("❌ Error changing mode", show_alert=True)
-        
-        try:
-            if update.callback_query:
-                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-            else:
-                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except Exception:
-            # Fallback if edit fails (e.g. message too old)
-             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
     
     async def toggle_forwarder(self, update: Update):
         """Toggle forwarder on/off"""
