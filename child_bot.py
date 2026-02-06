@@ -941,6 +941,9 @@ class ChildBot:
         success, message = self.db.request_withdrawal(self.bot_id, update.effective_user.id, amount, company_name, username)
         
         if success:
+            # Extract withdrawal_id from message (format: "Withdrawal requested. ID: 123")
+            withdrawal_id = int(message.split(": ")[1]) if ": " in message else None
+            
             text = (
                 f"✅ <b>WITHDRAWAL REQUESTED!</b>\n\n"
                 f"💵 <b>Amount:</b> RM {amount:.2f}\n"
@@ -957,12 +960,24 @@ class ChildBot:
                     f"👤 User: <code>{update.effective_user.id}</code>\n"
                     f"💵 Amount: RM {amount:.2f}\n"
                     f"🏢 Company: {company_name}\n"
-                    f"👤 Username: <code>{username}</code>\n\n"
-                    f"Check /settings → 💳 Withdrawals"
+                    f"👤 Username: <code>{username}</code>"
                 )
+                
+                # Add approve/reject buttons if withdrawal_id exists
+                if withdrawal_id:
+                    admin_keyboard = [
+                        [
+                            InlineKeyboardButton("✅ APPROVE", callback_data=f"wd_approve_{withdrawal_id}"),
+                            InlineKeyboardButton("❌ REJECT", callback_data=f"wd_reject_{withdrawal_id}")
+                        ]
+                    ]
+                    admin_markup = InlineKeyboardMarkup(admin_keyboard)
+                else:
+                    admin_markup = None
+                
                 for admin in admins:
                     try:
-                        await self.app.bot.send_message(admin['telegram_id'], admin_text, parse_mode='HTML')
+                        await self.app.bot.send_message(admin['telegram_id'], admin_text, parse_mode='HTML', reply_markup=admin_markup)
                     except:
                         pass
             except Exception as e:
