@@ -235,9 +235,12 @@ class ChildBot:
                 WD_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.withdrawal_input_amount)],
                 WD_METHOD: [CallbackQueryHandler(self.withdrawal_select_method, pattern="^wd_company_")],
                 WD_ACCOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.withdrawal_input_account)],
-                WD_CONFIRM: [CallbackQueryHandler(self.withdrawal_submit, pattern="^wd_submit$")],
+                WD_CONFIRM: [
+                    CallbackQueryHandler(self.withdrawal_submit, pattern="^wd_submit$"),
+                    CallbackQueryHandler(self.cancel_withdrawal, pattern="^cancel_wd$")
+                ],
             },
-            fallbacks=[CallbackQueryHandler(self.cancel_withdrawal, pattern="^cancel_wd$"), CallbackQueryHandler(self.handle_callback)],
+            fallbacks=[CallbackQueryHandler(self.handle_callback)],
             name="withdrawal_conversation",
             persistent=False
         )
