@@ -92,6 +92,8 @@ MEDIA_UPLOAD = 50
 RR_CONFIRM, RR_INPUT_ID = range(60, 62)
 # States for Withdrawal
 WD_AMOUNT, WD_METHOD, WD_ACCOUNT, WD_CONFIRM = range(70, 74)
+# States for Referral Settings (Admin)
+RS_SET_REWARD, RS_SET_MIN_WD = range(80, 82)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -252,6 +254,26 @@ class ChildBot:
             per_message=False
         )
         self.app.add_handler(menu_btn_conv)
+        
+        # Referral Settings Wizard (Admin)
+        ref_settings_conv = ConversationHandler(
+            entry_points=[
+                CallbackQueryHandler(self.ref_settings_menu, pattern=r'^ref_settings$'),
+                CallbackQueryHandler(self.ref_settings_set_reward, pattern=r'^rs_reward$'),
+                CallbackQueryHandler(self.ref_settings_set_min_wd, pattern=r'^rs_min_wd$')
+            ],
+            states={
+                RS_SET_REWARD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ref_settings_save_reward)],
+                RS_SET_MIN_WD: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ref_settings_save_min_wd)],
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.ref_settings_menu, pattern=r'^ref_settings$'),
+                CallbackQueryHandler(self.ref_settings_back, pattern=r'^ref_back$'),
+                CommandHandler("cancel", self.cancel_op)
+            ],
+            per_message=False
+        )
+        self.app.add_handler(ref_settings_conv)
         
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
@@ -495,6 +517,10 @@ class ChildBot:
             # Add unpaired buttons (1 per row)
             for btn in unpaired:
                 keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
+        
+        # Admin-only: Referral Settings button (only show to bot owner)
+        if update.effective_user.id == bot_data['owner_id']:
+            keyboard.append([InlineKeyboardButton("⚙️ REFERRAL SETTINGS", callback_data="ref_settings")])
 
         if update.callback_query:
             # Carousel style - edit existing message instead of delete+send
@@ -956,6 +982,129 @@ class ChildBot:
         ]
         
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        return ConversationHandler.END
+
+    # --- Referral Settings (Admin) ---
+    async def ref_settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show referral settings menu for admin"""
+        query = update.callback_query
+        if query:
+            await query.answer()
+        
+        # Check if user is admin (bot owner)
+        bot_data = self.db.get_bot_by_token(self.token)
+        if update.effective_user.id != bot_data['owner_id']:
+            if query:
+                await query.answer("⚠️ Admin only!", show_alert=True)
+            return ConversationHandler.END
+        
+        # Get current settings
+        settings = self.db.get_referral_settings(self.bot_id)
+        
+        text = (
+            f"⚙️ <b>REFERRAL SETTINGS</b>\n\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"💰 <b>Referral Reward:</b> RM {settings['referral_reward']:.2f}\n"
+            f"📤 <b>Min Withdrawal:</b> RM {settings['min_withdrawal']:.2f}\n"
+            f"━━━━━━━━━━━━━━━━━\n\n"
+            f"Pilih setting yang nak diubah:"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton(f"💰 Set Reward (RM {settings['referral_reward']:.2f})", callback_data="rs_reward")],
+            [InlineKeyboardButton(f"📤 Set Min Withdrawal (RM {settings['min_withdrawal']:.2f})", callback_data="rs_min_wd")],
+            [InlineKeyboardButton("🔙 Back to Menu", callback_data="ref_back")]
+        ]
+        
+        if query:
+            try:
+                await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            except:
+                await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        else:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        
+        return ConversationHandler.END
+    
+    async def ref_settings_set_reward(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Ask admin to input new reward amount"""
+        query = update.callback_query
+        await query.answer()
+        
+        settings = self.db.get_referral_settings(self.bot_id)
+        
+        text = (
+            f"💰 <b>SET REFERRAL REWARD</b>\n\n"
+            f"Current: RM {settings['referral_reward']:.2f}\n\n"
+            f"Masukkan amount baru (contoh: 2.00):"
+        )
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="ref_settings")]]
+        
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        return RS_SET_REWARD
+    
+    async def ref_settings_save_reward(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save new reward amount"""
+        try:
+            amount = float(update.message.text.strip().replace("RM", "").replace("rm", "").strip())
+            if amount <= 0 or amount > 1000:
+                await update.message.reply_text("⚠️ Amount mesti antara RM 0.01 - RM 1000.00")
+                return RS_SET_REWARD
+        except ValueError:
+            await update.message.reply_text("⚠️ Format tidak sah. Masukkan nombor sahaja.\n\nContoh: 2.00")
+            return RS_SET_REWARD
+        
+        self.db.update_referral_settings(self.bot_id, referral_reward=amount)
+        
+        text = f"✅ <b>Referral reward updated!</b>\n\nBaru: RM {amount:.2f} per referral"
+        keyboard = [[InlineKeyboardButton("🔙 Back to Settings", callback_data="ref_settings")]]
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        return ConversationHandler.END
+    
+    async def ref_settings_set_min_wd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Ask admin to input new min withdrawal"""
+        query = update.callback_query
+        await query.answer()
+        
+        settings = self.db.get_referral_settings(self.bot_id)
+        
+        text = (
+            f"📤 <b>SET MINIMUM WITHDRAWAL</b>\n\n"
+            f"Current: RM {settings['min_withdrawal']:.2f}\n\n"
+            f"Masukkan minimum baru (contoh: 20.00):"
+        )
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="ref_settings")]]
+        
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        return RS_SET_MIN_WD
+    
+    async def ref_settings_save_min_wd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save new min withdrawal amount"""
+        try:
+            amount = float(update.message.text.strip().replace("RM", "").replace("rm", "").strip())
+            if amount <= 0 or amount > 10000:
+                await update.message.reply_text("⚠️ Amount mesti antara RM 0.01 - RM 10000.00")
+                return RS_SET_MIN_WD
+        except ValueError:
+            await update.message.reply_text("⚠️ Format tidak sah. Masukkan nombor sahaja.\n\nContoh: 20.00")
+            return RS_SET_MIN_WD
+        
+        self.db.update_referral_settings(self.bot_id, min_withdrawal=amount)
+        
+        text = f"✅ <b>Min withdrawal updated!</b>\n\nBaru: RM {amount:.2f}"
+        keyboard = [[InlineKeyboardButton("🔙 Back to Settings", callback_data="ref_settings")]]
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+        return ConversationHandler.END
+    
+    async def ref_settings_back(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Go back to main menu from referral settings"""
+        query = update.callback_query
+        await query.answer()
+        await self.main_menu(update, context)
         return ConversationHandler.END
 
     async def show_share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
