@@ -481,23 +481,57 @@ class ChildBot:
         if not await self.check_subscription(update): return
 
         bot_data = self.db.get_bot_by_token(self.token)
-        caption = bot_data['custom_caption'] or f"Selamat Datang ke {bot_data['bot_username']}! 🚀\n\nPlatform penyenaraian Company terbaik.\nSila pilih menu di bawah:"
+        
+        # Get all companies
+        companies = self.db.get_companies(self.bot_id)
+        
+        # Build caption
+        caption = bot_data['custom_caption'] or (
+            f"🏢 **SENARAI COMPANY**\n\n"
+            f"Pilih company yang anda ingin lihat:\n"
+            f"📊 Total: {len(companies)} company"
+        )
+        
+        # Build keyboard with companies - 2 per row
+        keyboard = []
+        for i in range(0, len(companies), 2):
+            row = []
+            # First company in row
+            comp1 = companies[i]
+            row.append(InlineKeyboardButton(
+                f"🏢 {comp1['name']}", 
+                callback_data=f"view_company_{comp1['id']}"
+            ))
+            
+            # Second company in row (if exists)
+            if i + 1 < len(companies):
+                comp2 = companies[i + 1]
+                row.append(InlineKeyboardButton(
+                    f"🏢 {comp2['name']}", 
+                    callback_data=f"view_company_{comp2['id']}"
+                ))
+            
+            keyboard.append(row)
         
         # Check if referral system is enabled
         referral_enabled = self.db.is_referral_enabled(self.bot_id)
         
-        keyboard = [
-            [InlineKeyboardButton("🏢 LIST COMPANY", callback_data="list_page_0")],
-            [InlineKeyboardButton("🎰 4D STATS", callback_data="4d_menu")],
-        ]
-        
-        # Only show referral buttons if enabled
+        # Add navigation buttons at bottom
+        nav_row = []
         if referral_enabled:
-            keyboard.append([InlineKeyboardButton("💰 DOMPET SAYA", callback_data="wallet")])
-            keyboard.append([InlineKeyboardButton("🔗 SHARE LINK", callback_data="share_link")])
-            keyboard.append([InlineKeyboardButton("🏆 LEADERBOARD", callback_data="leaderboard")])
-
-        # Add custom buttons from database
+            nav_row.append(InlineKeyboardButton("💰 Dompet", callback_data="wallet"))
+            nav_row.append(InlineKeyboardButton("🔗 Share", callback_data="share_link"))
+        
+        if nav_row:
+            keyboard.append(nav_row)
+        
+        # Add 4D and other features
+        keyboard.append([
+            InlineKeyboardButton("🎰 4D Stats", callback_data="4d_menu"),
+            InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")
+        ])
+        
+        # Add custom menu buttons if any
         custom_buttons = self.db.get_menu_buttons(self.bot_id)
         if custom_buttons:
             # Group buttons by row_group for pairing
@@ -521,36 +555,35 @@ class ChildBot:
             for btn in unpaired:
                 keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
         
-        
 
         if update.callback_query:
             # Carousel style - edit existing message instead of delete+send
             try:
                 if bot_data['custom_banner']:
                     await update.callback_query.message.edit_media(
-                        media=InputMediaPhoto(media=bot_data['custom_banner'], caption=caption, parse_mode='HTML'),
+                        media=InputMediaPhoto(media=bot_data['custom_banner'], caption=caption, parse_mode='Markdown'),
                         reply_markup=InlineKeyboardMarkup(keyboard)
                     )
                 else:
                     await update.callback_query.message.edit_text(
                         caption,
                         reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='HTML'
+                        parse_mode='Markdown'
                     )
             except Exception as e:
                 # Fallback: send new message if edit fails (e.g., different media type)
                 try: await update.callback_query.message.delete()
                 except Exception: pass
                 if bot_data['custom_banner']:
-                    await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
                 else:
-                    await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         else:
             # Fresh /start command - send new message
             if bot_data['custom_banner']:
-                await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             else:
-                await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Company Logic ---
     async def show_page(self, update: Update, page: int):
