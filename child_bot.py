@@ -2259,9 +2259,8 @@ class ChildBot:
     async def toggle_referral_system(self, update: Update):
         """Toggle referral system on/off"""
         new_state = self.db.toggle_referral(self.bot_id)
-        status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
+        status_text = "🟢 ON" if new_state else "🔴 OFF"
         
-        await update.callback_query.answer(f"Referral system is now {status_text}")
         await update.callback_query.answer(f"Referral system is now {status_text}")
         await self.show_admin_settings(update)
 
@@ -2401,7 +2400,7 @@ class ChildBot:
         
         if not withdrawals:
             text = "📭 No pending withdrawals"
-            keyboard = [[InlineKeyboardButton("« Back", callback_data="admin")]]
+            keyboard = [[InlineKeyboardButton("« Back", callback_data="admin_settings")]]
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
@@ -2419,7 +2418,7 @@ class ChildBot:
                 callback_data=f"wd_detail_{wd['id']}"
             )])
         
-        keyboard.append([InlineKeyboardButton("« Back to Admin", callback_data="admin")])
+        keyboard.append([InlineKeyboardButton("« Back to Admin", callback_data="admin_settings")])
         
         await update.callback_query.message.edit_text(
             text,
