@@ -31,6 +31,8 @@ RECURRING_TYPE = 40
 MEDIA_UPLOAD = 50
 # States for Referral Manage
 RR_CONFIRM, RR_INPUT_ID = range(60, 62)
+# States for Withdrawal
+WD_AMOUNT, WD_METHOD, WD_ACCOUNT, WD_CONFIRM = range(70, 74)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
