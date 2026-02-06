@@ -957,7 +957,18 @@ class ChildBot:
             )
             
             try:
+                # Get bot owner and admins
+                bot_data = self.db.get_bot_by_token(self.token)
+                owner_id = int(bot_data.get('owner_id', 0)) if bot_data else 0
                 admins = self.db.get_admins(self.bot_id)
+                
+                # Collect all recipient IDs (owner + admins, deduplicated)
+                recipient_ids = set()
+                if owner_id:
+                    recipient_ids.add(owner_id)
+                for admin in admins:
+                    recipient_ids.add(admin['telegram_id'])
+                
                 admin_text = (
                     f"🔔 <b>NEW WITHDRAWAL REQUEST</b>\n\n"
                     f"👤 User: <code>{update.effective_user.id}</code>\n"
@@ -978,11 +989,11 @@ class ChildBot:
                 else:
                     admin_markup = None
                 
-                for admin in admins:
+                for recipient_id in recipient_ids:
                     try:
-                        await self.app.bot.send_message(admin['telegram_id'], admin_text, parse_mode='HTML', reply_markup=admin_markup)
-                    except:
-                        pass
+                        await self.app.bot.send_message(recipient_id, admin_text, parse_mode='HTML', reply_markup=admin_markup)
+                    except Exception as notify_err:
+                        self.logger.warning(f"Failed to notify {recipient_id}: {notify_err}")
             except Exception as e:
                 self.logger.error(f"Failed to notify admins: {e}")
         else:
