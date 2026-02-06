@@ -716,8 +716,8 @@ class ChildBot:
             )
             
             keyboard = []
-            if user['balance'] >= 50.0:
-                keyboard.append([InlineKeyboardButton("📤 REQUEST WITHDRAWAL", callback_data="req_withdraw")])
+            # Always show withdrawal button - will show popup if insufficient balance
+            keyboard.append([InlineKeyboardButton("📤 REQUEST WITHDRAWAL", callback_data="req_withdraw")])
             keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
             
             # Carousel Logic: Text -> Text (Edit), Media -> Text (Delete+Send)
@@ -769,7 +769,10 @@ class ChildBot:
             return ConversationHandler.END
         
         if user['balance'] < 50.0:
-            await update.callback_query.answer("⚠️ Minimum withdrawal RM 50", show_alert=True)
+            await update.callback_query.answer(
+                f"⚠️ Balance tidak mencukupi!\n\nBalance: RM {user['balance']:.2f}\nMinimum: RM 50.00", 
+                show_alert=True
+            )
             return ConversationHandler.END
         
         text = (
