@@ -153,7 +153,7 @@ class ChildBot:
                 BUTTON_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_company_btn_text)],
                 BUTTON_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_company_btn_url)],
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$")]
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$"), CallbackQueryHandler(self.handle_callback)]
         )
         self.app.add_handler(add_conv)
 
@@ -167,7 +167,7 @@ class ChildBot:
                 SCHEDULE_TIME: [CallbackQueryHandler(self.broadcast_confirm)],
                 RECURRING_TYPE: [CallbackQueryHandler(self.recurring_type_handler)]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op)]
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.handle_callback)]
         )
         self.app.add_handler(broadcast_conv)
 
@@ -178,7 +178,7 @@ class ChildBot:
                 WELCOME_PHOTO: [MessageHandler(filters.PHOTO, self.save_welcome_photo)],
                 WELCOME_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.save_welcome_text)]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_welcome)]
+            fallbacks=[CommandHandler("cancel", self.cancel_welcome), CallbackQueryHandler(self.handle_callback)]
         )
         self.app.add_handler(welcome_conv)
         
@@ -191,7 +191,7 @@ class ChildBot:
                     MessageHandler(filters.PHOTO | filters.VIDEO, self.media_manager_save_upload)
                 ]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$")]
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$"), CallbackQueryHandler(self.handle_callback)]
         )
         self.app.add_handler(media_conv)
 
@@ -202,7 +202,7 @@ class ChildBot:
                 RR_CONFIRM: [CallbackQueryHandler(self.manage_ref_confirm_action)],
                 RR_INPUT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.manage_ref_input_id)]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$")]
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$"), CallbackQueryHandler(self.handle_callback)]
         )
         self.app.add_handler(manage_ref_conv)
 
@@ -223,7 +223,7 @@ class ChildBot:
                 EDIT_BTN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_text)],
                 EDIT_BTN_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_url)],
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern=r'^cancel$')],
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern=r'^cancel$'), CallbackQueryHandler(self.handle_callback)],
             per_message=False
         )
         self.app.add_handler(edit_company_conv)
@@ -237,7 +237,7 @@ class ChildBot:
                 WD_ACCOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.withdrawal_input_account)],
                 WD_CONFIRM: [CallbackQueryHandler(self.withdrawal_submit, pattern="^wd_submit$")],
             },
-            fallbacks=[CallbackQueryHandler(self.cancel_withdrawal, pattern="^cancel_wd$")],
+            fallbacks=[CallbackQueryHandler(self.cancel_withdrawal, pattern="^cancel_wd$"), CallbackQueryHandler(self.handle_callback)],
             name="withdrawal_conversation",
             persistent=False
         )
@@ -250,7 +250,7 @@ class ChildBot:
                 MENU_BTN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_menu_btn_text)],
                 MENU_BTN_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_menu_btn_url)],
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern=r'^cancel$')],
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern=r'^cancel$'), CallbackQueryHandler(self.handle_callback)],
             per_message=False
         )
         self.app.add_handler(menu_btn_conv)
