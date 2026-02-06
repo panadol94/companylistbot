@@ -2364,7 +2364,20 @@ class ChildBot:
             
         elif data == "rr_do_reset_all":
             self.db.reset_all_referrals(self.bot_id)
-            await update.callback_query.answer("✅ All referrals reset!", show_alert=True)
+            await update.callback_query.answer("✅ Completed!", show_alert=True)
+            
+            # Show success message
+            await update.callback_query.message.edit_text(
+                "✅ **RESET COMPLETE!**\n\n"
+                "Semua referral data telah dipadam.\n"
+                "Semua user boleh refer semula.\n\n"
+                "Kembali ke menu admin...",
+                parse_mode='Markdown'
+            )
+            
+            # Wait 2 seconds then show admin settings
+            import asyncio
+            await asyncio.sleep(2)
             await self.show_admin_settings(update)
             return ConversationHandler.END
 
@@ -2376,9 +2389,20 @@ class ChildBot:
             target_id = int(update.message.text.strip())
             success = self.db.reset_user_referral(self.bot_id, target_id)
             
-            msg = f"✅ Referral stats untuk ID `{target_id}` telah di-reset!" if success else "❌ Error resetting user."
+            if success:
+                msg = (
+                    f"✅ **RESET BERJAYA!**\n\n"
+                    f"User ID: `{target_id}`\n"
+                    f"Referral data telah dipadam.\n"
+                    f"User ini boleh refer semula."
+                )
+            else:
+                msg = f"❌ **ERROR**\n\nGagal reset user ID: `{target_id}`\n\nMungkin user tidak wujud."
+            
             await update.message.reply_text(msg, parse_mode='Markdown')
             
+            import asyncio
+            await asyncio.sleep(1.5)
             await self.show_admin_settings(update)
             return ConversationHandler.END
             
