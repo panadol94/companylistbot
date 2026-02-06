@@ -233,7 +233,7 @@ class ChildBot:
             entry_points=[CallbackQueryHandler(self.start_withdrawal, pattern="^req_withdraw$")],
             states={
                 WD_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.withdrawal_input_amount)],
-                WD_METHOD: [CallbackQueryHandler(self.withdrawal_select_method, pattern="^wd_method_")],
+                WD_METHOD: [CallbackQueryHandler(self.withdrawal_select_method, pattern="^wd_company_")],
                 WD_ACCOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.withdrawal_input_account)],
                 WD_CONFIRM: [CallbackQueryHandler(self.withdrawal_submit, pattern="^wd_submit$")],
             },
@@ -847,31 +847,46 @@ class ChildBot:
         
         context.user_data['wd_amount'] = amount
         
-        text = f"✅ <b>Amount: RM {amount:.2f}</b>\n\nPilih payment method:"
-        keyboard = [
-            [InlineKeyboardButton("📱 TNG E-Wallet", callback_data="wd_method_TNG")],
-            [InlineKeyboardButton("🏦 Bank Transfer", callback_data="wd_method_Bank")],
-            [InlineKeyboardButton("₿ USDT (TRC20)", callback_data="wd_method_USDT")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_wd")]
-        ]
+        # Get companies for selection
+        companies = self.db.get_companies(self.bot_id)
+        
+        if not companies:
+            await update.message.reply_text("⚠️ Tiada company dalam list. Sila hubungi admin.")
+            return ConversationHandler.END
+        
+        text = f"✅ <b>Amount: RM {amount:.2f}</b>\n\nPilih company untuk topup:"
+        keyboard = []
+        for comp in companies:
+            keyboard.append([InlineKeyboardButton(f"🏢 {comp['name']}", callback_data=f"wd_company_{comp['id']}")])
+        keyboard.append([InlineKeyboardButton("❌ Cancel", callback_data="cancel_wd")])
         
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         return WD_METHOD
     
     async def withdrawal_select_method(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle method selection"""
+        """Handle company selection"""
         query = update.callback_query
         await query.answer()
         
-        method = query.data.split("_")[2]
-        context.user_data['wd_method'] = method
+        # Parse company ID from callback (wd_company_123)
+        company_id = int(query.data.split("_")[2])
         
-        if method == "TNG":
-            prompt = "📱 <b>TNG E-Wallet</b>\n\nSila masukkan nombor telefon TNG:\n\nContoh: 0123456789"
-        elif method == "Bank":
-            prompt = "🏦 <b>Bank Transfer</b>\n\nSila masukkan nombor akaun bank:\n\nContoh: 1234567890 (Maybank)"
-        else:
-            prompt = "₿ <b>USDT (TRC20)</b>\n\nSila masukkan USDT wallet address:\n\nContoh: TXyz123..."
+        # Get company details
+        companies = self.db.get_companies(self.bot_id)
+        company = next((c for c in companies if c['id'] == company_id), None)
+        
+        if not company:
+            await query.answer("⚠️ Company tidak dijumpai", show_alert=True)
+            return ConversationHandler.END
+        
+        context.user_data['wd_company_id'] = company_id
+        context.user_data['wd_company_name'] = company['name']
+        
+        prompt = (
+            f"🏢 <b>{company['name']}</b>\n\n"
+            f"Sila masukkan USERNAME akaun anda dalam company ini:\n\n"
+            f"<i>Contoh: player123</i>"
+        )
         
         keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel_wd")]]
         await query.message.edit_text(prompt, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
@@ -879,31 +894,23 @@ class ChildBot:
         return WD_ACCOUNT
     
     async def withdrawal_input_account(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle account details input"""
-        account = update.message.text.strip()
-        method = context.user_data.get('wd_method', 'TNG')
+        """Handle username input"""
+        username = update.message.text.strip()
         
-        if method == "TNG" and (len(account) < 10 or not account.replace("-", "").isdigit()):
-            await update.message.reply_text("⚠️ Format nombor telefon tidak sah.\n\nContoh: 0123456789")
+        # Simple validation - username must be at least 3 chars
+        if len(username) < 3:
+            await update.message.reply_text("⚠️ Username terlalu pendek. Minimum 3 aksara.")
             return WD_ACCOUNT
         
-        if method == "Bank" and len(account) < 8:
-            await update.message.reply_text("⚠️ Nombor akaun terlalu pendek.")
-            return WD_ACCOUNT
-        
-        if method == "USDT" and len(account) < 20:
-            await update.message.reply_text("⚠️ Wallet address tidak sah.")
-            return WD_ACCOUNT
-        
-        context.user_data['wd_account'] = account
+        context.user_data['wd_username'] = username
         amount = context.user_data.get('wd_amount', 0)
-        method_icon = {"TNG": "📱", "Bank": "🏦", "USDT": "₿"}.get(method, "💳")
+        company_name = context.user_data.get('wd_company_name', 'Unknown')
         
         text = (
             f"📋 <b>CONFIRM WITHDRAWAL</b>\n\n"
             f"💵 <b>Amount:</b> RM {amount:.2f}\n"
-            f"{method_icon} <b>Method:</b> {method}\n"
-            f"📝 <b>Account:</b> <code>{account}</code>\n\n"
+            f"🏢 <b>Company:</b> {company_name}\n"
+            f"👤 <b>Username:</b> <code>{username}</code>\n\n"
             f"⚠️ Pastikan maklumat betul!"
         )
         
@@ -921,16 +928,18 @@ class ChildBot:
         await query.answer()
         
         amount = context.user_data.get('wd_amount')
-        method = context.user_data.get('wd_method')
-        account = context.user_data.get('wd_account')
+        company_name = context.user_data.get('wd_company_name')
+        username = context.user_data.get('wd_username')
         
-        success, message = self.db.request_withdrawal(self.bot_id, update.effective_user.id, amount, method, account)
+        # Store company_name in 'method' column and username in 'account' column
+        success, message = self.db.request_withdrawal(self.bot_id, update.effective_user.id, amount, company_name, username)
         
         if success:
             text = (
                 f"✅ <b>WITHDRAWAL REQUESTED!</b>\n\n"
                 f"💵 <b>Amount:</b> RM {amount:.2f}\n"
-                f"📝 <b>Method:</b> {method}\n"
+                f"🏢 <b>Company:</b> {company_name}\n"
+                f"👤 <b>Username:</b> {username}\n"
                 f"📊 <b>Status:</b> PENDING\n\n"
                 f"📬 Admin akan process dalam 24 jam."
             )
@@ -941,9 +950,9 @@ class ChildBot:
                     f"🔔 <b>NEW WITHDRAWAL REQUEST</b>\n\n"
                     f"👤 User: <code>{update.effective_user.id}</code>\n"
                     f"💵 Amount: RM {amount:.2f}\n"
-                    f"📝 Method: {method}\n"
-                    f"📋 Account: <code>{account}</code>\n\n"
-                    f"Check /admin → 💳 Withdrawals"
+                    f"🏢 Company: {company_name}\n"
+                    f"👤 Username: <code>{username}</code>\n\n"
+                    f"Check /settings → 💳 Withdrawals"
                 )
                 for admin in admins:
                     try:
@@ -959,8 +968,9 @@ class ChildBot:
         await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         
         context.user_data.pop('wd_amount', None)
-        context.user_data.pop('wd_method', None)
-        context.user_data.pop('wd_account', None)
+        context.user_data.pop('wd_company_id', None)
+        context.user_data.pop('wd_company_name', None)
+        context.user_data.pop('wd_username', None)
         
         return ConversationHandler.END
     
@@ -970,8 +980,9 @@ class ChildBot:
         await query.answer()
         
         context.user_data.pop('wd_amount', None)
-        context.user_data.pop('wd_method', None)
-        context.user_data.pop('wd_account', None)
+        context.user_data.pop('wd_company_id', None)
+        context.user_data.pop('wd_company_name', None)
+        context.user_data.pop('wd_username', None)
         
         text = "❌ Withdrawal cancelled."
         keyboard = [
@@ -1380,7 +1391,7 @@ class ChildBot:
         elif data.startswith("wd_detail_"): await self.show_withdrawal_detail(update, int(data.split("_")[2]))
         elif data.startswith("wd_approve_"): await self.admin_approve_withdrawal(update, int(data.split("_")[2]))
         elif data.startswith("wd_reject_"): await self.admin_reject_withdrawal(update, int(data.split("_")[2]))
-        elif data.startswith("wd_method_"): await self.withdrawal_select_method(update, context)
+        elif data.startswith("wd_company_"): await self.withdrawal_select_method(update, context)
         elif data == "wd_submit": await self.withdrawal_submit(update, context)
         elif data == "cancel_wd": await self.cancel_withdrawal(update, context)
         elif data.startswith("approve_wd_"): await self.process_withdrawal(update, data, True)
