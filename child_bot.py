@@ -1417,6 +1417,10 @@ class ChildBot:
         if data.startswith("list_page_"):
             page = int(data.split("_")[2])
             await self.show_page(update, page)
+        elif data.startswith("c_") and data != "c_4d" and not data.startswith("c_edit"):
+            # Handle company view (c_123)
+            company_id = int(data.split("_")[1])
+            await self.view_company(update, company_id)
         elif data.startswith("view_"):
             company_id = int(data.split("_")[1])
             await self.view_company(update, company_id)
