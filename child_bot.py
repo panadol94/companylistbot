@@ -1099,10 +1099,10 @@ class ChildBot:
         return ConversationHandler.END
     
     async def ref_settings_back(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Go back to main menu from referral settings"""
+        """Go back to admin settings from referral settings"""
         query = update.callback_query
         await query.answer()
-        await self.main_menu(update, context)
+        await self.show_admin_settings(update)
         return ConversationHandler.END
 
     async def show_share_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1358,6 +1358,10 @@ class ChildBot:
             except:
                 pass
             await self.show_admin_settings(update)
+        elif data == "ref_back":
+            await self.show_admin_settings(update)
+        elif data == "ref_settings":
+            await self.ref_settings_menu(update, context)
         
         # 4D Stats Handlers
         elif data == "4d_menu": await self.show_4d_menu(update)
