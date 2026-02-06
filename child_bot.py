@@ -796,6 +796,7 @@ class ChildBot:
     
     async def start_withdrawal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point for withdrawal conversation"""
+        await update.callback_query.answer()  # Acknowledge immediately
         user = self.db.get_user(self.bot_id, update.effective_user.id)
         if not user:
             await update.callback_query.answer("⚠️ Data not found", show_alert=True)
