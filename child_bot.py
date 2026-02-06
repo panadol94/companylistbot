@@ -2322,6 +2322,7 @@ class ChildBot:
     # --- Referral Management Wizard ---
     async def manage_ref_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start referral management menu"""
+        await update.callback_query.answer()  # Acknowledge button click
         text = (
             "🔄 **MANAGE REFERRALS**\n\n"
             "Sila pilih tindakan yang anda mahu lakukan:\n\n"
@@ -2338,6 +2339,7 @@ class ChildBot:
 
     async def manage_ref_confirm_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle menu choice"""
+        await update.callback_query.answer()  # Acknowledge button click immediately
         data = update.callback_query.data
         
         if data == "rr_global":
@@ -2947,6 +2949,7 @@ class ChildBot:
 
     async def media_manager_select_section(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle section selection"""
+        await update.callback_query.answer()  # Acknowledge button click
         data = update.callback_query.data
         section_key = data.split("_")[2] # media_section_wallet
         context.user_data['media_section'] = section_key
