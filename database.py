@@ -2019,28 +2019,31 @@ class Database:
         finally:
             conn.close()
 
-    def reset_user_referral_stats(self, bot_id, user_telegram_id):
-        """Reset validation stats for testing"""
+    def reset_user_referral(self, bot_id, user_telegram_id):
+        """Delete a user so they can be re-referred (resets their referrer's count too)"""
         with self.lock:
             conn = self.get_connection()
-            conn.execute('''
-                UPDATE users 
-                SET total_invites = 0, referrer_id = NULL 
-                WHERE bot_id = ? AND telegram_id = ?
-            ''', (bot_id, user_telegram_id))
+            # Get user's referrer before deleting
+            user = conn.execute("SELECT referrer_id FROM users WHERE bot_id = ? AND telegram_id = ?", (bot_id, user_telegram_id)).fetchone()
+            
+            if user and user['referrer_id']:
+                # Deduct from referrer's count
+                conn.execute("""
+                    UPDATE users SET total_invites = CASE WHEN total_invites > 0 THEN total_invites - 1 ELSE 0 END
+                    WHERE bot_id = ? AND telegram_id = ?
+                """, (bot_id, user['referrer_id']))
+            
+            # Delete the user
+            conn.execute("DELETE FROM users WHERE bot_id = ? AND telegram_id = ?", (bot_id, user_telegram_id))
             conn.commit()
             conn.close()
             return True
 
-    def reset_all_referral_stats(self, bot_id):
-        """Reset ALL users' referral stats to 0"""
+    def reset_all_referrals(self, bot_id):
+        """Delete ALL users to allow complete re-referral (nuclear option)"""
         with self.lock:
             conn = self.get_connection()
-            conn.execute('''
-                UPDATE users 
-                SET total_invites = 0, referrer_id = NULL 
-                WHERE bot_id = ?
-            ''', (bot_id,))
+            conn.execute("DELETE FROM users WHERE bot_id = ?", (bot_id,))
             conn.commit()
             conn.close()
             return True
