@@ -518,9 +518,7 @@ class ChildBot:
             for btn in unpaired:
                 keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
         
-        # Admin-only: Referral Settings button (only show to bot owner)
-        if update.effective_user.id == int(bot_data['owner_id']):
-            keyboard.append([InlineKeyboardButton("⚙️ REFERRAL SETTINGS", callback_data="ref_settings")])
+        
 
         if update.callback_query:
             # Carousel style - edit existing message instead of delete+send
@@ -2385,6 +2383,7 @@ class ChildBot:
             # Only owner can manage admins
             if is_owner:
                 keyboard.append([InlineKeyboardButton(f"👥 Manage Admins ({admin_count})", callback_data="manage_admins")])
+                keyboard.append([InlineKeyboardButton("⚙️ REFERRAL SETTINGS", callback_data="ref_settings")])
                 
             keyboard.append([InlineKeyboardButton("❌ Close Panel", callback_data="close_panel")])
             
