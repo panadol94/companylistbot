@@ -294,7 +294,17 @@ class BotManager:
 
         # Process Update
         update = Update.de_json(update_data, app.bot)
-        await app.process_update(update)
+        
+        # Debug: Log what type of update we received
+        if update.callback_query:
+            logger.info(f"🔔 Callback Query: {update.callback_query.data} from user {update.callback_query.from_user.id}")
+        elif update.message:
+            logger.info(f"💬 Message: {update.message.text[:50] if update.message.text else 'media'}")
+        
+        try:
+            await app.process_update(update)
+        except Exception as e:
+            logger.error(f"❌ Error processing update: {e}", exc_info=True)
 
     async def stop_bot(self, bot_id):
         """Stop a running child bot by ID"""
