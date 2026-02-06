@@ -516,16 +516,13 @@ class ChildBot:
         # Check if referral system is enabled
         referral_enabled = self.db.is_referral_enabled(self.bot_id)
         
-        # Add navigation buttons at bottom
-        nav_row = []
-        if referral_enabled:
-            nav_row.append(InlineKeyboardButton("💰 Dompet", callback_data="wallet"))
-            nav_row.append(InlineKeyboardButton("🔗 Share", callback_data="share_link"))
+        # Always show navigation buttons
+        keyboard.append([
+            InlineKeyboardButton("💰 Dompet Saya", callback_data="wallet"),
+            InlineKeyboardButton("🔗 Share Link", callback_data="share_link")
+        ])
         
-        if nav_row:
-            keyboard.append(nav_row)
-        
-        # Add 4D and other features
+        # Add 4D and Leaderboard row
         keyboard.append([
             InlineKeyboardButton("🎰 4D Stats", callback_data="4d_menu"),
             InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")
