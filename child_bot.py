@@ -473,7 +473,7 @@ class ChildBot:
                     f"🔥 Teruskan share link anda!"
                 )
                 await context.bot.send_message(chat_id=referrer_id, text=notification, parse_mode='Markdown')
-            except: pass  # Referrer might have blocked bot
+            except Exception:  pass  # Referrer might have blocked bot
             
         await self.main_menu(update, context)
 
@@ -540,7 +540,7 @@ class ChildBot:
             except Exception as e:
                 # Fallback: send new message if edit fails (e.g., different media type)
                 try: await update.callback_query.message.delete()
-                except: pass
+                except Exception: pass
                 if bot_data['custom_banner']:
                     await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                 else:
@@ -564,7 +564,7 @@ class ChildBot:
             if update.callback_query:
                 # Defensive answer
                 try: await update.callback_query.answer()
-                except: pass
+                except Exception: pass
                 
                 try:
                     await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
@@ -573,7 +573,7 @@ class ChildBot:
                     if "Message is not modified" not in str(e):
                         # Fallback
                         try: await update.callback_query.message.delete()
-                        except: pass
+                        except Exception: pass
                         await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             else:
                 await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
@@ -637,7 +637,7 @@ class ChildBot:
         # Defensive answer
         if update.callback_query:
             try: await update.callback_query.answer()
-            except: pass
+            except Exception: pass
 
         try:
              # Helper to get InputMedia
@@ -671,7 +671,7 @@ class ChildBot:
                     # Fallback: Delete + Send
                     if update.callback_query:
                         try: await update.callback_query.message.delete()
-                        except: pass
+                        except Exception: pass
                     
                     # Re-open for send (since edit might have consumed cursor? No, but safe to match logic)
                     # Actually valid file handle needed.
@@ -696,7 +696,7 @@ class ChildBot:
 
                  if update.callback_query:
                      try: await update.callback_query.message.delete()
-                     except: pass
+                     except Exception: pass
                  
                  if comp['media_type'] == 'video':
                      await update.effective_chat.send_video(video=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
@@ -710,7 +710,7 @@ class ChildBot:
              # Absolute Fallback
              if update.callback_query:
                  try: await update.callback_query.message.delete()
-                 except: pass
+                 except Exception: pass
              await update.effective_chat.send_message(f"{caption}\n\n(Media Error)", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     async def view_company(self, update: Update, comp_id: int):
@@ -732,7 +732,7 @@ class ChildBot:
             user = self.db.get_user(self.bot_id, update.effective_user.id)
             if not user:
                 try: await update.callback_query.answer("⚠️ Data not found. Type /start again.", show_alert=True)
-                except: pass
+                except Exception: pass
                 return
             
             # Get custom settings
@@ -756,7 +756,7 @@ class ChildBot:
             # Carousel Logic: Text -> Text (Edit), Media -> Text (Delete+Send)
             if update.callback_query:
                 try: await update.callback_query.answer()
-                except: pass
+                except Exception: pass
                 
                 try:
                     is_media = (update.callback_query.message.photo or 
@@ -766,7 +766,7 @@ class ChildBot:
                     if is_media:
                         # Media -> Text: Must delete and send new
                         try: await update.callback_query.message.delete()
-                        except: pass
+                        except Exception: pass
                         await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                     else:
                         # Text -> Text: Edit safely
@@ -783,14 +783,14 @@ class ChildBot:
                     self.logger.error(f"Error in show_wallet (Edit): {e}")
                     # Fallback
                     try: await update.callback_query.message.delete()
-                    except: pass
+                    except Exception: pass
                     await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
             else:
                  await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         except Exception as e:
             self.logger.error(f"CRITICAL Error in show_wallet: {e}")
             try: await update.effective_chat.send_message("❌ Error loading wallet.", parse_mode='HTML')
-            except: pass
+            except Exception: pass
 
     # === WITHDRAWAL CONVERSATION HANDLERS ===
     
@@ -1168,7 +1168,7 @@ class ChildBot:
             
             if update.callback_query:
                 try: await update.callback_query.answer()
-                except: pass
+                except Exception: pass
                 
                 try:
                     is_media = (update.callback_query.message.photo or 
@@ -1178,7 +1178,7 @@ class ChildBot:
                     if is_media:
                          # Media -> Text: Must delete and send new
                         try: await update.callback_query.message.delete()
-                        except: pass
+                        except Exception: pass
                         await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                     else:
                         await update.callback_query.message.edit_text(
@@ -1193,14 +1193,14 @@ class ChildBot:
                         
                     self.logger.error(f"Error in show_share_link (Edit): {e}")
                     try: await update.callback_query.message.delete()
-                    except: pass
+                    except Exception: pass
                     await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
             else:
                  await update.message.reply_text(text, parse_mode='HTML')
         except Exception as e:
              self.logger.error(f"CRITICAL Error in show_share_link: {e}")
              try: await update.effective_chat.send_message("❌ Error generating link.", parse_mode='HTML')
-             except: pass
+             except Exception: pass
 
     async def show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
@@ -1241,7 +1241,7 @@ class ChildBot:
                  # Logic: If current is same media type, edit media. Else delete + send.
                  if update.callback_query:
                       try: await update.callback_query.message.delete()
-                      except: pass
+                      except Exception: pass
                  
                  file_id = asset['file_id']
                  media_type = asset.get('media_type', 'photo') # Default to photo
@@ -1262,7 +1262,7 @@ class ChildBot:
                  # Case 2: No Custom Asset (Text Mode or Preserve Existing Banner)
                  if update.callback_query:
                      try: await update.callback_query.answer()
-                     except: pass
+                     except Exception: pass
                      
                      try:
                          is_media = (update.callback_query.message.photo or 
@@ -1272,7 +1272,7 @@ class ChildBot:
                          if is_media:
                              # Media -> Text: Delete + Send
                              try: await update.callback_query.message.delete()
-                             except: pass
+                             except Exception: pass
                              await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                          else:
                              # Text -> Text: Edit
@@ -1280,7 +1280,7 @@ class ChildBot:
                      except Exception as e:
                          # Fallback
                          try: await update.callback_query.message.delete()
-                         except: pass
+                         except Exception: pass
                          await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                  else:
                      await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
@@ -1288,7 +1288,7 @@ class ChildBot:
         except Exception as e:
             self.logger.error(f"CRITICAL Error in show_leaderboard: {e}")
             try: await update.effective_chat.send_message("❌ Error loading leaderboard.", parse_mode='HTML')
-            except: pass
+            except Exception: pass
 
     # --- Admin Dashboard ---
     async def withdraw_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1773,7 +1773,7 @@ class ChildBot:
              if update.callback_query:
                  try:
                     await update.callback_query.message.delete()
-                 except: pass
+                 except Exception: pass
                  
              caption_header = asset.get('caption')
              if caption_header:
@@ -5090,3 +5090,4 @@ class ChildBot:
                     
         except Exception as e:
             self.logger.error(f"Bot status change handler error: {e}")
+
