@@ -103,6 +103,8 @@ class Database:
                     bot_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL, -- telegram_id
                     amount REAL NOT NULL,
+                    method TEXT DEFAULT '',
+                    account TEXT DEFAULT '',
                     status TEXT DEFAULT 'PENDING', -- PENDING, APPROVED, REJECTED
                     request_date DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(bot_id) REFERENCES bots(id)
@@ -328,6 +330,16 @@ class Database:
                 pass
             try:
                 cursor.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
+            except:
+                pass
+            
+            # Add method and account columns to existing withdrawals table
+            try:
+                cursor.execute("ALTER TABLE withdrawals ADD COLUMN method TEXT DEFAULT ''")
+            except:
+                pass
+            try:
+                cursor.execute("ALTER TABLE withdrawals ADD COLUMN account TEXT DEFAULT ''")
             except:
                 pass
 
