@@ -931,6 +931,12 @@ class ChildBot:
         company_name = context.user_data.get('wd_company_name')
         username = context.user_data.get('wd_username')
         
+        # Safety check - if data is missing, show error
+        if not amount or not company_name or not username:
+            self.logger.error(f"Withdrawal submit missing data: amount={amount}, company={company_name}, username={username}")
+            await query.message.edit_text("⚠️ Data tidak lengkap. Sila cuba lagi.")
+            return ConversationHandler.END
+        
         # Store company_name in 'method' column and username in 'account' column
         success, message = self.db.request_withdrawal(self.bot_id, update.effective_user.id, amount, company_name, username)
         
