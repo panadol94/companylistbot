@@ -1353,6 +1353,13 @@ class ChildBot:
             await self.show_share_link(update, context)
         elif data == "leaderboard":
             await self.show_leaderboard(update, context)
+        elif data == "cancel":
+            # Generic cancel - show main menu or just acknowledge
+            try:
+                await update.callback_query.message.edit_text("❌ Cancelled.")
+            except:
+                pass
+            await self.show_admin_settings(update)
         
         # 4D Stats Handlers
         elif data == "4d_menu": await self.show_4d_menu(update)
