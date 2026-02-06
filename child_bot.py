@@ -1364,7 +1364,7 @@ class ChildBot:
                 await update.message.reply_text("⚠️ Invalid ID. Usage: /reset_ref [user_id]")
                 return
                 
-        success = self.db.reset_user_referral_stats(self.bot_id, target_id)
+        success = self.db.reset_user_referral(self.bot_id, target_id)
         
         if success:
             await update.message.reply_text(f"✅ Referral stats RESET for ID: `{target_id}`", parse_mode='Markdown')
@@ -2363,7 +2363,7 @@ class ChildBot:
             return RR_INPUT_ID
             
         elif data == "rr_do_reset_all":
-            self.db.reset_all_referral_stats(self.bot_id)
+            self.db.reset_all_referrals(self.bot_id)
             await update.callback_query.answer("✅ All referrals reset!", show_alert=True)
             await self.show_admin_settings(update)
             return ConversationHandler.END
@@ -2374,7 +2374,7 @@ class ChildBot:
         """Handle User ID input"""
         try:
             target_id = int(update.message.text.strip())
-            success = self.db.reset_user_referral_stats(self.bot_id, target_id)
+            success = self.db.reset_user_referral(self.bot_id, target_id)
             
             msg = f"✅ Referral stats untuk ID `{target_id}` telah di-reset!" if success else "❌ Error resetting user."
             await update.message.reply_text(msg, parse_mode='Markdown')
