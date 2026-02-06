@@ -2927,6 +2927,7 @@ class ChildBot:
         
         # Determine if new message or edit
         if update.callback_query:
+            await update.callback_query.answer()  # Acknowledge button click
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         else:
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
