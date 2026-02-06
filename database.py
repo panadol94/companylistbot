@@ -44,26 +44,30 @@ class Database:
             # Migration: Add referral_enabled column if missing
             try:
                 cursor.execute("ALTER TABLE bots ADD COLUMN referral_enabled BOOLEAN DEFAULT 1")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             
             # Migration: Add livegram_enabled column if missing
             try:
                 cursor.execute("ALTER TABLE bots ADD COLUMN livegram_enabled BOOLEAN DEFAULT 1")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             
             # Migration: Add referral_reward column if missing (RM per referral)
             try:
                 cursor.execute("ALTER TABLE bots ADD COLUMN referral_reward REAL DEFAULT 1.0")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             
             # Migration: Add min_withdrawal column if missing (minimum withdrawal amount)
             try:
                 cursor.execute("ALTER TABLE bots ADD COLUMN min_withdrawal REAL DEFAULT 50.0")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
 
             # 2. Companies Table (Content for each bot)
             cursor.execute('''
@@ -133,24 +137,29 @@ class Database:
             # Migration: Add recurring broadcast columns if missing
             try:
                 cursor.execute("ALTER TABLE broadcasts ADD COLUMN is_recurring BOOLEAN DEFAULT 0")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             try:
                 cursor.execute("ALTER TABLE broadcasts ADD COLUMN interval_type TEXT")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             try:
                 cursor.execute("ALTER TABLE broadcasts ADD COLUMN interval_value INTEGER")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             try:
                 cursor.execute("ALTER TABLE broadcasts ADD COLUMN is_active BOOLEAN DEFAULT 1")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             try:
                 cursor.execute("ALTER TABLE broadcasts ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
 
             # 6. Forwarder Config Table
             cursor.execute('''
@@ -171,28 +180,33 @@ class Database:
             # Migration: Add filter_keywords column if missing
             try:
                 cursor.execute("ALTER TABLE forwarder_config ADD COLUMN filter_keywords TEXT")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
 
             try:
                 cursor.execute("ALTER TABLE forwarder_config ADD COLUMN forwarder_mode TEXT DEFAULT 'SINGLE'")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
                 pass
             try:
                 cursor.execute("ALTER TABLE forwarder_config ADD COLUMN source_channel_name TEXT")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
             # Migration: Add target_group_name column if missing
             try:
                 cursor.execute("ALTER TABLE forwarder_config ADD COLUMN target_group_name TEXT")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
             # Migration: Add forwarder_mode column if missing
             try:
                 cursor.execute("ALTER TABLE forwarder_config ADD COLUMN forwarder_mode TEXT DEFAULT 'SINGLE'")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
 
             # 7. Known Groups Table (For Broadcast Mode)
             cursor.execute('''
@@ -300,48 +314,57 @@ class Database:
             # Migration: Add category column to companies
             try:
                 cursor.execute("ALTER TABLE companies ADD COLUMN category TEXT")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             
             # Migration: Add display_order column to companies
             try:
                 cursor.execute("ALTER TABLE companies ADD COLUMN display_order INTEGER DEFAULT 0")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             
             # Migration: Add required channel columns to bots
             try:
                 cursor.execute("ALTER TABLE bots ADD COLUMN required_channel_id INTEGER")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             try:
                 cursor.execute("ALTER TABLE bots ADD COLUMN required_channel_username TEXT")
-            except:
-                pass  # Column already exists
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
             
             # Migration: Add username/first_name to users if missing
             try:
                 cursor.execute("ALTER TABLE users ADD COLUMN username TEXT")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
             try:
                 cursor.execute("ALTER TABLE users ADD COLUMN first_name TEXT")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
             try:
                 cursor.execute("ALTER TABLE users ADD COLUMN referred_by INTEGER")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
             
             # Add method and account columns to existing withdrawals table
             try:
                 cursor.execute("ALTER TABLE withdrawals ADD COLUMN method TEXT DEFAULT ''")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
             try:
                 cursor.execute("ALTER TABLE withdrawals ADD COLUMN account TEXT DEFAULT ''")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
 
             conn.commit()
             conn.close()
@@ -1792,7 +1815,7 @@ class Database:
                 conn.execute("UPDATE forwarder_config SET filter_keywords = ? WHERE bot_id = ?", (keywords, bot_id))
                 conn.commit()
                 return True
-            except:
+            except Exception:
                 return False
             finally:
                 conn.close()
@@ -1878,7 +1901,7 @@ class Database:
                 (bot_id,)
             ).fetchall()
             return [dict(g) for g in groups]
-        except:
+        except Exception:
             return []
         finally:
             conn.close()
@@ -1894,7 +1917,7 @@ class Database:
                 )
                 conn.commit()
                 return True
-            except:
+            except Exception:
                 return False
             finally:
                 conn.close()
@@ -1939,7 +1962,7 @@ class Database:
                 conn.execute("DELETE FROM forwarder_sources WHERE bot_id = ? AND source_id = ?", (bot_id, source_id))
                 conn.commit()
                 return True
-            except:
+            except Exception:
                 return False
             finally:
                 conn.close()
@@ -1958,7 +1981,7 @@ class Database:
                 (bot_id,)
             ).fetchall()
             return [dict(s) for s in sources]
-        except:
+        except Exception:
             return []
         finally:
             conn.close()
@@ -2026,7 +2049,7 @@ class Database:
                 (bot_id, section_name)
             ).fetchone()
             return dict(asset) if asset else None
-        except:
+        except Exception:
             return None
         finally:
             conn.close()

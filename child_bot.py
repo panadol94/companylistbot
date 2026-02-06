@@ -1064,7 +1064,7 @@ class ChildBot:
         if query:
             try:
                 await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-            except:
+            except Exception:
                 await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         else:
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
@@ -1402,8 +1402,9 @@ class ChildBot:
             # Generic cancel - show main menu or just acknowledge
             try:
                 await update.callback_query.message.edit_text("❌ Cancelled.")
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
             await self.show_admin_settings(update)
         elif data == "ref_back":
             await self.show_admin_settings(update)
@@ -1791,8 +1792,9 @@ class ChildBot:
                 # Message has media or other error, delete and send new
                 try:
                     await update.callback_query.message.delete()
-                except:
-                    pass
+                except Exception as e:
+
+                    pass  # Silently handle exception
                 await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def show_4d_latest_results(self, update: Update):
@@ -1851,7 +1853,7 @@ class ChildBot:
         
         try:
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except:
+        except Exception:
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def start_4d_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1959,7 +1961,7 @@ class ChildBot:
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]]
         try:
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except:
+        except Exception:
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def show_4d_cold_numbers(self, update: Update):
@@ -1982,7 +1984,7 @@ class ChildBot:
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]]
         try:
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except:
+        except Exception:
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def show_4d_digit_frequency(self, update: Update):
@@ -2007,7 +2009,7 @@ class ChildBot:
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]]
         try:
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except:
+        except Exception:
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def generate_4d_lucky(self, update: Update):
@@ -2053,7 +2055,7 @@ class ChildBot:
         ]
         try:
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-        except:
+        except Exception:
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     async def refresh_4d_data(self, update: Update):
@@ -2564,8 +2566,9 @@ class ChildBot:
                         ),
                         parse_mode='HTML'
                     )
-                except:
-                    pass
+                except Exception as e:
+
+                    pass  # Silently handle exception
             
             await update.callback_query.answer("✅ Approved!", show_alert=True)
         else:
@@ -2591,8 +2594,9 @@ class ChildBot:
                         ),
                         parse_mode='HTML'
                     )
-                except:
-                    pass
+                except Exception as e:
+
+                    pass  # Silently handle exception
             
             await update.callback_query.answer("❌ Rejected & Refunded", show_alert=True)
         else:
@@ -3528,7 +3532,7 @@ class ChildBot:
                 msg = parts[2]
                 await context.bot.send_message(chat_id=target_id, text=f"💬 **Admin:**\n{msg}", parse_mode='Markdown')
                 await update.message.reply_text("✅ Sent.")
-            except:
+            except Exception:
                 await update.message.reply_text("❌ Format: /reply USER_ID MESSAGE")
 
     # --- Add Company Wizard Steps ---
@@ -3648,7 +3652,7 @@ class ChildBot:
     async def cancel_op(self, update, context):
         try:
             await update.message.reply_text("❌ Cancelled.")
-        except:
+        except Exception:
             await update.callback_query.message.edit_text("❌ Cancelled.")
         context.user_data.pop('new_comp', None)
         context.user_data.pop('awaiting_btn_text', None)
@@ -3767,7 +3771,7 @@ class ChildBot:
                 try:
                     await msg.copy(chat_id=tid)
                     sent += 1
-                except:
+                except Exception:
                     failed += 1
             
             await update.callback_query.message.reply_text(f"✅ Broadcast selesai!\n\n📤 Sent: {sent}\n❌ Failed: {failed}")
@@ -4130,8 +4134,9 @@ class ChildBot:
                         text=f"✅ **Scheduled Broadcast Complete!**\n\n📤 Sent: {sent}\n❌ Failed: {failed}",
                         parse_mode='Markdown'
                     )
-                except:
-                    pass
+                except Exception as e:
+
+                    pass  # Silently handle exception
             
             self.logger.info(f"Scheduled broadcast {broadcast_id} completed: {sent} sent, {failed} failed")
         except Exception as e:
@@ -4413,8 +4418,9 @@ class ChildBot:
                     await update.callback_query.message.edit_text(error_text)
                 else:
                     await update.message.reply_text(error_text)
-            except:
-                pass
+            except Exception as e:
+
+                pass  # Silently handle exception
     
     async def toggle_forwarder_mode_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle mode toggle callback"""
