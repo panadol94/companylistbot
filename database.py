@@ -111,6 +111,8 @@ class Database:
                     account TEXT DEFAULT '',
                     status TEXT DEFAULT 'PENDING', -- PENDING, APPROVED, REJECTED
                     request_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    processed_at DATETIME,
+                    processed_by INTEGER,
                     FOREIGN KEY(bot_id) REFERENCES bots(id)
                 )
             ''')
@@ -366,6 +368,16 @@ class Database:
 
                 pass  # Silently handle exception
 
+            # Migration: Add processed_at and processed_by to withdrawals
+            try:
+                cursor.execute("ALTER TABLE withdrawals ADD COLUMN processed_at DATETIME")
+            except Exception as e:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE withdrawals ADD COLUMN processed_by INTEGER")
+            except Exception as e:
+                pass  # Column already exists
+
             conn.commit()
             conn.close()
 
@@ -525,16 +537,7 @@ class Database:
             conn.commit()
             conn.close()
 
-    def add_withdrawal(self, bot_id, user_id, amount, method, account):
-        with self.lock:
-            conn = self.get_connection()
-            conn.execute(
-                "INSERT INTO withdrawals (bot_id, user_id, amount, payment_method, payment_account) VALUES (?, ?, ?, ?, ?)",
-                (bot_id, user_id, amount, method, account)
-            )
-            conn.commit()
-            conn.close()
-            
+
     def get_last_withdrawal(self, bot_id, user_id):
         """Get most recent withdrawal for cooldown check"""
         conn = self.get_connection()
@@ -638,25 +641,7 @@ class Database:
             conn.close()
             return True, f"Withdrawal requested. ID: {withdrawal_id}"
 
-    def process_withdrawal(self, withdrawal_id, action):
-        with self.lock:
-            conn = self.get_connection()
-            withdrawal = conn.execute("SELECT * FROM withdrawals WHERE id = ?", (withdrawal_id,)).fetchone()
-            if not withdrawal or withdrawal['status'] != 'PENDING':
-                conn.close()
-                return False
 
-            if action == 'APPROVE':
-                # Deduct balance
-                conn.execute("UPDATE users SET balance = balance - ? WHERE bot_id = ? AND telegram_id = ?", (withdrawal['amount'], withdrawal['bot_id'], withdrawal['user_id']))
-                conn.execute("UPDATE withdrawals SET status = 'APPROVED' WHERE id = ?", (withdrawal_id,))
-            else:
-                conn.execute("UPDATE withdrawals SET status = 'REJECTED' WHERE id = ?", (withdrawal_id,))
-            
-            conn.commit()
-            conn.close()
-            return True
-    
     def get_pending_withdrawals(self, bot_id):
         conn = self.get_connection()
         rows = conn.execute("SELECT * FROM withdrawals WHERE bot_id = ? AND status = 'PENDING'", (bot_id,)).fetchall()
@@ -667,9 +652,9 @@ class Database:
         """Get all withdrawals, optionally filtered by status"""
         conn = self.get_connection()
         if status:
-            rows = conn.execute("SELECT * FROM withdrawals WHERE bot_id = ? AND status = ? ORDER BY created_at DESC", (bot_id, status)).fetchall()
+            rows = conn.execute("SELECT * FROM withdrawals WHERE bot_id = ? AND status = ? ORDER BY request_date DESC", (bot_id, status)).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM withdrawals WHERE bot_id = ? ORDER BY created_at DESC", (bot_id,)).fetchall()
+            rows = conn.execute("SELECT * FROM withdrawals WHERE bot_id = ? ORDER BY request_date DESC", (bot_id,)).fetchall()
         conn.close()
         return [dict(row) for row in rows]
     

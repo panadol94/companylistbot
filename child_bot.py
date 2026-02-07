@@ -2979,7 +2979,15 @@ class ChildBot:
             [InlineKeyboardButton("📋 Manage Buttons", callback_data="manage_menu_btns")],
             [InlineKeyboardButton("« Back", callback_data="admin_settings")]
         ]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            # Fallback: original message is a photo/media, can't edit_text
+            try:
+                await update.callback_query.message.delete()
+            except Exception:
+                pass
+            await update.callback_query.message.chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Media Manager Functions ---
     async def show_media_manager(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
