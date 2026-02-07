@@ -69,6 +69,13 @@ class Database:
 
                 pass  # Silently handle exception  # Column already exists
 
+            # Migration: Add link_guard_enabled column if missing
+            try:
+                cursor.execute("ALTER TABLE bots ADD COLUMN link_guard_enabled BOOLEAN DEFAULT 0")
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
+
             # 2. Companies Table (Content for each bot)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS companies (
@@ -750,6 +757,24 @@ class Database:
         bot = conn.execute("SELECT livegram_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
         conn.close()
         return bool(bot['livegram_enabled']) if bot and 'livegram_enabled' in bot.keys() else True  # Default True
+
+    def toggle_link_guard(self, bot_id):
+        """Toggle link guard system on/off for a bot"""
+        with self.lock:
+            conn = self.get_connection()
+            current = conn.execute("SELECT link_guard_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+            new_state = 0 if current and current['link_guard_enabled'] else 1
+            conn.execute("UPDATE bots SET link_guard_enabled = ? WHERE id = ?", (new_state, bot_id))
+            conn.commit()
+            conn.close()
+            return new_state
+
+    def is_link_guard_enabled(self, bot_id):
+        """Check if link guard is enabled for a bot"""
+        conn = self.get_connection()
+        bot = conn.execute("SELECT link_guard_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        return bool(bot['link_guard_enabled']) if bot and 'link_guard_enabled' in bot.keys() else False  # Default OFF
 
     def get_referral_settings(self, bot_id):
         """Get referral reward and min withdrawal settings for a bot"""

@@ -1,5 +1,7 @@
 import logging
 import datetime
+import re
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, InputMediaAnimation
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatMemberHandler
 from database import Database
@@ -1473,6 +1475,7 @@ class ChildBot:
         elif data == "admin_reset_my_ref": await self.reset_my_referral_btn_handler(update)
         elif data == "admin_reset_ref_confirm": await self.confirm_reset_my_ref_handler(update)
         elif data == "toggle_livegram": await self.toggle_livegram_system(update)
+        elif data == "toggle_link_guard": await self.toggle_link_guard_system(update)
         elif data == "reset_schedule": await self.show_reset_schedule(update)
         elif data == "confirm_reset_schedule": await self.confirm_reset_schedule(update)
         elif data == "manage_recurring": await self.show_manage_recurring(update)
@@ -2401,6 +2404,10 @@ class ChildBot:
             # Check livegram status for toggle button
             livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
             livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
+        
+            # Check link guard status
+            link_guard_enabled = self.db.is_link_guard_enabled(self.bot_id)
+            link_guard_btn_text = "🟢 Link Guard: ON" if link_guard_enabled else "🔴 Link Guard: OFF"
             
             # Check forwarder status
             forwarder_config = self.db.get_forwarder_config(self.bot_id)
@@ -2425,7 +2432,8 @@ class ChildBot:
                 [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
                 [InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram"), InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring")],
                 [InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu"), InlineKeyboardButton("📊 Analytics", callback_data="show_analytics")],
-                [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")]
+                [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")],
+                [InlineKeyboardButton(link_guard_btn_text, callback_data="toggle_link_guard")]
             ]
             
             # Only owner can manage admins
@@ -2579,6 +2587,14 @@ class ChildBot:
         status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
         
         await update.callback_query.answer(f"Livegram system is now {status_text}")
+        await self.show_admin_settings(update)
+
+    async def toggle_link_guard_system(self, update: Update):
+        """Toggle link guard system on/off"""
+        new_state = self.db.toggle_link_guard(self.bot_id)
+        status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
+        
+        await update.callback_query.answer(f"Link Guard is now {status_text}")
         await self.show_admin_settings(update)
     
     # --- Admin Management ---
@@ -4053,6 +4069,31 @@ class ChildBot:
         msg_text = update.message.text[:50] if update.message.text else 'No text'
         chat = update.effective_chat
         
+        # --- LINK GUARD: Auto-delete links from non-admins in groups ---
+        if chat.type in ['group', 'supergroup'] and self.db.is_link_guard_enabled(self.bot_id):
+            text_to_check = update.message.text or update.message.caption or ''
+            link_pattern = r'(https?://|t\.me/|bit\.ly/|tinyurl\.com|wa\.me/|goo\.gl/)'
+            if re.search(link_pattern, text_to_check, re.IGNORECASE):
+                try:
+                    member = await chat.get_member(update.effective_user.id)
+                    is_admin = member.status in ['administrator', 'creator']
+                except Exception:
+                    is_admin = False
+                
+                if not is_admin:
+                    try:
+                        await update.message.delete()
+                        warning = await chat.send_message(
+                            f"⚠️ **{update.effective_user.first_name}**, link tidak dibenarkan dalam group ini. Hanya admin boleh hantar link.",
+                            parse_mode='Markdown'
+                        )
+                        # Auto-delete warning after 5 seconds
+                        await asyncio.sleep(5)
+                        await warning.delete()
+                    except Exception as e:
+                        self.logger.error(f"Link Guard error: {e}")
+                    return
+        
         # Auto-Discovery: Save group if message is from a group
         if chat.type in ['group', 'supergroup']:
             self.db.upsert_known_group(self.bot_id, chat.id, chat.title)
@@ -4244,6 +4285,32 @@ class ChildBot:
     async def handle_media_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle media messages - for forwarded photos/videos/docs from channels"""
         self.logger.info(f"📷 Media message received from user {update.effective_user.id}")
+        
+        chat = update.effective_chat
+        
+        # --- LINK GUARD: Check media captions for links ---
+        if chat.type in ['group', 'supergroup'] and self.db.is_link_guard_enabled(self.bot_id):
+            caption = update.message.caption or ''
+            link_pattern = r'(https?://|t\.me/|bit\.ly/|tinyurl\.com|wa\.me/|goo\.gl/)'
+            if re.search(link_pattern, caption, re.IGNORECASE):
+                try:
+                    member = await chat.get_member(update.effective_user.id)
+                    is_admin = member.status in ['administrator', 'creator']
+                except Exception:
+                    is_admin = False
+                
+                if not is_admin:
+                    try:
+                        await update.message.delete()
+                        warning = await chat.send_message(
+                            f"⚠️ **{update.effective_user.first_name}**, link tidak dibenarkan dalam group ini. Hanya admin boleh hantar link.",
+                            parse_mode='Markdown'
+                        )
+                        await asyncio.sleep(5)
+                        await warning.delete()
+                    except Exception as e:
+                        self.logger.error(f"Link Guard (media) error: {e}")
+                    return
         
         # Check if this is a forwarded message for forwarder setup
         forward_from_chat = getattr(update.message, 'forward_from_chat', None)
