@@ -2958,7 +2958,7 @@ class ChildBot:
     async def media_manager_back(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle back button from media manager — properly end conversation"""
         await update.callback_query.answer()
-        await self.show_customize_submenu(update)
+        await self.show_admin_settings(update)
         return ConversationHandler.END
 
     async def media_manager_select_section(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
