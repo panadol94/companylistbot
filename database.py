@@ -91,6 +91,13 @@ class Database:
                 )
             ''')
 
+            # Migration: Add emoji column to companies if missing
+            try:
+                cursor.execute("ALTER TABLE companies ADD COLUMN emoji TEXT DEFAULT '🏢'")
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
+
             # 3. Users Table (End users of child bots)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
@@ -472,7 +479,7 @@ class Database:
     
     def edit_company(self, company_id, field, value):
         """Update a specific field of a company"""
-        allowed_fields = ['name', 'description', 'media_file_id', 'media_type', 'button_text', 'button_url']
+        allowed_fields = ['name', 'description', 'media_file_id', 'media_type', 'button_text', 'button_url', 'emoji']
         if field not in allowed_fields:
             return False
         with self.lock:
