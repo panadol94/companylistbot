@@ -1464,11 +1464,10 @@ class ChildBot:
         elif data.startswith("wd_company_"): await self.withdrawal_select_method(update, context)
         elif data == "wd_submit": await self.withdrawal_submit(update, context)
         elif data == "cancel_wd": await self.cancel_withdrawal(update, context)
-        elif data.startswith("approve_wd_"): await self.process_withdrawal(update, data, True)
-        elif data.startswith("reject_wd_"): await self.process_withdrawal(update, data, False)
+
         elif data == "admin_del_list": await self.show_delete_company_list(update)
         elif data.startswith("delete_company_"): await self.confirm_delete_company(update, int(data.split("_")[2]))
-        elif data == "admin_customize": await self.show_customize_menu(update)
+
         elif data == "toggle_referral": await self.toggle_referral_system(update)
         elif data == "admin_reset_my_ref": await self.reset_my_referral_btn_handler(update)
         elif data == "admin_reset_ref_confirm": await self.confirm_reset_my_ref_handler(update)
@@ -2334,18 +2333,7 @@ class ChildBot:
             await update.callback_query.answer("❌ Failed to reorder", show_alert=True)
     
     # --- Customize Menu Logic ---
-    async def show_customize_menu(self, update: Update):
-        """Show customization options"""
-        text = (
-            "🎨 **CUSTOMIZE BOT**\n\n"
-            "Available customization options:\n\n"
-            "1️⃣ **Welcome Message** - Edit /start message\n"
-            "2️⃣ **Bot Footer** - Custom ad footer\n"
-            "3️⃣ **Referral Amount** - Change reward per referral\n\n"
-            "⚠️ _Feature coming soon! Contact support for custom branding._"
-        )
-        keyboard = [[InlineKeyboardButton("« Back", callback_data="admin_settings")]]
-        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
     
     async def toggle_referral_system(self, update: Update):
         """Toggle referral system on/off"""
@@ -2974,7 +2962,7 @@ class ChildBot:
         text = f"⚙️ **CUSTOMIZE & MEDIA**\n\nCustom buttons: {btn_count}"
         keyboard = [
             [InlineKeyboardButton("🖼️ Edit Banner", callback_data="edit_welcome")],
-            [InlineKeyboardButton("🎨 Media Manager", callback_data="admin_media_manager")],
+
             [InlineKeyboardButton("➕ Add Button", callback_data="menu_add_btn")],
             [InlineKeyboardButton("📋 Manage Buttons", callback_data="manage_menu_btns")],
             [InlineKeyboardButton("« Back", callback_data="admin_settings")]
