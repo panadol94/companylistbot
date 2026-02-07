@@ -3344,179 +3344,6 @@ class ChildBot:
         return ConversationHandler.END
 
     # --- Support Logic ---
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        bot_data = self.db.get_bot_by_token(self.token)
-        owner_id = bot_data['owner_id']
-        user_id = update.effective_user.id
-        chat = update.effective_chat
-
-        # --- AUTO-DISCOVERY: REGISTER KNOWN GROUPS ---
-        if chat.type in ['group', 'supergroup']:
-            self.db.upsert_known_group(self.bot_id, chat.id, chat.title)
-
-        # Handle Add Admin flow
-        if await self.add_admin_handler(update, context):
-            return
-        
-        # Handle Add Company Button flows (awaiting text/url after callback)
-        if context.user_data.get('awaiting_btn_text'):
-            # Save button text, ask for URL
-            context.user_data['new_comp']['btn_text'] = update.message.text
-            context.user_data['awaiting_btn_text'] = False
-            context.user_data['awaiting_btn_url'] = True
-            await update.message.reply_text("🔗 Masukkan **Link URL** button:", parse_mode='Markdown')
-            return
-        
-        if context.user_data.get('awaiting_btn_url'):
-            # Save button URL to company_buttons
-            url = update.message.text
-            if not url.startswith(('http://', 'https://', 't.me/')):
-                await update.message.reply_text("⚠️ URL mesti mula dengan http://, https://, atau t.me/\n\nCuba lagi:")
-                return
-            if url.startswith('t.me/'):
-                url = 'https://' + url
-            
-            data = context.user_data.get('new_comp', {})
-            company_id = data.get('company_id')
-            if company_id:
-                self.db.add_company_button(company_id, data['btn_text'], url)
-                context.user_data['awaiting_btn_url'] = False
-                
-                # Ask for more
-                keyboard = [
-                    [InlineKeyboardButton("➕ Add Another Button", callback_data="add_more_btn")],
-                    [InlineKeyboardButton("✅ Done", callback_data="finish_company")]
-                ]
-                await update.message.reply_text(
-                    f"✅ Button **{data['btn_text']}** added!\n\nAdd another button?",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
-                )
-            return
-        
-        # Handle Add Button to Existing Company (from Manage Buttons)
-        if context.user_data.get('awaiting_co_btn_text'):
-            context.user_data['co_btn_text'] = update.message.text
-            context.user_data['awaiting_co_btn_text'] = False
-            context.user_data['awaiting_co_btn_url'] = True
-            await update.message.reply_text("🔗 Masukkan **Link URL** button:", parse_mode='Markdown')
-            return
-        
-        if context.user_data.get('awaiting_co_btn_url'):
-            url = update.message.text
-            if not url.startswith(('http://', 'https://', 't.me/')):
-                await update.message.reply_text("⚠️ URL mesti mula dengan http://, https://, atau t.me/\n\nCuba lagi:")
-                return
-            if url.startswith('t.me/'):
-                url = 'https://' + url
-            
-            company_id = context.user_data.get('add_btn_company_id')
-            btn_text = context.user_data.get('co_btn_text', 'Button')
-            
-            if company_id:
-                self.db.add_company_button(company_id, btn_text, url)
-                context.user_data['awaiting_co_btn_url'] = False
-                await update.message.reply_text(f"✅ Button **{btn_text}** added!", parse_mode='Markdown')
-                
-                # Show manage buttons again via inline keyboard
-                keyboard = [[InlineKeyboardButton("🔙 Back to Manage Buttons", callback_data=f"manage_co_btns_{company_id}")]]
-                await update.message.reply_text("Tap below to continue:", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-        
-        # --- LIVEGRAM FUNCTIONALITY ---
-        # Admin replies to forwarded message -> send to user
-        if user_id == owner_id and update.message.reply_to_message:
-            replied_msg = update.message.reply_to_message
-            replied_msg_id = replied_msg.message_id
-            
-            # Check if this is a reply to a forwarded user message
-            forwarded_msgs = context.bot_data.get('forwarded_msgs', {})
-            original_user_id = forwarded_msgs.get(replied_msg_id)
-            
-            if original_user_id:
-                try:
-                    # Send admin's reply to the original user
-                    if update.message.text:
-                        await context.bot.send_message(
-                            chat_id=original_user_id, 
-                            text=f"💬 **Admin:**\n{update.message.text}", 
-                            parse_mode='Markdown'
-                        )
-                    elif update.message.photo:
-                        await context.bot.send_photo(
-                            chat_id=original_user_id,
-                            photo=update.message.photo[-1].file_id,
-                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
-                            parse_mode='Markdown'
-                        )
-                    elif update.message.video:
-                        await context.bot.send_video(
-                            chat_id=original_user_id,
-                            video=update.message.video.file_id,
-                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
-                            parse_mode='Markdown'
-                        )
-                    elif update.message.document:
-                        await context.bot.send_document(
-                            chat_id=original_user_id,
-                            document=update.message.document.file_id,
-                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
-                            parse_mode='Markdown'
-                        )
-                    elif update.message.voice:
-                        await context.bot.send_voice(
-                            chat_id=original_user_id,
-                            voice=update.message.voice.file_id
-                        )
-                    elif update.message.sticker:
-                        await context.bot.send_sticker(
-                            chat_id=original_user_id,
-                            sticker=update.message.sticker.file_id
-                        )
-                    await update.message.reply_text("✅ Sent to user!")
-                except Exception as e:
-                    await update.message.reply_text(f"❌ Failed: {str(e)}")
-                return
-        
-        # User -> Admin (forward message and store mapping)
-        # Only forward if livegram is enabled
-        if user_id != owner_id and self.db.is_livegram_enabled(self.bot_id):
-            # Forward message to admin
-            forwarded = await context.bot.forward_message(
-                chat_id=owner_id, 
-                from_chat_id=update.effective_chat.id, 
-                message_id=update.message.message_id
-            )
-            
-            # Store mapping: forwarded_msg_id -> original_user_id
-            if 'forwarded_msgs' not in context.bot_data:
-                context.bot_data['forwarded_msgs'] = {}
-            context.bot_data['forwarded_msgs'][forwarded.message_id] = user_id
-            
-            # Clean old mappings (keep only last 500 to save memory)
-            if len(context.bot_data['forwarded_msgs']) > 500:
-                oldest_keys = list(context.bot_data['forwarded_msgs'].keys())[:-500]
-                for k in oldest_keys:
-                    del context.bot_data['forwarded_msgs'][k]
-            
-            # Send hint to admin
-            user_name = update.effective_user.first_name or "User"
-            await context.bot.send_message(
-                chat_id=owner_id, 
-                text=f"👤 **{user_name}** (ID: `{user_id}`)\n\n💡 _Reply terus ke message di atas untuk balas._",
-                parse_mode='Markdown'
-            )
-        
-        # Admin /reply command (legacy fallback)
-        elif update.message.text and update.message.text.startswith("/reply "):
-            try:
-                parts = update.message.text.split(" ", 2)
-                target_id = int(parts[1])
-                msg = parts[2]
-                await context.bot.send_message(chat_id=target_id, text=f"💬 **Admin:**\n{msg}", parse_mode='Markdown')
-                await update.message.reply_text("✅ Sent.")
-            except Exception:
-                await update.message.reply_text("❌ Format: /reply USER_ID MESSAGE")
 
     # --- Add Company Wizard Steps ---
     async def add_company_start(self, update, context):
@@ -4240,6 +4067,66 @@ class ChildBot:
         self.logger.info(f"📨 Text message: {msg_text} | Forwarded: {is_forwarded}")
         self.logger.info(f"📨 States: source={context.user_data.get('waiting_forwarder_source')}, target={context.user_data.get('waiting_forwarder_target')}")
         
+        # Handle Add Admin flow
+        if await self.add_admin_handler(update, context):
+            return
+        
+        # Handle Add Company Button flows (awaiting text/url after callback)
+        if context.user_data.get('awaiting_btn_text'):
+            context.user_data['new_comp']['btn_text'] = update.message.text
+            context.user_data['awaiting_btn_text'] = False
+            context.user_data['awaiting_btn_url'] = True
+            await update.message.reply_text("🔗 Masukkan **Link URL** button:", parse_mode='Markdown')
+            return
+        
+        if context.user_data.get('awaiting_btn_url'):
+            url = update.message.text
+            if not url.startswith(('http://', 'https://', 't.me/')):
+                await update.message.reply_text("⚠️ URL mesti mula dengan http://, https://, atau t.me/\n\nCuba lagi:")
+                return
+            if url.startswith('t.me/'):
+                url = 'https://' + url
+            data = context.user_data.get('new_comp', {})
+            company_id = data.get('company_id')
+            if company_id:
+                self.db.add_company_button(company_id, data['btn_text'], url)
+                context.user_data['awaiting_btn_url'] = False
+                keyboard = [
+                    [InlineKeyboardButton("➕ Add Another Button", callback_data="add_more_btn")],
+                    [InlineKeyboardButton("✅ Done", callback_data="finish_company")]
+                ]
+                await update.message.reply_text(
+                    f"✅ Button **{data['btn_text']}** added!\n\nAdd another button?",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            return
+        
+        # Handle Add Button to Existing Company (from Manage Buttons)
+        if context.user_data.get('awaiting_co_btn_text'):
+            context.user_data['co_btn_text'] = update.message.text
+            context.user_data['awaiting_co_btn_text'] = False
+            context.user_data['awaiting_co_btn_url'] = True
+            await update.message.reply_text("🔗 Masukkan **Link URL** button:", parse_mode='Markdown')
+            return
+        
+        if context.user_data.get('awaiting_co_btn_url'):
+            url = update.message.text
+            if not url.startswith(('http://', 'https://', 't.me/')):
+                await update.message.reply_text("⚠️ URL mesti mula dengan http://, https://, atau t.me/\n\nCuba lagi:")
+                return
+            if url.startswith('t.me/'):
+                url = 'https://' + url
+            company_id = context.user_data.get('add_btn_company_id')
+            btn_text = context.user_data.get('co_btn_text', 'Button')
+            if company_id:
+                self.db.add_company_button(company_id, btn_text, url)
+                context.user_data['awaiting_co_btn_url'] = False
+                await update.message.reply_text(f"✅ Button **{btn_text}** added!", parse_mode='Markdown')
+                keyboard = [[InlineKeyboardButton("🔙 Back to Manage Buttons", callback_data=f"manage_co_btns_{company_id}")]]
+                await update.message.reply_text("Tap below to continue:", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        
         # Check if waiting for forwarder source channel
         if context.user_data.get('waiting_forwarder_source'):
             self.logger.info("✅ Processing as forwarder source")
@@ -4262,7 +4149,97 @@ class ChildBot:
             await self.check_4d_number(update, context)
             return
         
-        # Add other message handlers here if needed
+        # --- LIVEGRAM FUNCTIONALITY ---
+        bot_data = self.db.get_bot_by_token(self.token)
+        owner_id = bot_data['owner_id']
+        user_id = update.effective_user.id
+        
+        # Admin replies to forwarded message -> send to user
+        if user_id == owner_id and update.message.reply_to_message:
+            replied_msg = update.message.reply_to_message
+            replied_msg_id = replied_msg.message_id
+            
+            forwarded_msgs = context.bot_data.get('forwarded_msgs', {})
+            original_user_id = forwarded_msgs.get(replied_msg_id)
+            
+            if original_user_id:
+                try:
+                    if update.message.text:
+                        await context.bot.send_message(
+                            chat_id=original_user_id, 
+                            text=f"💬 **Admin:**\n{update.message.text}", 
+                            parse_mode='Markdown'
+                        )
+                    elif update.message.photo:
+                        await context.bot.send_photo(
+                            chat_id=original_user_id,
+                            photo=update.message.photo[-1].file_id,
+                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
+                            parse_mode='Markdown'
+                        )
+                    elif update.message.video:
+                        await context.bot.send_video(
+                            chat_id=original_user_id,
+                            video=update.message.video.file_id,
+                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
+                            parse_mode='Markdown'
+                        )
+                    elif update.message.document:
+                        await context.bot.send_document(
+                            chat_id=original_user_id,
+                            document=update.message.document.file_id,
+                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
+                            parse_mode='Markdown'
+                        )
+                    elif update.message.voice:
+                        await context.bot.send_voice(
+                            chat_id=original_user_id,
+                            voice=update.message.voice.file_id
+                        )
+                    elif update.message.sticker:
+                        await context.bot.send_sticker(
+                            chat_id=original_user_id,
+                            sticker=update.message.sticker.file_id
+                        )
+                    await update.message.reply_text("✅ Sent to user!")
+                except Exception as e:
+                    await update.message.reply_text(f"❌ Failed: {str(e)}")
+                return
+        
+        # User -> Admin (forward message and store mapping)
+        if user_id != owner_id and self.db.is_livegram_enabled(self.bot_id):
+            forwarded = await context.bot.forward_message(
+                chat_id=owner_id, 
+                from_chat_id=update.effective_chat.id, 
+                message_id=update.message.message_id
+            )
+            
+            if 'forwarded_msgs' not in context.bot_data:
+                context.bot_data['forwarded_msgs'] = {}
+            context.bot_data['forwarded_msgs'][forwarded.message_id] = user_id
+            
+            if len(context.bot_data['forwarded_msgs']) > 500:
+                oldest_keys = list(context.bot_data['forwarded_msgs'].keys())[:-500]
+                for k in oldest_keys:
+                    del context.bot_data['forwarded_msgs'][k]
+            
+            user_name = update.effective_user.first_name or "User"
+            await context.bot.send_message(
+                chat_id=owner_id, 
+                text=f"👤 **{user_name}** (ID: `{user_id}`)\n\n💡 _Reply terus ke message di atas untuk balas._",
+                parse_mode='Markdown'
+            )
+        
+        # Admin /reply command (legacy fallback)
+        elif update.message.text and update.message.text.startswith("/reply "):
+            try:
+                parts = update.message.text.split(" ", 2)
+                target_id = int(parts[1])
+                msg = parts[2]
+                await context.bot.send_message(chat_id=target_id, text=f"💬 **Admin:**\n{msg}", parse_mode='Markdown')
+                await update.message.reply_text("✅ Sent.")
+            except Exception:
+                await update.message.reply_text("❌ Format: /reply USER_ID MESSAGE")
 
     async def handle_media_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle media messages - for forwarded photos/videos/docs from channels"""
