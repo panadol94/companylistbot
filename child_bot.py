@@ -82,8 +82,7 @@ MENU_BTN_TEXT, MENU_BTN_URL = range(23, 25)
 PAIR_SELECT_1, PAIR_SELECT_2 = range(26, 28)
 # States for Recurring Broadcast
 RECURRING_TYPE = 40
-# States for Recurring Broadcast
-RECURRING_TYPE = 40
+
 # States for Media Manager
 MEDIA_UPLOAD = 50
 # States for Referral Manage
@@ -186,10 +185,12 @@ class ChildBot:
             states={
                 MEDIA_UPLOAD: [
                     CallbackQueryHandler(self.media_manager_select_section, pattern="^media_section_"),
+                    CallbackQueryHandler(self.media_manager_back, pattern="^media_back$"),
                     MessageHandler(filters.PHOTO | filters.VIDEO, self.media_manager_save_upload)
                 ]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$"), CallbackQueryHandler(self.handle_callback)]
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$"), CallbackQueryHandler(self.handle_callback)],
+            allow_reentry=True
         )
         self.app.add_handler(media_conv)
 
@@ -1535,62 +1536,9 @@ class ChildBot:
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
-    # --- Withdrawal Logic ---
-    async def show_withdrawals(self, update: Update):
-        wds = self.db.get_pending_withdrawals(self.bot_id)
-        if not wds:
-            await update.callback_query.message.edit_text("✅ Tiada withdrawal pending.")
-            return
-        
-        for wd in wds:
-            text = f"💳 **Withdrawal Request**\nUser ID: `{wd['user_id']}`\nAmount: **RM {wd['amount']}**"
-            keyboard = [[
-                InlineKeyboardButton("✅ APPROVE", callback_data=f"approve_wd_{wd['id']}"),
-                InlineKeyboardButton("❌ REJECT", callback_data=f"reject_wd_{wd['id']}")
-            ]]
-            await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
-    async def process_withdrawal(self, update, data, approve):
-        wd_id = int(data.split("_")[2])
-        action = "APPROVE" if approve else "REJECT"
-        success = self.db.process_withdrawal(wd_id, action)
-        
-        if success:
-            await update.callback_query.message.edit_text(f"Status Updated: {action}")
-            # Notify User
-            wd = next((w for w in self.db.get_pending_withdrawals(self.bot_id) if w['id'] == wd_id), None) # Wait, it's processed, so fetch logic slightly different or skip for now
-            # To be strict, I should fetch user_id from the just processed WD. 
-        else:
-            await update.callback_query.message.edit_text("Error processing.")
     
-    # --- Edit Company Menu ---
-    async def show_edit_company_menu(self, update: Update, company_id: int):
-        """Show edit options for a specific company"""
-        company = next((c for c in self.db.get_companies(self.bot_id) if c['id'] == company_id), None)
-        if not company:
-            await update.callback_query.message.reply_text("❌ Company not found.")
-            return
-        
-        text = (
-            f"✏️ **EDIT COMPANY**\n\n"
-            f"🏢 **{company['name']}**\n\n"
-            f"Select what to edit:"
-        )
-        
-        keyboard = [
-            [InlineKeyboardButton("📝 Edit Name", callback_data=f"ec_name_{company_id}")],
-            [InlineKeyboardButton("📄 Edit Description", callback_data=f"ec_desc_{company_id}")],
-            [InlineKeyboardButton("🖼️ Edit Media", callback_data=f"ec_media_{company_id}")],
-            [InlineKeyboardButton("🔗 Edit Button", callback_data=f"ec_btn_{company_id}")],
-            [InlineKeyboardButton("🔘 Manage Buttons", callback_data=f"manage_co_btns_{company_id}")],
-            [InlineKeyboardButton("🔙 BACK", callback_data="list_page_0")]
-        ]
-        
-        await update.callback_query.message.reply_text(
-            text, 
-            reply_markup=InlineKeyboardMarkup(keyboard), 
-            parse_mode='Markdown'
-        )
+
     
     # --- Edit Company Wizard Functions ---
     # --- Edit Company Wizard Functions ---
@@ -2995,7 +2943,7 @@ class ChildBot:
             [InlineKeyboardButton("🔗 Share Link", callback_data="media_section_share")],
             [InlineKeyboardButton("🏆 Leaderboard", callback_data="media_section_leaderboard")],
             [InlineKeyboardButton("🔢 4D Stats", callback_data="media_section_4d")],
-            [InlineKeyboardButton("« Back", callback_data="customize_menu")]
+            [InlineKeyboardButton("« Back", callback_data="media_back")]
         ]
         
         # Determine if new message or edit
@@ -3006,6 +2954,12 @@ class ChildBot:
             await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         
         return MEDIA_UPLOAD
+
+    async def media_manager_back(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle back button from media manager — properly end conversation"""
+        await update.callback_query.answer()
+        await self.show_customize_submenu(update)
+        return ConversationHandler.END
 
     async def media_manager_select_section(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle section selection"""
