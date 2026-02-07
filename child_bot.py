@@ -4072,7 +4072,7 @@ class ChildBot:
         # --- LINK GUARD: Auto-delete links from non-admins in groups ---
         if chat.type in ['group', 'supergroup'] and self.db.is_link_guard_enabled(self.bot_id):
             text_to_check = update.message.text or update.message.caption or ''
-            link_pattern = r'(https?://|t\.me/|bit\.ly/|tinyurl\.com|wa\.me/|goo\.gl/)'
+            link_pattern = r'(https?://|t\.me/|bit\.ly/|tinyurl\.com|wa\.me/|goo\.gl/|\b\w+\.(com|net|org|io|me|co|xyz|info|my|sg|uk|us|app|dev|link|live|online|site|store|shop|top|cc|gg|tv|ly)\b)'
             if re.search(link_pattern, text_to_check, re.IGNORECASE):
                 try:
                     member = await chat.get_member(update.effective_user.id)
@@ -4291,7 +4291,7 @@ class ChildBot:
         # --- LINK GUARD: Check media captions for links ---
         if chat.type in ['group', 'supergroup'] and self.db.is_link_guard_enabled(self.bot_id):
             caption = update.message.caption or ''
-            link_pattern = r'(https?://|t\.me/|bit\.ly/|tinyurl\.com|wa\.me/|goo\.gl/)'
+            link_pattern = r'(https?://|t\.me/|bit\.ly/|tinyurl\.com|wa\.me/|goo\.gl/|\b\w+\.(com|net|org|io|me|co|xyz|info|my|sg|uk|us|app|dev|link|live|online|site|store|shop|top|cc|gg|tv|ly)\b)'
             if re.search(link_pattern, caption, re.IGNORECASE):
                 try:
                     member = await chat.get_member(update.effective_user.id)
