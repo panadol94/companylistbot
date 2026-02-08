@@ -76,7 +76,7 @@ SCHEDULE_TIME = 30
 WELCOME_PHOTO, WELCOME_TEXT = range(11, 13)
 # States for Edit Company
 EDIT_FIELD, EDIT_NAME, EDIT_DESC, EDIT_MEDIA, EDIT_BTN_TEXT, EDIT_BTN_URL = range(15, 21)
-EDIT_EMOJI = 21
+
 # State for Search
 SEARCH = 22
 # States for Menu Button
@@ -224,7 +224,7 @@ class ChildBot:
                 EDIT_MEDIA: [MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, self.edit_company_save_media)],
                 EDIT_BTN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_text)],
                 EDIT_BTN_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_url)],
-                EDIT_EMOJI: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_emoji)],
+
             },
             fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern=r'^cancel$'), CallbackQueryHandler(self.handle_callback)],
             per_message=False
@@ -629,7 +629,7 @@ class ChildBot:
         
         # Build caption - Using HTML format to support rich text formatting in descriptions
         caption = (
-            f"{comp.get('emoji', '🏢')} <b>{html_escape(comp['name'])}</b>\n\n"
+            f"<b>{comp['name']}</b>\n\n"
             f"{comp['description']}"
         )
         
@@ -1585,7 +1585,7 @@ class ChildBot:
             [InlineKeyboardButton("🔗 Button Text", callback_data="ef_btn_text")],
             [InlineKeyboardButton("🌐 Button URL", callback_data="ef_btn_url")],
             [InlineKeyboardButton("🔘 Manage Buttons", callback_data="ef_manage_btns")],
-            [InlineKeyboardButton("😀 Emoji", callback_data="ef_emoji")],
+
             [cancel_btn]
         ]
         
@@ -1608,7 +1608,7 @@ class ChildBot:
         await update.callback_query.answer()
         
         if data == "ef_name":
-            await update.callback_query.message.reply_text("📝 Masukkan **NAMA BARU**:", parse_mode='Markdown')
+            await update.callback_query.message.reply_text("📝 Masukkan **NAMA BARU**:\n\n💡 _Boleh masukkan emoji sekali, contoh: 🎰 Mega888_", parse_mode='Markdown')
             return EDIT_NAME
         elif data == "ef_desc":
             await update.callback_query.message.reply_text("📄 Masukkan **DESKRIPSI BARU**:", parse_mode='Markdown')
@@ -1622,20 +1622,15 @@ class ChildBot:
         elif data == "ef_btn_url":
             await update.callback_query.message.reply_text("🌐 Masukkan **BUTTON URL BARU**:", parse_mode='Markdown')
             return EDIT_BTN_URL
-        elif data == "ef_emoji":
-            await update.callback_query.message.reply_text(
-                "😀 Hantar **EMOJI BARU** untuk company ini:\n\n"
-                "Contoh: 🎰 💰 🎯 ⭐ 🔥 💎 🎮 📱 🛒 🏦",
-                parse_mode='Markdown'
-            )
-            return EDIT_EMOJI
+
         elif data == "cancel":
             await update.callback_query.message.reply_text("❌ Edit cancelled.")
             return ConversationHandler.END
     
     async def edit_company_save_name(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         company_id = context.user_data.get('edit_company_id')
-        self.db.edit_company(company_id, 'name', update.message.text)
+        formatted_name = message_to_html(update.message)
+        self.db.edit_company(company_id, 'name', formatted_name)
         
         keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
         await update.message.reply_text(
@@ -1644,22 +1639,7 @@ class ChildBot:
         )
         return ConversationHandler.END
     
-    async def edit_company_save_emoji(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        company_id = context.user_data.get('edit_company_id')
-        emoji_text = update.message.text.strip()
-        
-        # Take only first 2 chars (emoji can be multi-byte)
-        if len(emoji_text) > 2:
-            emoji_text = emoji_text[:2]
-        
-        self.db.edit_company(company_id, 'emoji', emoji_text)
-        
-        keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
-        await update.message.reply_text(
-            f"✅ Emoji company berjaya ditukar ke {emoji_text}!",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return ConversationHandler.END
+
     
     async def edit_company_save_desc(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         company_id = context.user_data.get('edit_company_id')
@@ -3396,11 +3376,12 @@ class ChildBot:
 
     # --- Add Company Wizard Steps ---
     async def add_company_start(self, update, context):
-        await update.callback_query.message.reply_text("Sila masukkan **NAMA Company**:", parse_mode='Markdown')
+        await update.callback_query.message.reply_text("Sila masukkan **NAMA Company**:\n\n💡 _Boleh masukkan emoji sekali, contoh: 🎰 Mega888_", parse_mode='Markdown')
         return NAME
     
     async def add_company_name(self, update, context):
-        context.user_data['new_comp'] = {'name': update.message.text}
+        formatted_name = message_to_html(update.message)
+        context.user_data['new_comp'] = {'name': formatted_name}
         await update.message.reply_text("Masukkan **Deskripsi Company**:", parse_mode='Markdown')
         return DESC
 
