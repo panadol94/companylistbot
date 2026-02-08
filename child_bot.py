@@ -682,11 +682,7 @@ class ChildBot:
         import os
         media_path = comp['media_file_id']
         is_local_file = media_path and (media_path.startswith('/') or os.path.sep in media_path) and os.path.exists(media_path)
-        
-        # Defensive answer
-        if update.callback_query:
-            try: await update.callback_query.answer()
-            except Exception: pass
+
 
         try:
              # Helper to get InputMedia
