@@ -103,6 +103,8 @@ class ChildBot:
         self.scheduler = scheduler
         self.app = Application.builder().token(token).build()
         self.logger = logging.getLogger(f"Bot_{bot_id}")
+        # Cache bot_data to avoid repeated DB lookups
+        self._bot_data_cache = None
         self.setup_handlers()
 
     async def initialize(self):
@@ -485,7 +487,7 @@ class ChildBot:
     async def main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_subscription(update): return
 
-        bot_data = self.db.get_bot_by_token(self.token)
+        bot_data = self._get_bot_data()
         
         # Get all companies
         companies = self.db.get_companies(self.bot_id)
@@ -589,9 +591,20 @@ class ChildBot:
                 await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Company Logic ---
-    async def show_page(self, update: Update, page: int):
+    def _get_bot_data(self):
+        """Get bot data with caching to avoid repeated DB lookups"""
+        if self._bot_data_cache is None:
+            self._bot_data_cache = self.db.get_bot_by_token(self.token)
+        return self._bot_data_cache
+
+    def _invalidate_bot_cache(self):
+        """Clear bot data cache when settings change"""
+        self._bot_data_cache = None
+
+    async def show_page(self, update: Update, page: int, companies=None):
         """Display company in CAROUSEL mode - one company at a time with Prev/Next buttons"""
-        companies = self.db.get_companies(self.bot_id)
+        if companies is None:
+            companies = self.db.get_companies(self.bot_id)
         
         if not companies:
             text = "📋 **Belum ada company.**"
@@ -624,7 +637,7 @@ class ChildBot:
         comp = companies[page]
         
         # Check if user is admin for edit button
-        bot_data = self.db.get_bot_by_token(self.token)
+        bot_data = self._get_bot_data()
         is_admin = update.effective_user.id == bot_data['owner_id']
         
         # Build caption - Using HTML format to support rich text formatting in descriptions
@@ -755,7 +768,7 @@ class ChildBot:
         index = next((i for i, c in enumerate(comps) if c['id'] == int(comp_id)), -1)
         
         if index != -1:
-            await self.show_page(update, index)
+            await self.show_page(update, index, companies=comps)
         else:
             if update.callback_query:
                 await update.callback_query.answer("Company not found.")
