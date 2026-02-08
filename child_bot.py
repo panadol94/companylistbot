@@ -379,7 +379,8 @@ class ChildBot:
                 if user:
                     balance = user.get('balance', 0)
                     total_invites = user.get('total_invites', 0)
-                    total_earned = total_invites * 1.00
+                    ref_settings = self.db.get_referral_settings(self.bot_id)
+                    total_earned = total_invites * ref_settings['referral_reward']
                     
                     bot_data = self.db.get_bot_by_token(self.token)
                     bot_username = bot_data.get('bot_username', 'bot') if bot_data else 'bot'
@@ -392,7 +393,7 @@ class ChildBot:
                         f"💎 Total Earned: **RM {total_earned:.2f}**\n\n"
                         f"🔗 **Referral Link:**\n"
                         f"`{referral_link}`\n\n"
-                        f"_Minimum withdrawal: RM10_"
+                        f"_Minimum withdrawal: RM{ref_settings['min_withdrawal']:.2f}_"
                     )
                     
                     await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
@@ -411,14 +412,15 @@ class ChildBot:
         
         balance = user.get('balance', 0)
         total_invites = user.get('total_invites', 0)
-        total_earned = total_invites * 1.00
+        ref_settings = self.db.get_referral_settings(self.bot_id)
+        total_earned = total_invites * ref_settings['referral_reward']
         
         text = (
             f"💰 **YOUR WALLET**\n\n"
             f"💵 Balance: **RM {balance:.2f}**\n"
             f"👥 Total Referrals: **{total_invites}**\n"
             f"💎 Total Earned: **RM {total_earned:.2f}**\n\n"
-            f"_Minimum withdrawal: RM10_"
+            f"_Minimum withdrawal: RM{ref_settings['min_withdrawal']:.2f}_"
         )
         
         keyboard = [
@@ -1191,11 +1193,15 @@ class ChildBot:
             bot_uname = context.bot.username
             link = f"https://t.me/{bot_uname}?start={update.effective_user.id}"
             
+            # Get dynamic reward amount from settings
+            settings = self.db.get_referral_settings(self.bot_id)
+            reward_amount = settings['referral_reward']
+            
             # Use HTML for safety
             text = (
                 f"🔗 <b>LINK REFERRAL ANDA</b>\n\n"
                 f"<code>{link}</code>\n\n"
-                f"Share link ini dan dapatkan <b>RM1.00</b> setiap invite!"
+                f"Share link ini dan dapatkan <b>RM{reward_amount:.2f}</b> setiap invite!"
             )
             
             keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
