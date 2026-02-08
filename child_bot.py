@@ -504,7 +504,7 @@ class ChildBot:
             # First company in row
             comp1 = companies[i]
             row.append(InlineKeyboardButton(
-                f"🏢 {comp1['name']}", 
+                f"{comp1['name']}", 
                 callback_data=f"c_{comp1['id']}"
             ))
             
@@ -512,7 +512,7 @@ class ChildBot:
             if i + 1 < len(companies):
                 comp2 = companies[i + 1]
                 row.append(InlineKeyboardButton(
-                    f"🏢 {comp2['name']}", 
+                    f"{comp2['name']}", 
                     callback_data=f"c_{comp2['id']}"
                 ))
             
