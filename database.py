@@ -392,6 +392,19 @@ class Database:
             except Exception as e:
                 pass  # Column already exists
 
+            # Migration: Group Welcome Message columns
+            for col, col_type in [
+                ("group_welcome_enabled", "BOOLEAN DEFAULT 0"),
+                ("group_welcome_text", "TEXT"),
+                ("group_welcome_media", "TEXT"),
+                ("group_welcome_media_type", "TEXT"),
+                ("group_welcome_autodelete", "INTEGER DEFAULT 0"),
+            ]:
+                try:
+                    cursor.execute(f"ALTER TABLE bots ADD COLUMN {col} {col_type}")
+                except Exception:
+                    pass  # Column already exists
+
             conn.commit()
             conn.close()
 
@@ -551,6 +564,44 @@ class Database:
             conn.commit()
             conn.close()
 
+    # --- Group Welcome ---
+    def get_group_welcome(self, bot_id):
+        """Get group welcome message settings"""
+        conn = self.get_connection()
+        bot = conn.execute(
+            "SELECT group_welcome_enabled, group_welcome_text, group_welcome_media, "
+            "group_welcome_media_type, group_welcome_autodelete FROM bots WHERE id = ?",
+            (bot_id,)
+        ).fetchone()
+        conn.close()
+        if bot:
+            return {
+                'enabled': bool(bot['group_welcome_enabled']) if bot['group_welcome_enabled'] is not None else False,
+                'text': bot['group_welcome_text'] or '',
+                'media': bot['group_welcome_media'],
+                'media_type': bot['group_welcome_media_type'],
+                'autodelete': bot['group_welcome_autodelete'] or 0,
+            }
+        return {'enabled': False, 'text': '', 'media': None, 'media_type': None, 'autodelete': 0}
+
+    def update_group_welcome(self, bot_id, field, value):
+        """Update a single group welcome field"""
+        allowed = {
+            'enabled': 'group_welcome_enabled',
+            'text': 'group_welcome_text',
+            'media': 'group_welcome_media',
+            'media_type': 'group_welcome_media_type',
+            'autodelete': 'group_welcome_autodelete',
+        }
+        col = allowed.get(field)
+        if not col:
+            return False
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(f"UPDATE bots SET {col} = ? WHERE id = ?", (value, bot_id))
+            conn.commit()
+            conn.close()
+            return True
 
     def get_last_withdrawal(self, bot_id, user_id):
         """Get most recent withdrawal for cooldown check"""

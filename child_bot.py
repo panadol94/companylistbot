@@ -11,12 +11,17 @@ def message_to_html(message) -> str:
     """
     Convert Telegram message with entities to HTML format.
     Preserves bold, italic, underline, strikethrough, code, and links.
+    Also handles captions for photo/video messages.
     """
-    if not message or not message.text:
+    if not message:
         return ""
     
-    text = message.text
-    entities = message.entities or []
+    # Support both text and caption (for media messages)
+    text = message.text or message.caption or ""
+    entities = message.entities or message.caption_entities or []
+    
+    if not text:
+        return ""
     
     if not entities:
         return html_escape(text)
@@ -94,6 +99,8 @@ RR_CONFIRM, RR_INPUT_ID = range(60, 62)
 WD_AMOUNT, WD_METHOD, WD_ACCOUNT, WD_CONFIRM = range(70, 74)
 # States for Referral Settings (Admin)
 RS_SET_REWARD, RS_SET_MIN_WD = range(80, 82)
+# States for Group Welcome Setup
+GW_MENU, GW_TEXT, GW_MEDIA = range(90, 93)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -283,6 +290,29 @@ class ChildBot:
         )
         self.app.add_handler(ref_settings_conv)
         
+        # Group Welcome Setup Wizard (Admin)
+        gw_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.gw_menu, pattern=r'^group_welcome_setup$')],
+            states={
+                GW_MENU: [CallbackQueryHandler(self.gw_handle_action, pattern=r'^gw_')],
+                GW_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.gw_save_text)],
+                GW_MEDIA: [MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, self.gw_save_media)],
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.gw_menu, pattern=r'^group_welcome_setup$'),
+                CommandHandler("cancel", self.cancel_op),
+                CallbackQueryHandler(self.handle_callback),
+            ],
+            per_message=False
+        )
+        self.app.add_handler(gw_conv)
+
+        # New Chat Members Handler (Group Welcome)
+        self.app.add_handler(MessageHandler(
+            filters.StatusUpdate.NEW_CHAT_MEMBERS,
+            self.handle_new_member
+        ))
+
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
@@ -494,7 +524,7 @@ class ChildBot:
         
         # Build caption
         caption = bot_data['custom_caption'] or (
-            f"🏢 **SENARAI COMPANY**\n\n"
+            f"🏢 <b>SENARAI COMPANY</b>\n\n"
             f"Pilih company yang anda ingin lihat:\n"
             f"📊 Total: {len(companies)} company"
         )
@@ -566,29 +596,29 @@ class ChildBot:
             try:
                 if bot_data['custom_banner']:
                     await update.callback_query.message.edit_media(
-                        media=InputMediaPhoto(media=bot_data['custom_banner'], caption=caption, parse_mode='Markdown'),
+                        media=InputMediaPhoto(media=bot_data['custom_banner'], caption=caption, parse_mode='HTML'),
                         reply_markup=InlineKeyboardMarkup(keyboard)
                     )
                 else:
                     await update.callback_query.message.edit_text(
                         caption,
                         reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='Markdown'
+                        parse_mode='HTML'
                     )
             except Exception as e:
                 # Fallback: send new message if edit fails (e.g., different media type)
                 try: await update.callback_query.message.delete()
                 except Exception: pass
                 if bot_data['custom_banner']:
-                    await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                    await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                 else:
-                    await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                    await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         else:
             # Fresh /start command - send new message
             if bot_data['custom_banner']:
-                await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
             else:
-                await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     # --- Company Logic ---
     def _get_bot_data(self):
@@ -2951,7 +2981,7 @@ class ChildBot:
         text = f"⚙️ **CUSTOMIZE & MEDIA**\n\nCustom buttons: {btn_count}"
         keyboard = [
             [InlineKeyboardButton("🖼️ Edit Banner", callback_data="edit_welcome")],
-
+            [InlineKeyboardButton("🎉 Group Welcome", callback_data="group_welcome_setup")],
             [InlineKeyboardButton("➕ Add Button", callback_data="menu_add_btn")],
             [InlineKeyboardButton("📋 Manage Buttons", callback_data="manage_menu_btns")],
             [InlineKeyboardButton("« Back", callback_data="admin_settings")]
@@ -2965,6 +2995,306 @@ class ChildBot:
             except Exception:
                 pass
             await update.callback_query.message.chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    # --- Group Welcome Setup (Admin) ---
+    async def gw_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show group welcome settings menu"""
+        await update.callback_query.answer()
+        settings = self.db.get_group_welcome(self.bot_id)
+        
+        status = "🟢 ON" if settings['enabled'] else "🔴 OFF"
+        
+        # Auto-delete display
+        ad = settings['autodelete']
+        if ad == 0:
+            ad_text = "OFF"
+        elif ad < 60:
+            ad_text = f"{ad}s"
+        else:
+            ad_text = f"{ad // 60} min"
+        
+        # Text preview
+        text_preview = settings['text'][:50] + "..." if len(settings['text']) > 50 else (settings['text'] or "❌ Belum ditetapkan")
+        media_status = f"✅ {settings['media_type'] or ''}".strip() if settings['media'] else "❌ Tiada"
+        
+        text = (
+            f"🎉 **GROUP WELCOME MESSAGE**\n\n"
+            f"Status: {status}\n"
+            f"Auto-Delete: **{ad_text}**\n"
+            f"Media: {media_status}\n\n"
+            f"📝 Text:\n{text_preview}\n\n"
+            f"💡 _Variables: {{name}}, {{username}}, {{group}}, {{mention}}_"
+        )
+        
+        toggle_text = "🔴 Turn OFF" if settings['enabled'] else "🟢 Turn ON"
+        keyboard = [
+            [InlineKeyboardButton("✏️ Edit Text", callback_data="gw_edit_text"), InlineKeyboardButton("🖼️ Edit Media", callback_data="gw_edit_media")],
+            [InlineKeyboardButton("⏱️ Auto-Delete", callback_data="gw_autodelete"), InlineKeyboardButton(toggle_text, callback_data="gw_toggle")],
+            [InlineKeyboardButton("🗑️ Remove Media", callback_data="gw_remove_media")],
+            [InlineKeyboardButton("👁️ Preview", callback_data="gw_preview")],
+            [InlineKeyboardButton("« Back", callback_data="customize_menu")]
+        ]
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            try:
+                await update.callback_query.message.delete()
+            except Exception:
+                pass
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        return GW_MENU
+
+    async def gw_handle_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle group welcome menu button clicks"""
+        await update.callback_query.answer()
+        data = update.callback_query.data
+        
+        if data == "gw_toggle":
+            settings = self.db.get_group_welcome(self.bot_id)
+            new_state = 0 if settings['enabled'] else 1
+            self.db.update_group_welcome(self.bot_id, 'enabled', new_state)
+            return await self.gw_menu(update, context)
+        
+        elif data == "gw_edit_text":
+            await update.callback_query.message.edit_text(
+                "📝 **EDIT WELCOME TEXT**\n\n"
+                "Hantar mesej selamat datang baru.\n\n"
+                "💡 Boleh guna formatting (bold, italic, underline) dan variables:\n"
+                "• `{name}` → Nama member\n"
+                "• `{username}` → @username\n"
+                "• `{group}` → Nama group\n"
+                "• `{mention}` → Mention link\n\n"
+                "Contoh:\n"
+                "_Selamat datang **{name}**! 🎉\nWelcome ke **{group}**!_\n\n"
+                "Taip /cancel untuk batalkan.",
+                parse_mode='Markdown'
+            )
+            return GW_TEXT
+        
+        elif data == "gw_edit_media":
+            await update.callback_query.message.edit_text(
+                "🖼️ **EDIT WELCOME MEDIA**\n\n"
+                "Hantar gambar, video, atau GIF untuk welcome message.\n\n"
+                "Taip /cancel untuk batalkan.",
+                parse_mode='Markdown'
+            )
+            return GW_MEDIA
+        
+        elif data == "gw_remove_media":
+            self.db.update_group_welcome(self.bot_id, 'media', None)
+            self.db.update_group_welcome(self.bot_id, 'media_type', None)
+            await update.callback_query.answer("✅ Media dibuang!", show_alert=True)
+            return await self.gw_menu(update, context)
+        
+        elif data == "gw_autodelete":
+            keyboard = [
+                [InlineKeyboardButton("OFF", callback_data="gw_ad_0"), InlineKeyboardButton("30s", callback_data="gw_ad_30")],
+                [InlineKeyboardButton("1 min", callback_data="gw_ad_60"), InlineKeyboardButton("5 min", callback_data="gw_ad_300")],
+                [InlineKeyboardButton("30 min", callback_data="gw_ad_1800"), InlineKeyboardButton("1 jam", callback_data="gw_ad_3600")],
+                [InlineKeyboardButton("« Back", callback_data="group_welcome_setup")]
+            ]
+            await update.callback_query.message.edit_text(
+                "⏱️ **AUTO-DELETE**\n\nPilih berapa lama sebelum welcome message dipadam automatik:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return GW_MENU
+        
+        elif data.startswith("gw_ad_"):
+            seconds = int(data.replace("gw_ad_", ""))
+            self.db.update_group_welcome(self.bot_id, 'autodelete', seconds)
+            label = "OFF" if seconds == 0 else f"{seconds}s" if seconds < 60 else f"{seconds // 60} min" if seconds < 3600 else "1 jam"
+            await update.callback_query.answer(f"✅ Auto-delete: {label}", show_alert=True)
+            return await self.gw_menu(update, context)
+        
+        elif data == "gw_preview":
+            settings = self.db.get_group_welcome(self.bot_id)
+            if not settings['text'] and not settings['media']:
+                await update.callback_query.answer("❌ Tiada text atau media ditetapkan!", show_alert=True)
+                return GW_MENU
+            
+            # Build preview with sample variables
+            user = update.effective_user
+            preview_text = self._substitute_welcome_vars(
+                settings['text'],
+                user_name=user.first_name,
+                username=user.username,
+                group_name="Test Group",
+                user_id=user.id
+            )
+            
+            keyboard = [[InlineKeyboardButton("« Back", callback_data="group_welcome_setup")]]
+            
+            try:
+                if settings['media']:
+                    import os
+                    media_source = settings['media']
+                    is_local = media_source and (media_source.startswith('/') or os.path.sep in media_source) and os.path.exists(media_source)
+                    
+                    if is_local:
+                        with open(media_source, 'rb') as f:
+                            if settings['media_type'] == 'video':
+                                await update.effective_chat.send_video(video=f, caption=preview_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                            elif settings['media_type'] == 'animation':
+                                await update.effective_chat.send_animation(animation=f, caption=preview_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                            else:
+                                await update.effective_chat.send_photo(photo=f, caption=preview_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    else:
+                        if settings['media_type'] == 'video':
+                            await update.effective_chat.send_video(video=media_source, caption=preview_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                        elif settings['media_type'] == 'animation':
+                            await update.effective_chat.send_animation(animation=media_source, caption=preview_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                        else:
+                            await update.effective_chat.send_photo(photo=media_source, caption=preview_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                else:
+                    await update.effective_chat.send_message(preview_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            except Exception as e:
+                self.logger.error(f"Group welcome preview error: {e}")
+                await update.effective_chat.send_message(f"❌ Preview error: {e}", reply_markup=InlineKeyboardMarkup(keyboard))
+            
+            return GW_MENU
+        
+        return GW_MENU
+
+    async def gw_save_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save group welcome text"""
+        formatted_text = message_to_html(update.message)
+        self.db.update_group_welcome(self.bot_id, 'text', formatted_text)
+        
+        await update.message.reply_text(
+            "✅ Welcome text berjaya dikemaskini!\n\n"
+            "💡 <i>Formatting telah disimpan.</i>",
+            parse_mode='HTML'
+        )
+        
+        # Show menu again
+        keyboard = [[InlineKeyboardButton("« Back to Group Welcome", callback_data="group_welcome_setup")]]
+        await update.message.reply_text("Tekan Back untuk kembali:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return GW_MENU
+
+    async def gw_save_media(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Save group welcome media"""
+        import os
+        
+        media_base = os.environ.get('MEDIA_DIR', '/data/media')
+        media_dir = f"{media_base}/{self.bot_id}"
+        os.makedirs(media_dir, exist_ok=True)
+        timestamp = int(datetime.datetime.now().timestamp())
+        
+        if update.message.photo:
+            file_obj = await update.message.photo[-1].get_file()
+            file_path = f"{media_dir}/gw_{timestamp}.jpg"
+            media_type = 'photo'
+        elif update.message.video:
+            file_obj = await update.message.video.get_file()
+            file_path = f"{media_dir}/gw_{timestamp}.mp4"
+            media_type = 'video'
+        elif update.message.animation:
+            file_obj = await update.message.animation.get_file()
+            file_path = f"{media_dir}/gw_{timestamp}.gif"
+            media_type = 'animation'
+        else:
+            await update.message.reply_text("❌ Sila hantar gambar, video atau GIF.")
+            return GW_MEDIA
+        
+        await file_obj.download_to_drive(file_path)
+        self.db.update_group_welcome(self.bot_id, 'media', file_path)
+        self.db.update_group_welcome(self.bot_id, 'media_type', media_type)
+        
+        await update.message.reply_text("✅ Welcome media berjaya dikemaskini!")
+        
+        keyboard = [[InlineKeyboardButton("« Back to Group Welcome", callback_data="group_welcome_setup")]]
+        await update.message.reply_text("Tekan Back untuk kembali:", reply_markup=InlineKeyboardMarkup(keyboard))
+        return GW_MENU
+
+    # --- Group Welcome: New Member Handler ---
+    def _substitute_welcome_vars(self, text, user_name, username, group_name, user_id):
+        """Replace variables in welcome text"""
+        if not text:
+            return ""
+        mention = f'<a href="tg://user?id={user_id}">{html_escape(user_name)}</a>'
+        result = text.replace("{name}", html_escape(user_name))
+        result = result.replace("{username}", f"@{username}" if username else html_escape(user_name))
+        result = result.replace("{group}", html_escape(group_name or "Group"))
+        result = result.replace("{mention}", mention)
+        return result
+
+    async def handle_new_member(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Send welcome message when new members join a group"""
+        try:
+            # Only for groups
+            if update.effective_chat.type not in ['group', 'supergroup']:
+                return
+            
+            # Check if feature is enabled
+            settings = self.db.get_group_welcome(self.bot_id)
+            if not settings['enabled']:
+                return
+            
+            if not settings['text'] and not settings['media']:
+                return
+            
+            # Process each new member
+            for member in update.message.new_chat_members:
+                # Skip bots
+                if member.is_bot:
+                    continue
+                
+                # Build welcome text with variables
+                welcome_text = self._substitute_welcome_vars(
+                    settings['text'],
+                    user_name=member.first_name,
+                    username=member.username,
+                    group_name=update.effective_chat.title,
+                    user_id=member.id
+                )
+                
+                sent_msg = None
+                try:
+                    import os
+                    if settings['media']:
+                        media_source = settings['media']
+                        is_local = media_source and (media_source.startswith('/') or os.path.sep in media_source) and os.path.exists(media_source)
+                        
+                        if is_local:
+                            with open(media_source, 'rb') as f:
+                                if settings['media_type'] == 'video':
+                                    sent_msg = await update.effective_chat.send_video(video=f, caption=welcome_text, parse_mode='HTML')
+                                elif settings['media_type'] == 'animation':
+                                    sent_msg = await update.effective_chat.send_animation(animation=f, caption=welcome_text, parse_mode='HTML')
+                                else:
+                                    sent_msg = await update.effective_chat.send_photo(photo=f, caption=welcome_text, parse_mode='HTML')
+                        else:
+                            if settings['media_type'] == 'video':
+                                sent_msg = await update.effective_chat.send_video(video=media_source, caption=welcome_text, parse_mode='HTML')
+                            elif settings['media_type'] == 'animation':
+                                sent_msg = await update.effective_chat.send_animation(animation=media_source, caption=welcome_text, parse_mode='HTML')
+                            else:
+                                sent_msg = await update.effective_chat.send_photo(photo=media_source, caption=welcome_text, parse_mode='HTML')
+                    elif welcome_text:
+                        sent_msg = await update.effective_chat.send_message(welcome_text, parse_mode='HTML')
+                    
+                    # Auto-delete if configured
+                    if sent_msg and settings['autodelete'] > 0:
+                        asyncio.create_task(self._auto_delete_message(
+                            sent_msg.chat_id, sent_msg.message_id, settings['autodelete']
+                        ))
+                
+                except Exception as e:
+                    self.logger.error(f"Group welcome error for {member.id}: {e}")
+        
+        except Exception as e:
+            self.logger.error(f"handle_new_member error: {e}")
+
+    async def _auto_delete_message(self, chat_id, message_id, delay_seconds):
+        """Delete a message after a delay"""
+        try:
+            await asyncio.sleep(delay_seconds)
+            await self.app.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception:
+            pass  # Message may already be deleted
 
     # --- Media Manager Functions ---
     async def show_media_manager(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3356,12 +3686,15 @@ class ChildBot:
     
     async def save_welcome_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Save caption to database and show preview"""
-        caption_text = update.message.text
+        caption_text = message_to_html(update.message)
         banner_file_id = context.user_data.get('welcome_banner')
         
         # Update database
         bot_data = self.db.get_bot_by_token(self.token)
         self.db.update_welcome_settings(bot_data['id'], banner_file_id, caption_text)
+        
+        # Invalidate cache so new banner shows immediately
+        self._invalidate_bot_cache()
         
         # Show preview
         keyboard = [[InlineKeyboardButton("🔙 Back to Settings", callback_data="customize_menu")]]
@@ -3398,7 +3731,7 @@ class ChildBot:
         return DESC
 
     async def add_company_desc(self, update, context):
-        context.user_data['new_comp']['desc'] = update.message.text
+        context.user_data['new_comp']['desc'] = message_to_html(update.message)
         await update.message.reply_text("Hantar **Gambar/Video** Banner:", parse_mode='Markdown')
         return MEDIA
 
@@ -3564,7 +3897,7 @@ class ChildBot:
         # Save msg details for later use
         msg = update.message
         context.user_data['broadcast_data'] = {
-            'text': msg.text or msg.caption,
+            'text': message_to_html(msg),
             'photo': msg.photo[-1].file_id if msg.photo else None,
             'video': msg.video.file_id if msg.video else None,
             'document': msg.document.file_id if msg.document else None,
@@ -3908,18 +4241,21 @@ class ChildBot:
                         await self.app.bot.send_photo(
                             chat_id=user['telegram_id'],
                             photo=broadcast['media_file_id'],
-                            caption=broadcast['message']
+                            caption=broadcast['message'],
+                            parse_mode='HTML'
                         )
                     elif broadcast['media_type'] == 'video' and broadcast['media_file_id']:
                         await self.app.bot.send_video(
                             chat_id=user['telegram_id'],
                             video=broadcast['media_file_id'],
-                            caption=broadcast['message']
+                            caption=broadcast['message'],
+                            parse_mode='HTML'
                         )
                     else:
                         await self.app.bot.send_message(
                             chat_id=user['telegram_id'],
-                            text=broadcast['message']
+                            text=broadcast['message'],
+                            parse_mode='HTML'
                         )
                     sent += 1
                 except Exception as e:
@@ -3951,24 +4287,28 @@ class ChildBot:
                         await self.app.bot.send_photo(
                             chat_id=u['telegram_id'],
                             photo=broadcast['media_file_id'],
-                            caption=broadcast['message'] or ''
+                            caption=broadcast['message'] or '',
+                            parse_mode='HTML'
                         )
                     elif broadcast['media_type'] == 'video' and broadcast['media_file_id']:
                         await self.app.bot.send_video(
                             chat_id=u['telegram_id'],
                             video=broadcast['media_file_id'],
-                            caption=broadcast['message'] or ''
+                            caption=broadcast['message'] or '',
+                            parse_mode='HTML'
                         )
                     elif broadcast['media_type'] == 'document' and broadcast['media_file_id']:
                         await self.app.bot.send_document(
                             chat_id=u['telegram_id'],
                             document=broadcast['media_file_id'],
-                            caption=broadcast['message'] or ''
+                            caption=broadcast['message'] or '',
+                            parse_mode='HTML'
                         )
                     elif broadcast['message']:
                         await self.app.bot.send_message(
                             chat_id=u['telegram_id'],
-                            text=broadcast['message']
+                            text=broadcast['message'],
+                            parse_mode='HTML'
                         )
                     sent += 1
                 except Exception as e:
