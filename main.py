@@ -270,17 +270,20 @@ class BotManager:
             logger.error(f"❌ Failed to hook bot {token[:15]}...: {e}")
 
     async def enable_bot_updates(self, app, token):
+        # All update types we need (including new_chat_members for group welcome)
+        allowed = ["message", "callback_query", "my_chat_member", "chat_member", "channel_post", "edited_message"]
+        
         # Check if localhost or HTTP (not HTTPS)
         if "localhost" in DOMAIN_URL or "127.0.0.1" in DOMAIN_URL or DOMAIN_URL.startswith("http://"):
             logger.info(f"🔄 Non-HTTPS environment detected. Starting POLLING for {token[:10]}...")
-            await app.updater.start_polling()
+            await app.updater.start_polling(allowed_updates=allowed)
         else:
-            await self.setup_webhook(app, token)
+            await self.setup_webhook(app, token, allowed)
 
-    async def setup_webhook(self, app, token):
+    async def setup_webhook(self, app, token, allowed_updates=None):
         # Set webhook to our FastAPI endpoint
         webhook_url = f"{DOMAIN_URL}/webhook/{token}"
-        await app.bot.set_webhook(webhook_url)
+        await app.bot.set_webhook(webhook_url, allowed_updates=allowed_updates)
 
     async def process_update(self, token, update_data):
         # Determine target bot
