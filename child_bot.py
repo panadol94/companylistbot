@@ -313,6 +313,12 @@ class ChildBot:
             self.handle_new_member
         ))
 
+        # Left Chat Member Handler (Delete Leave Messages)
+        self.app.add_handler(MessageHandler(
+            filters.StatusUpdate.LEFT_CHAT_MEMBER,
+            self.handle_left_member
+        ))
+
         # User Actions via Callback (MUST BE AFTER ConversationHandlers!)
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
 
@@ -1526,6 +1532,24 @@ class ChildBot:
         elif data == "admin_reset_ref_confirm": await self.confirm_reset_my_ref_handler(update)
         elif data == "toggle_livegram": await self.toggle_livegram_system(update)
         elif data == "toggle_link_guard": await self.toggle_link_guard_system(update)
+        # Group Management
+        elif data == "group_mgmt": await self.show_group_management(update)
+        elif data == "gm_toggle_link_guard": await self.gm_toggle_link_guard(update)
+        elif data == "gm_toggle_delete_jl": await self.gm_toggle_delete_jl(update)
+        elif data == "gm_toggle_anti_bot": await self.gm_toggle_anti_bot(update)
+        elif data == "gm_ban_words": await self.gm_show_ban_words(update)
+        elif data == "gm_add_ban_word": await self.gm_add_ban_word_start(update, context)
+        elif data.startswith("gm_del_ban_"): await self.gm_del_ban_word(update, int(data.split("_")[3]))
+        elif data == "gm_auto_replies": await self.gm_show_auto_replies(update)
+        elif data == "gm_add_auto_reply": await self.gm_add_auto_reply_start(update, context)
+        elif data.startswith("gm_del_reply_"): await self.gm_del_auto_reply(update, int(data.split("_")[3]))
+        elif data == "gm_welcome": await self.gm_show_welcome_settings(update)
+        elif data == "gm_toggle_welcome":
+            gw = self.db.get_group_welcome(self.bot_id)
+            new_val = 0 if gw.get('enabled') else 1
+            self.db.update_group_welcome(self.bot_id, 'enabled', new_val)
+            await update.callback_query.answer(f"Welcome Message {'ON' if new_val else 'OFF'}")
+            await self.gm_show_welcome_settings(update)
         elif data == "reset_schedule": await self.show_reset_schedule(update)
         elif data == "confirm_reset_schedule": await self.confirm_reset_schedule(update)
         elif data == "manage_recurring": await self.show_manage_recurring(update)
@@ -2460,10 +2484,6 @@ class ChildBot:
             livegram_enabled = self.db.is_livegram_enabled(self.bot_id)
             livegram_btn_text = "🟢 Livegram: ON" if livegram_enabled else "🔴 Livegram: OFF"
         
-            # Check link guard status
-            link_guard_enabled = self.db.is_link_guard_enabled(self.bot_id)
-            link_guard_btn_text = "🟢 Link Guard: ON" if link_guard_enabled else "🔴 Link Guard: OFF"
-            
             # Check forwarder status
             forwarder_config = self.db.get_forwarder_config(self.bot_id)
             forwarder_active = forwarder_config and forwarder_config.get('is_active')
@@ -2488,7 +2508,7 @@ class ChildBot:
                 [InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram"), InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring")],
                 [InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu"), InlineKeyboardButton("📊 Analytics", callback_data="show_analytics")],
                 [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")],
-                [InlineKeyboardButton(link_guard_btn_text, callback_data="toggle_link_guard")]
+                [InlineKeyboardButton("🛡️ Group Management", callback_data="group_mgmt")]
             ]
             
             # Only owner can manage admins
@@ -2651,6 +2671,187 @@ class ChildBot:
         
         await update.callback_query.answer(f"Link Guard is now {status_text}")
         await self.show_admin_settings(update)
+    
+    # === GROUP MANAGEMENT HUB ===
+    
+    async def show_group_management(self, update: Update):
+        """Show group management sub-menu with all group features"""
+        try:
+            # Get all toggle states
+            link_guard = self.db.is_link_guard_enabled(self.bot_id)
+            delete_jl = self.db.is_delete_join_leave_enabled(self.bot_id)
+            anti_bot = self.db.is_anti_bot_enabled(self.bot_id)
+            gw = self.db.get_group_welcome(self.bot_id)
+            ban_words = self.db.get_ban_words(self.bot_id)
+            auto_replies = self.db.get_auto_replies(self.bot_id)
+            
+            lg_icon = "🟢" if link_guard else "🔴"
+            djl_icon = "🟢" if delete_jl else "🔴"
+            ab_icon = "🟢" if anti_bot else "🔴"
+            gw_icon = "🟢" if gw.get('enabled') else "🔴"
+            
+            text = (
+                "🛡️ **GROUP MANAGEMENT**\n\n"
+                "Kawalan penuh untuk group anda.\n"
+                "Toggle ON/OFF dan urus setting group.\n\n"
+                f"🔗 Link Guard: {lg_icon}\n"
+                f"🗑️ Delete Join/Leave: {djl_icon}\n"
+                f"🤖 Anti-Bot: {ab_icon}\n"
+                f"👋 Welcome Message: {gw_icon}\n"
+                f"📝 Ban Words: {len(ban_words)} word(s)\n"
+                f"💬 Auto-Reply: {len(auto_replies)} rule(s)"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton(f"{lg_icon} Link Guard: {'ON' if link_guard else 'OFF'}", callback_data="gm_toggle_link_guard")],
+                [InlineKeyboardButton(f"{djl_icon} Delete Join/Leave: {'ON' if delete_jl else 'OFF'}", callback_data="gm_toggle_delete_jl")],
+                [InlineKeyboardButton(f"{ab_icon} Anti-Bot: {'ON' if anti_bot else 'OFF'}", callback_data="gm_toggle_anti_bot")],
+                [InlineKeyboardButton(f"{gw_icon} Welcome Message", callback_data="gm_welcome")],
+                [InlineKeyboardButton(f"📝 Ban Words ({len(ban_words)})", callback_data="gm_ban_words"),
+                 InlineKeyboardButton(f"💬 Auto-Reply ({len(auto_replies)})", callback_data="gm_auto_replies")],
+                [InlineKeyboardButton("« Back to Admin", callback_data="admin_settings")]
+            ]
+            
+            if update.callback_query:
+                await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+            else:
+                await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception as e:
+            self.logger.error(f"Error in show_group_management: {e}")
+    
+    async def gm_toggle_link_guard(self, update: Update):
+        """Toggle link guard from group management menu"""
+        new_state = self.db.toggle_link_guard(self.bot_id)
+        await update.callback_query.answer(f"Link Guard {'ON' if new_state else 'OFF'}")
+        await self.show_group_management(update)
+    
+    async def gm_toggle_delete_jl(self, update: Update):
+        """Toggle delete join/leave messages"""
+        new_state = self.db.toggle_delete_join_leave(self.bot_id)
+        await update.callback_query.answer(f"Delete Join/Leave {'ON' if new_state else 'OFF'}")
+        await self.show_group_management(update)
+    
+    async def gm_toggle_anti_bot(self, update: Update):
+        """Toggle anti-bot protection"""
+        new_state = self.db.toggle_anti_bot(self.bot_id)
+        await update.callback_query.answer(f"Anti-Bot {'ON' if new_state else 'OFF'}")
+        await self.show_group_management(update)
+    
+    async def gm_show_welcome_settings(self, update: Update):
+        """Show welcome message settings for group"""
+        gw = self.db.get_group_welcome(self.bot_id)
+        enabled = gw.get('enabled', False)
+        text_msg = gw.get('text', '') or 'Not set'
+        autodelete = gw.get('autodelete', 0)
+        
+        toggle_text = "🟢 Welcome: ON" if enabled else "🔴 Welcome: OFF"
+        autodelete_text = f"{autodelete}s" if autodelete else "OFF"
+        
+        text = (
+            "👋 **WELCOME MESSAGE SETTINGS**\n\n"
+            f"📊 Status: {toggle_text}\n"
+            f"📝 Message: _{text_msg[:80]}{'...' if len(text_msg) > 80 else ''}_\n"
+            f"⏱️ Auto-Delete: {autodelete_text}\n\n"
+            "💡 _Gunakan 'Customize Menu > Edit Welcome' untuk set message._"
+        )
+        
+        toggle_btn = "🔴 Turn OFF" if enabled else "🟢 Turn ON"
+        keyboard = [
+            [InlineKeyboardButton(toggle_btn, callback_data="gm_toggle_welcome")],
+            [InlineKeyboardButton("« Back to Group Management", callback_data="group_mgmt")]
+        ]
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    # --- Ban Words ---
+    async def gm_show_ban_words(self, update: Update):
+        """Show list of banned words"""
+        words = self.db.get_ban_words(self.bot_id)
+        
+        if words:
+            text = f"📝 **BAN WORDS** ({len(words)})\n\n"
+            for i, w in enumerate(words, 1):
+                text += f"{i}. `{w['word']}`\n"
+            text += "\n💡 _Message dengan perkataan ini akan auto-delete._"
+        else:
+            text = "📝 **BAN WORDS**\n\n📭 Tiada ban words lagi.\n\n💡 _Tambah perkataan yang nak dilarang dalam group._"
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ Add Ban Word", callback_data="gm_add_ban_word")]
+        ]
+        
+        # Add delete buttons for each word
+        for w in words:
+            keyboard.append([InlineKeyboardButton(f"🗑️ Remove: {w['word']}", callback_data=f"gm_del_ban_{w['id']}")])
+        
+        keyboard.append([InlineKeyboardButton("« Back to Group Management", callback_data="group_mgmt")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def gm_add_ban_word_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Prompt user to enter ban word"""
+        context.user_data['waiting_ban_word'] = True
+        await update.callback_query.message.edit_text(
+            "📝 **ADD BAN WORD**\n\n"
+            "Taip perkataan yang nak dilarang:\n\n"
+            "_Untuk cancel, taip /cancel_",
+            parse_mode='Markdown'
+        )
+    
+    async def gm_del_ban_word(self, update: Update, word_id: int):
+        """Delete a ban word"""
+        success = self.db.remove_ban_word(self.bot_id, word_id)
+        if success:
+            await update.callback_query.answer("✅ Ban word removed!")
+        else:
+            await update.callback_query.answer("❌ Failed to remove", show_alert=True)
+        await self.gm_show_ban_words(update)
+    
+    # --- Auto Replies ---
+    async def gm_show_auto_replies(self, update: Update):
+        """Show list of auto-reply rules"""
+        replies = self.db.get_auto_replies(self.bot_id)
+        
+        if replies:
+            text = f"💬 **AUTO-REPLY** ({len(replies)})\n\n"
+            for i, r in enumerate(replies, 1):
+                trigger = r['trigger_text'][:30]
+                response = r['response_text'][:40]
+                text += f"{i}. 🔑 `{trigger}` → _{response}_\n"
+            text += "\n💡 _Bot akan auto-reply bila detect trigger dalam message._"
+        else:
+            text = "💬 **AUTO-REPLY**\n\n📭 Tiada auto-reply rules.\n\n💡 _Tambah trigger word dan response message._"
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ Add Auto-Reply", callback_data="gm_add_auto_reply")]
+        ]
+        
+        for r in replies:
+            keyboard.append([InlineKeyboardButton(f"🗑️ Remove: {r['trigger_text'][:20]}", callback_data=f"gm_del_reply_{r['id']}")])
+        
+        keyboard.append([InlineKeyboardButton("« Back to Group Management", callback_data="group_mgmt")])
+        
+        await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def gm_add_auto_reply_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Start add auto-reply flow - ask for trigger"""
+        context.user_data['waiting_auto_reply_trigger'] = True
+        await update.callback_query.message.edit_text(
+            "💬 **ADD AUTO-REPLY**\n\n"
+            "**Step 1/2:** Taip *trigger word/phrase*:\n\n"
+            "_Contoh: `harga`, `price`, `hello`_\n\n"
+            "Untuk cancel, taip /cancel",
+            parse_mode='Markdown'
+        )
+    
+    async def gm_del_auto_reply(self, update: Update, reply_id: int):
+        """Delete an auto-reply rule"""
+        success = self.db.remove_auto_reply(self.bot_id, reply_id)
+        if success:
+            await update.callback_query.answer("✅ Auto-reply removed!")
+        else:
+            await update.callback_query.answer("❌ Failed to remove", show_alert=True)
+        await self.gm_show_auto_replies(update)
     
     # --- Admin Management ---
     async def show_manage_admins(self, update: Update):
@@ -3228,7 +3429,31 @@ class ChildBot:
             if update.effective_chat.type not in ['group', 'supergroup']:
                 return
             
-            # Check if feature is enabled
+            # --- DELETE JOIN/LEAVE: Auto-delete join service message ---
+            if self.db.is_delete_join_leave_enabled(self.bot_id):
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    self.logger.error(f"Delete join message error: {e}")
+            
+            # --- ANTI-BOT: Kick bots added by non-creators ---
+            if self.db.is_anti_bot_enabled(self.bot_id):
+                for member in update.message.new_chat_members:
+                    if member.is_bot and member.id != context.bot.id:
+                        try:
+                            await update.effective_chat.ban_member(member.id)
+                            await update.effective_chat.unban_member(member.id)  # Unban so they can be added back by creator
+                            warning = await update.effective_chat.send_message(
+                                f"🤖 **Anti-Bot:** Bot `{member.first_name}` telah dikeluarkan. Hanya admin boleh tambah bot.",
+                                parse_mode='Markdown'
+                            )
+                            await asyncio.sleep(5)
+                            await warning.delete()
+                        except Exception as e:
+                            self.logger.error(f"Anti-bot kick error: {e}")
+                        continue
+            
+            # Check if welcome feature is enabled
             settings = self.db.get_group_welcome(self.bot_id)
             if not settings['enabled']:
                 return
@@ -3287,6 +3512,20 @@ class ChildBot:
         
         except Exception as e:
             self.logger.error(f"handle_new_member error: {e}")
+
+    async def handle_left_member(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Auto-delete leave service messages in groups"""
+        try:
+            if update.effective_chat.type not in ['group', 'supergroup']:
+                return
+            
+            if self.db.is_delete_join_leave_enabled(self.bot_id):
+                try:
+                    await update.message.delete()
+                except Exception as e:
+                    self.logger.error(f"Delete leave message error: {e}")
+        except Exception as e:
+            self.logger.error(f"handle_left_member error: {e}")
 
     async def _auto_delete_message(self, chat_id, message_id, delay_seconds):
         """Delete a message after a delay"""
@@ -4460,6 +4699,42 @@ class ChildBot:
                         self.logger.error(f"Link Guard error: {e}")
                     return
         
+        # --- BAN WORD FILTER: Auto-delete messages with banned words in groups ---
+        if chat.type in ['group', 'supergroup']:
+            text_to_check_bw = update.message.text or update.message.caption or ''
+            if text_to_check_bw:
+                matched_word = self.db.check_ban_words(self.bot_id, text_to_check_bw)
+                if matched_word:
+                    try:
+                        member = await chat.get_member(update.effective_user.id)
+                        is_admin = member.status in ['administrator', 'creator']
+                    except Exception:
+                        is_admin = False
+                    
+                    if not is_admin:
+                        try:
+                            await update.message.delete()
+                            warning = await chat.send_message(
+                                f"⚠️ **{update.effective_user.first_name}**, perkataan `{matched_word}` tidak dibenarkan dalam group ini.",
+                                parse_mode='Markdown'
+                            )
+                            await asyncio.sleep(5)
+                            await warning.delete()
+                        except Exception as e:
+                            self.logger.error(f"Ban word filter error: {e}")
+                        return
+        
+        # --- AUTO-REPLY: Respond to trigger words in groups ---
+        if chat.type in ['group', 'supergroup']:
+            text_to_check_ar = update.message.text or ''
+            if text_to_check_ar:
+                reply_text = self.db.find_auto_reply(self.bot_id, text_to_check_ar)
+                if reply_text:
+                    try:
+                        await update.message.reply_text(reply_text, parse_mode='Markdown')
+                    except Exception as e:
+                        self.logger.error(f"Auto-reply error: {e}")
+        
         # Auto-Discovery: Save group if message is from a group
         if chat.type in ['group', 'supergroup']:
             self.db.upsert_known_group(self.bot_id, chat.id, chat.title)
@@ -4476,6 +4751,66 @@ class ChildBot:
         
         # Handle Add Admin flow
         if await self.add_admin_handler(update, context):
+            return
+        
+        # Handle Ban Word input
+        if context.user_data.get('waiting_ban_word'):
+            word = update.message.text.strip()
+            if word == '/cancel':
+                context.user_data['waiting_ban_word'] = False
+                keyboard = [[InlineKeyboardButton("« Back to Ban Words", callback_data="gm_ban_words")]]
+                await update.message.reply_text("❌ Cancelled.", reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                success = self.db.add_ban_word(self.bot_id, word)
+                context.user_data['waiting_ban_word'] = False
+                if success:
+                    keyboard = [[InlineKeyboardButton("➕ Add More", callback_data="gm_add_ban_word"), InlineKeyboardButton("📝 View All", callback_data="gm_ban_words")]]
+                    await update.message.reply_text(f"✅ Ban word `{word}` added!", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+                else:
+                    keyboard = [[InlineKeyboardButton("« Back", callback_data="gm_ban_words")]]
+                    await update.message.reply_text("❌ Word sudah ada atau error.", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+        
+        # Handle Auto-Reply trigger input (Step 1)
+        if context.user_data.get('waiting_auto_reply_trigger'):
+            trigger = update.message.text.strip()
+            if trigger == '/cancel':
+                context.user_data['waiting_auto_reply_trigger'] = False
+                keyboard = [[InlineKeyboardButton("« Back to Auto-Reply", callback_data="gm_auto_replies")]]
+                await update.message.reply_text("❌ Cancelled.", reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                context.user_data['waiting_auto_reply_trigger'] = False
+                context.user_data['auto_reply_trigger'] = trigger
+                context.user_data['waiting_auto_reply_response'] = True
+                await update.message.reply_text(
+                    f"💬 **Step 2/2:** Trigger: `{trigger}`\n\n"
+                    "Sekarang taip **response message**:",
+                    parse_mode='Markdown'
+                )
+            return
+        
+        # Handle Auto-Reply response input (Step 2)
+        if context.user_data.get('waiting_auto_reply_response'):
+            response = update.message.text.strip()
+            trigger = context.user_data.get('auto_reply_trigger', '')
+            context.user_data['waiting_auto_reply_response'] = False
+            context.user_data.pop('auto_reply_trigger', None)
+            
+            if response == '/cancel':
+                keyboard = [[InlineKeyboardButton("« Back to Auto-Reply", callback_data="gm_auto_replies")]]
+                await update.message.reply_text("❌ Cancelled.", reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                success = self.db.add_auto_reply(self.bot_id, trigger, response)
+                if success:
+                    keyboard = [[InlineKeyboardButton("➕ Add More", callback_data="gm_add_auto_reply"), InlineKeyboardButton("💬 View All", callback_data="gm_auto_replies")]]
+                    await update.message.reply_text(
+                        f"✅ Auto-reply added!\n\n🔑 Trigger: `{trigger}`\n💬 Response: _{response}_",
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='Markdown'
+                    )
+                else:
+                    keyboard = [[InlineKeyboardButton("« Back", callback_data="gm_auto_replies")]]
+                    await update.message.reply_text("❌ Trigger sudah ada atau error.", reply_markup=InlineKeyboardMarkup(keyboard))
             return
         
         # Handle Add Company Button flows (awaiting text/url after callback)

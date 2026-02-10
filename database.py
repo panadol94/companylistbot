@@ -405,6 +405,39 @@ class Database:
                 except Exception:
                     pass  # Column already exists
 
+            # Migration: Group Management columns
+            for col, col_type in [
+                ("anti_bot_enabled", "BOOLEAN DEFAULT 0"),
+                ("delete_join_leave_enabled", "BOOLEAN DEFAULT 0"),
+            ]:
+                try:
+                    cursor.execute(f"ALTER TABLE bots ADD COLUMN {col} {col_type}")
+                except Exception:
+                    pass  # Column already exists
+
+            # Ban Words Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ban_words (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    word TEXT NOT NULL,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE,
+                    UNIQUE(bot_id, word)
+                )
+            ''')
+
+            # Auto Replies Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS auto_replies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    trigger_text TEXT NOT NULL,
+                    response_text TEXT NOT NULL,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE,
+                    UNIQUE(bot_id, trigger_text)
+                )
+            ''')
+
             conn.commit()
             conn.close()
 
@@ -833,6 +866,131 @@ class Database:
         bot = conn.execute("SELECT link_guard_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
         conn.close()
         return bool(bot['link_guard_enabled']) if bot and 'link_guard_enabled' in bot.keys() else False  # Default OFF
+
+    # --- Group Management: Anti-Bot ---
+    def toggle_anti_bot(self, bot_id):
+        """Toggle anti-bot protection on/off"""
+        with self.lock:
+            conn = self.get_connection()
+            current = conn.execute("SELECT anti_bot_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+            new_state = 0 if current and current['anti_bot_enabled'] else 1
+            conn.execute("UPDATE bots SET anti_bot_enabled = ? WHERE id = ?", (new_state, bot_id))
+            conn.commit()
+            conn.close()
+            return new_state
+
+    def is_anti_bot_enabled(self, bot_id):
+        """Check if anti-bot is enabled"""
+        conn = self.get_connection()
+        bot = conn.execute("SELECT anti_bot_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        return bool(bot['anti_bot_enabled']) if bot and 'anti_bot_enabled' in bot.keys() else False
+
+    # --- Group Management: Delete Join/Leave ---
+    def toggle_delete_join_leave(self, bot_id):
+        """Toggle auto-delete join/leave messages"""
+        with self.lock:
+            conn = self.get_connection()
+            current = conn.execute("SELECT delete_join_leave_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+            new_state = 0 if current and current['delete_join_leave_enabled'] else 1
+            conn.execute("UPDATE bots SET delete_join_leave_enabled = ? WHERE id = ?", (new_state, bot_id))
+            conn.commit()
+            conn.close()
+            return new_state
+
+    def is_delete_join_leave_enabled(self, bot_id):
+        """Check if delete join/leave is enabled"""
+        conn = self.get_connection()
+        bot = conn.execute("SELECT delete_join_leave_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        return bool(bot['delete_join_leave_enabled']) if bot and 'delete_join_leave_enabled' in bot.keys() else False
+
+    # --- Group Management: Ban Words ---
+    def add_ban_word(self, bot_id, word):
+        """Add a banned word"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                conn.execute("INSERT INTO ban_words (bot_id, word) VALUES (?, ?)", (bot_id, word.lower().strip()))
+                conn.commit()
+                conn.close()
+                return True
+            except Exception:
+                conn.close()
+                return False  # Duplicate or error
+
+    def remove_ban_word(self, bot_id, word_id):
+        """Remove a banned word by ID"""
+        with self.lock:
+            conn = self.get_connection()
+            result = conn.execute("DELETE FROM ban_words WHERE id = ? AND bot_id = ?", (word_id, bot_id))
+            conn.commit()
+            deleted = result.rowcount > 0
+            conn.close()
+            return deleted
+
+    def get_ban_words(self, bot_id):
+        """Get all banned words for a bot"""
+        conn = self.get_connection()
+        rows = conn.execute("SELECT * FROM ban_words WHERE bot_id = ?", (bot_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def check_ban_words(self, bot_id, text):
+        """Check if text contains any banned words. Returns matched word or None"""
+        words = self.get_ban_words(bot_id)
+        if not words:
+            return None
+        text_lower = text.lower()
+        for w in words:
+            if w['word'] in text_lower:
+                return w['word']
+        return None
+
+    # --- Group Management: Auto Replies ---
+    def add_auto_reply(self, bot_id, trigger_text, response_text):
+        """Add an auto-reply rule"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                conn.execute(
+                    "INSERT INTO auto_replies (bot_id, trigger_text, response_text) VALUES (?, ?, ?)",
+                    (bot_id, trigger_text.lower().strip(), response_text)
+                )
+                conn.commit()
+                conn.close()
+                return True
+            except Exception:
+                conn.close()
+                return False
+
+    def remove_auto_reply(self, bot_id, reply_id):
+        """Remove an auto-reply rule by ID"""
+        with self.lock:
+            conn = self.get_connection()
+            result = conn.execute("DELETE FROM auto_replies WHERE id = ? AND bot_id = ?", (reply_id, bot_id))
+            conn.commit()
+            deleted = result.rowcount > 0
+            conn.close()
+            return deleted
+
+    def get_auto_replies(self, bot_id):
+        """Get all auto-reply rules for a bot"""
+        conn = self.get_connection()
+        rows = conn.execute("SELECT * FROM auto_replies WHERE bot_id = ?", (bot_id,)).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+
+    def find_auto_reply(self, bot_id, text):
+        """Find matching auto-reply for text. Returns response or None"""
+        replies = self.get_auto_replies(bot_id)
+        if not replies:
+            return None
+        text_lower = text.lower()
+        for r in replies:
+            if r['trigger_text'] in text_lower:
+                return r['response_text']
+        return None
 
     def get_referral_settings(self, bot_id):
         """Get referral reward and min withdrawal settings for a bot"""
