@@ -12,6 +12,7 @@ def message_to_html(message) -> str:
     Convert Telegram message with entities to HTML format.
     Preserves bold, italic, underline, strikethrough, code, and links.
     Also handles captions for photo/video messages.
+    All non-entity text is properly HTML-escaped.
     """
     if not message:
         return ""
@@ -26,52 +27,58 @@ def message_to_html(message) -> str:
     if not entities:
         return html_escape(text)
     
-    # Sort entities by offset (reverse order for safe insertion)
-    sorted_entities = sorted(entities, key=lambda e: e.offset, reverse=True)
+    # Sort entities by offset (ascending) to process left-to-right
+    sorted_entities = sorted(entities, key=lambda e: e.offset)
     
-    # Convert text to list for manipulation
-    result = list(text)
+    # Build output left-to-right, escaping ALL gaps between entities
+    parts = []
+    last_end = 0
     
     for entity in sorted_entities:
         start = entity.offset
         end = entity.offset + entity.length
+        
+        # Escape the gap between last entity and this one
+        if start > last_end:
+            parts.append(html_escape(text[last_end:start]))
+        
         content = text[start:end]
         escaped_content = html_escape(content)
         
         if entity.type == "bold":
-            replacement = f"<b>{escaped_content}</b>"
+            parts.append(f"<b>{escaped_content}</b>")
         elif entity.type == "italic":
-            replacement = f"<i>{escaped_content}</i>"
+            parts.append(f"<i>{escaped_content}</i>")
         elif entity.type == "underline":
-            replacement = f"<u>{escaped_content}</u>"
+            parts.append(f"<u>{escaped_content}</u>")
         elif entity.type == "strikethrough":
-            replacement = f"<s>{escaped_content}</s>"
+            parts.append(f"<s>{escaped_content}</s>")
         elif entity.type == "code":
-            replacement = f"<code>{escaped_content}</code>"
+            parts.append(f"<code>{escaped_content}</code>")
         elif entity.type == "pre":
-            replacement = f"<pre>{escaped_content}</pre>"
+            parts.append(f"<pre>{escaped_content}</pre>")
         elif entity.type == "url":
-            # Plain URL auto-detected by Telegram - wrap in anchor tag
-            replacement = f'<a href="{escaped_content}">{escaped_content}</a>'
+            # Plain URL auto-detected by Telegram - keep as clickable link
+            parts.append(f'<a href="{escaped_content}">{escaped_content}</a>')
         elif entity.type == "text_link":
             url = entity.url or ""
-            replacement = f'<a href="{html_escape(url)}">{escaped_content}</a>'
+            parts.append(f'<a href="{html_escape(url)}">{escaped_content}</a>')
         elif entity.type == "text_mention":
             user_id = entity.user.id if entity.user else ""
-            replacement = f'<a href="tg://user?id={user_id}">{escaped_content}</a>'
+            parts.append(f'<a href="tg://user?id={user_id}">{escaped_content}</a>')
         elif entity.type == "spoiler":
-            replacement = f"<tg-spoiler>{escaped_content}</tg-spoiler>"
+            parts.append(f"<tg-spoiler>{escaped_content}</tg-spoiler>")
         else:
-            # For other entity types, just escape the content
-            replacement = escaped_content
-            continue  # Skip if no formatting needed
+            # Unknown entity type - just escape the content
+            parts.append(escaped_content)
         
-        # Replace the original content with formatted version
-        result[start:end] = list(replacement)
+        last_end = end
     
-    # Join and escape remaining non-entity text
-    final_text = ''.join(result)
-    return final_text
+    # Escape any remaining text after the last entity
+    if last_end < len(text):
+        parts.append(html_escape(text[last_end:]))
+    
+    return ''.join(parts)
 
 # States for Admin Add/Edit Company
 NAME, DESC, MEDIA, BUTTON_TEXT, BUTTON_URL = range(5)
@@ -680,8 +687,9 @@ class ChildBot:
         is_admin = update.effective_user.id == bot_data['owner_id']
         
         # Build caption - Using HTML format to support rich text formatting in descriptions
+        escaped_name = html_escape(comp['name'])
         caption = (
-            f"<b>{comp['name']}</b>\n\n"
+            f"<b>{escaped_name}</b>\n\n"
             f"{comp['description']}"
         )
         
