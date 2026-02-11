@@ -688,7 +688,7 @@ class ChildBot:
         
         # Build caption - Using HTML format to support rich text formatting in descriptions
         escaped_name = html_escape(comp['name'])
-        caption = (
+        full_caption = (
             f"<b>{escaped_name}</b>\n\n"
             f"{comp['description']}"
         )
@@ -725,11 +725,19 @@ class ChildBot:
         
         keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
         
+        # Check if caption exceeds Telegram's 1024 character limit for media captions
+        # If so, send media with short caption + full text as separate message
+        caption_too_long = len(full_caption) > 1024
+        
+        if caption_too_long:
+            media_caption = f"<b>{escaped_name}</b>"  # Short caption for media
+        else:
+            media_caption = full_caption  # Full caption fits
+        
         # Check Media
         import os
         media_path = comp['media_file_id']
         is_local_file = media_path and (media_path.startswith('/') or os.path.sep in media_path) and os.path.exists(media_path)
-
 
         try:
              # Helper to get InputMedia
@@ -738,11 +746,14 @@ class ChildBot:
                  media_source = file_obj if file_obj else media_path
                  
                  if comp['media_type'] == 'video':
-                     return InputMediaVideo(media=media_source, caption=caption, parse_mode='HTML')
+                     return InputMediaVideo(media=media_source, caption=media_caption, parse_mode='HTML')
                  elif comp['media_type'] == 'animation':
-                     return InputMediaAnimation(media=media_source, caption=caption, parse_mode='HTML')
+                     return InputMediaAnimation(media=media_source, caption=media_caption, parse_mode='HTML')
                  else:
-                     return InputMediaPhoto(media=media_source, caption=caption, parse_mode='HTML')
+                     return InputMediaPhoto(media=media_source, caption=media_caption, parse_mode='HTML')
+
+            # Determine keyboard placement: on media if caption fits, on text message if split
+            media_keyboard = None if caption_too_long else InlineKeyboardMarkup(keyboard)
 
             # EXECUTION BLOCK
             if is_local_file:
@@ -750,14 +761,13 @@ class ChildBot:
                 with open(media_path, 'rb') as f:
                     media_obj = get_input_media(f)
                     
-                    # Try edit if possible
-                    if update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
+                    # Try edit if possible (only when caption fits - not split mode)
+                    if not caption_too_long and update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
                          try:
-                             await update.callback_query.message.edit_media(media=media_obj, reply_markup=InlineKeyboardMarkup(keyboard))
+                             await update.callback_query.message.edit_media(media=media_obj, reply_markup=media_keyboard)
                              return 
                          except Exception as e:
                              if "Message is not modified" in str(e): return
-                             # If edit fails (e.g. type mismatch), falltrough to send
                              pass 
                              
                     # Fallback: Delete + Send
@@ -765,22 +775,20 @@ class ChildBot:
                         try: await update.callback_query.message.delete()
                         except Exception: pass
                     
-                    # Re-open for send (since edit might have consumed cursor? No, but safe to match logic)
-                    # Actually valid file handle needed.
                     f.seek(0)
                     if comp['media_type'] == 'video':
-                        await update.effective_chat.send_video(video=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                        await update.effective_chat.send_video(video=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
                     elif comp['media_type'] == 'animation':
-                         await update.effective_chat.send_animation(animation=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                         await update.effective_chat.send_animation(animation=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
                     else:
-                         await update.effective_chat.send_photo(photo=f, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                         await update.effective_chat.send_photo(photo=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
             else:
                  # Remote File ID
                  media_obj = get_input_media(None)
                  
-                 if update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
+                 if not caption_too_long and update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
                      try:
-                         await update.callback_query.message.edit_media(media=media_obj, reply_markup=InlineKeyboardMarkup(keyboard))
+                         await update.callback_query.message.edit_media(media=media_obj, reply_markup=media_keyboard)
                          return
                      except Exception as e:
                          if "Message is not modified" in str(e): return
@@ -791,19 +799,27 @@ class ChildBot:
                      except Exception: pass
                  
                  if comp['media_type'] == 'video':
-                     await update.effective_chat.send_video(video=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                     await update.effective_chat.send_video(video=media_path, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
                  elif comp['media_type'] == 'animation':
-                     await update.effective_chat.send_animation(animation=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                     await update.effective_chat.send_animation(animation=media_path, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
                  else:
-                     await update.effective_chat.send_photo(photo=media_path, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                     await update.effective_chat.send_photo(photo=media_path, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
+
+            # If caption was too long, send full text as a separate message (4096 char limit)
+            if caption_too_long:
+                await update.effective_chat.send_message(
+                    full_caption,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='HTML'
+                )
 
         except Exception as e:
              self.logger.error(f"Media error in show_page: {e}")
-             # Absolute Fallback
+             # Absolute Fallback - send as text message (4096 char limit, no truncation)
              if update.callback_query:
                  try: await update.callback_query.message.delete()
                  except Exception: pass
-             await update.effective_chat.send_message(f"{caption}\n\n(Media Error)", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+             await update.effective_chat.send_message(full_caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     async def view_company(self, update: Update, comp_id: int):
         # Redirect to Carousel View (find index)
