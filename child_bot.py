@@ -688,9 +688,24 @@ class ChildBot:
         
         # Build caption - Using HTML format to support rich text formatting in descriptions
         escaped_name = html_escape(comp['name'])
+        
+        # Auto-link plain URLs in description that aren't already in <a> tags
+        # This handles legacy descriptions saved as raw text before message_to_html
+        desc = comp['description'] or ''
+        import re
+        # Only auto-link URLs NOT already inside an <a> tag
+        if '<a ' not in desc:
+            # Description is plain text (legacy) - escape HTML and auto-link URLs
+            desc = html_escape(desc)
+            desc = re.sub(
+                r'(https?://[^\s<>]+|(?:www\.|t\.me/|wasap\.my/)[^\s<>]+)',
+                r'<a href="\1">\1</a>',
+                desc
+            )
+        
         full_caption = (
             f"<b>{escaped_name}</b>\n\n"
-            f"{comp['description']}"
+            f"{desc}"
         )
         
         # Build keyboard
