@@ -59,7 +59,9 @@ def message_to_html(message) -> str:
             parts.append(f"<pre>{escaped_content}</pre>")
         elif entity.type == "url":
             # Plain URL auto-detected by Telegram - keep as clickable link
-            parts.append(f'<a href="{escaped_content}">{escaped_content}</a>')
+            # Add https:// if no protocol (Telegram requires protocol in href)
+            href_url = escaped_content if escaped_content.startswith('http') else f'https://{escaped_content}'
+            parts.append(f'<a href="{href_url}">{escaped_content}</a>')
         elif entity.type == "text_link":
             url = entity.url or ""
             parts.append(f'<a href="{html_escape(url)}">{escaped_content}</a>')
@@ -697,9 +699,13 @@ class ChildBot:
         if '<a ' not in desc:
             # Description is plain text (legacy) - escape HTML and auto-link URLs
             desc = html_escape(desc)
+            def _add_link(m):
+                url = m.group(1)
+                href = url if url.startswith('http') else f'https://{url}'
+                return f'<a href="{href}">{url}</a>'
             desc = re.sub(
                 r'(https?://[^\s<>]+|(?:www\.|t\.me/|wasap\.my/)[^\s<>]+)',
-                r'<a href="\1">\1</a>',
+                _add_link,
                 desc
             )
         
