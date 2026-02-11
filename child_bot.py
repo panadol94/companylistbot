@@ -2750,9 +2750,9 @@ class ChildBot:
         text = (
             "👋 **WELCOME MESSAGE SETTINGS**\n\n"
             f"📊 Status: {toggle_text}\n"
-            f"📝 Message: _{text_msg[:80]}{'...' if len(text_msg) > 80 else ''}_\n"
+            f"📝 Message: {text_msg[:80]}{'...' if len(text_msg) > 80 else ''}\n"
             f"⏱️ Auto-Delete: {autodelete_text}\n\n"
-            "💡 _Gunakan 'Customize Menu > Edit Welcome' untuk set message._"
+            "💡 Gunakan 'Customize Menu > Edit Welcome' untuk set message."
         )
         
         toggle_btn = "🔴 Turn OFF" if enabled else "🟢 Turn ON"
@@ -2772,9 +2772,9 @@ class ChildBot:
             text = f"📝 **BAN WORDS** ({len(words)})\n\n"
             for i, w in enumerate(words, 1):
                 text += f"{i}. `{w['word']}`\n"
-            text += "\n💡 _Message dengan perkataan ini akan auto-delete._"
+            text += "\n💡 Message dengan perkataan ini akan auto-delete."
         else:
-            text = "📝 **BAN WORDS**\n\n📭 Tiada ban words lagi.\n\n💡 _Tambah perkataan yang nak dilarang dalam group._"
+            text = "📝 **BAN WORDS**\n\n📭 Tiada ban words lagi.\n\n💡 Tambah perkataan yang nak dilarang dalam group."
         
         keyboard = [
             [InlineKeyboardButton("➕ Add Ban Word", callback_data="gm_add_ban_word")]
@@ -2794,7 +2794,7 @@ class ChildBot:
         await update.callback_query.message.edit_text(
             "📝 **ADD BAN WORD**\n\n"
             "Taip perkataan yang nak dilarang:\n\n"
-            "_Untuk cancel, taip /cancel_",
+            "Untuk cancel, taip /cancel",
             parse_mode='Markdown'
         )
     
@@ -2817,10 +2817,10 @@ class ChildBot:
             for i, r in enumerate(replies, 1):
                 trigger = r['trigger_text'][:30]
                 response = r['response_text'][:40]
-                text += f"{i}. 🔑 `{trigger}` → _{response}_\n"
-            text += "\n💡 _Bot akan auto-reply bila detect trigger dalam message._"
+                text += f"{i}. 🔑 `{trigger}` → {response}\n"
+            text += "\n💡 Bot akan auto-reply bila detect trigger dalam message."
         else:
-            text = "💬 **AUTO-REPLY**\n\n📭 Tiada auto-reply rules.\n\n💡 _Tambah trigger word dan response message._"
+            text = "💬 **AUTO-REPLY**\n\n📭 Tiada auto-reply rules.\n\n💡 Tambah trigger word dan response message."
         
         keyboard = [
             [InlineKeyboardButton("➕ Add Auto-Reply", callback_data="gm_add_auto_reply")]
@@ -2838,8 +2838,8 @@ class ChildBot:
         context.user_data['waiting_auto_reply_trigger'] = True
         await update.callback_query.message.edit_text(
             "💬 **ADD AUTO-REPLY**\n\n"
-            "**Step 1/2:** Taip *trigger word/phrase*:\n\n"
-            "_Contoh: `harga`, `price`, `hello`_\n\n"
+            "**Step 1/2:** Taip **trigger word/phrase**:\n\n"
+            "Contoh: `harga`, `price`, `hello`\n\n"
             "Untuk cancel, taip /cancel",
             parse_mode='Markdown'
         )
@@ -4731,7 +4731,7 @@ class ChildBot:
                 reply_text = self.db.find_auto_reply(self.bot_id, text_to_check_ar)
                 if reply_text:
                     try:
-                        await update.message.reply_text(reply_text, parse_mode='Markdown')
+                        await update.message.reply_text(reply_text)
                     except Exception as e:
                         self.logger.error(f"Auto-reply error: {e}")
         
@@ -4804,7 +4804,7 @@ class ChildBot:
                 if success:
                     keyboard = [[InlineKeyboardButton("➕ Add More", callback_data="gm_add_auto_reply"), InlineKeyboardButton("💬 View All", callback_data="gm_auto_replies")]]
                     await update.message.reply_text(
-                        f"✅ Auto-reply added!\n\n🔑 Trigger: `{trigger}`\n💬 Response: _{response}_",
+                        f"✅ Auto-reply added!\n\n🔑 Trigger: `{trigger}`\n💬 Response: {response}",
                         reply_markup=InlineKeyboardMarkup(keyboard),
                         parse_mode='Markdown'
                     )
