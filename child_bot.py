@@ -50,6 +50,9 @@ def message_to_html(message) -> str:
             replacement = f"<code>{escaped_content}</code>"
         elif entity.type == "pre":
             replacement = f"<pre>{escaped_content}</pre>"
+        elif entity.type == "url":
+            # Plain URL auto-detected by Telegram - wrap in anchor tag
+            replacement = f'<a href="{escaped_content}">{escaped_content}</a>'
         elif entity.type == "text_link":
             url = entity.url or ""
             replacement = f'<a href="{html_escape(url)}">{escaped_content}</a>'
