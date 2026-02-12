@@ -3711,10 +3711,38 @@ class ChildBot:
             await update.callback_query.message.chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     # --- Group Welcome Setup (Admin) ---
+    def _get_gw_settings(self, context):
+        """Get welcome settings based on current gw_group_id context"""
+        group_id = context.user_data.get('gw_group_id')
+        if group_id:
+            settings = self.db.get_per_group_welcome(self.bot_id, group_id)
+            if settings:
+                return settings
+            # Group selected but no per-group settings yet, return defaults
+            return {'enabled': True, 'text': '', 'media': None, 'media_type': None, 'autodelete': 0}
+        return self.db.get_group_welcome(self.bot_id)
+
+    def _save_gw_setting(self, context, field, value):
+        """Save welcome setting to per-group or default"""
+        group_id = context.user_data.get('gw_group_id')
+        if group_id:
+            self.db.upsert_per_group_welcome(self.bot_id, group_id, field, value)
+        else:
+            self.db.update_group_welcome(self.bot_id, field, value)
+
     async def gw_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show group welcome settings menu"""
+        """Show group welcome settings menu - with group selection"""
         await update.callback_query.answer()
-        settings = self.db.get_group_welcome(self.bot_id)
+        
+        # Check if a group is already selected
+        group_id = context.user_data.get('gw_group_id')
+        group_name = context.user_data.get('gw_group_name', 'Default')
+        
+        # If no group selected yet, show group selection
+        if not context.user_data.get('gw_group_selected'):
+            return await self._gw_show_group_list(update, context)
+        
+        settings = self._get_gw_settings(context)
         
         status = "🟢 ON" if settings['enabled'] else "🔴 OFF"
         
@@ -3731,8 +3759,10 @@ class ChildBot:
         text_preview = settings['text'][:50] + "..." if len(settings['text']) > 50 else (settings['text'] or "❌ Belum ditetapkan")
         media_status = f"✅ {settings['media_type'] or ''}".strip() if settings['media'] else "❌ Tiada"
         
+        header = f"🌍 **{group_name}**" if group_id else "🌐 **Default (Semua Group)**"
         text = (
-            f"🎉 **GROUP WELCOME MESSAGE**\n\n"
+            f"🎉 **GROUP WELCOME MESSAGE**\n"
+            f"📍 {header}\n\n"
             f"Status: {status}\n"
             f"Auto-Delete: **{ad_text}**\n"
             f"Media: {media_status}\n\n"
@@ -3746,8 +3776,13 @@ class ChildBot:
             [InlineKeyboardButton("⏱️ Auto-Delete", callback_data="gw_autodelete"), InlineKeyboardButton(toggle_text, callback_data="gw_toggle")],
             [InlineKeyboardButton("🗑️ Remove Media", callback_data="gw_remove_media")],
             [InlineKeyboardButton("👁️ Preview", callback_data="gw_preview")],
+            [InlineKeyboardButton("🔄 Tukar Group", callback_data="gw_select_group")],
             [InlineKeyboardButton("« Back", callback_data="customize_menu")]
         ]
+        
+        # Add "Reset to Default" button for per-group settings
+        if group_id:
+            keyboard.insert(-1, [InlineKeyboardButton("🔃 Reset ke Default", callback_data="gw_reset_to_default")])
         
         try:
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
@@ -3760,15 +3795,74 @@ class ChildBot:
         
         return GW_MENU
 
+    async def _gw_show_group_list(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show list of groups for welcome message configuration"""
+        groups = self.db.get_known_groups(self.bot_id)
+        
+        keyboard = []
+        # Default option (applies to all groups without specific settings)
+        keyboard.append([InlineKeyboardButton("🌐 Default (Semua Group)", callback_data="gw_group_default")])
+        
+        for g in groups:
+            name = g.get('group_name') or f"Group {g['group_id']}"
+            # Check if has per-group setting
+            per_group = self.db.get_per_group_welcome(self.bot_id, g['group_id'])
+            indicator = " ✅" if per_group else ""
+            keyboard.append([InlineKeyboardButton(f"💬 {name}{indicator}", callback_data=f"gw_group_{g['group_id']}")])
+        
+        keyboard.append([InlineKeyboardButton("« Back", callback_data="customize_menu")])
+        
+        text = (
+            "🎉 **GROUP WELCOME MESSAGE**\n\n"
+            "Pilih group yang nak di-customize:\n\n"
+            "✅ = Sudah ada custom welcome\n"
+            "🌐 Default = Untuk group tanpa custom setting"
+        )
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        return GW_MENU
+
     async def gw_handle_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle group welcome menu button clicks"""
         await update.callback_query.answer()
         data = update.callback_query.data
         
-        if data == "gw_toggle":
-            settings = self.db.get_group_welcome(self.bot_id)
+        # --- Group Selection ---
+        if data == "gw_group_default":
+            context.user_data['gw_group_id'] = None
+            context.user_data['gw_group_name'] = 'Default'
+            context.user_data['gw_group_selected'] = True
+            return await self.gw_menu(update, context)
+        
+        elif data.startswith("gw_group_"):
+            group_id = int(data.replace("gw_group_", ""))
+            groups = self.db.get_known_groups(self.bot_id)
+            group_name = next((g.get('group_name', f"Group {group_id}") for g in groups if g['group_id'] == group_id), f"Group {group_id}")
+            context.user_data['gw_group_id'] = group_id
+            context.user_data['gw_group_name'] = group_name
+            context.user_data['gw_group_selected'] = True
+            return await self.gw_menu(update, context)
+        
+        elif data == "gw_select_group":
+            context.user_data['gw_group_selected'] = False
+            return await self._gw_show_group_list(update, context)
+        
+        elif data == "gw_reset_to_default":
+            group_id = context.user_data.get('gw_group_id')
+            if group_id:
+                self.db.delete_per_group_welcome(self.bot_id, group_id)
+                await update.callback_query.answer("✅ Reset ke default!", show_alert=True)
+            return await self.gw_menu(update, context)
+        
+        # --- Settings Actions ---
+        elif data == "gw_toggle":
+            settings = self._get_gw_settings(context)
             new_state = 0 if settings['enabled'] else 1
-            self.db.update_group_welcome(self.bot_id, 'enabled', new_state)
+            self._save_gw_setting(context, 'enabled', new_state)
             return await self.gw_menu(update, context)
         
         elif data == "gw_edit_text":
@@ -3797,8 +3891,8 @@ class ChildBot:
             return GW_MEDIA
         
         elif data == "gw_remove_media":
-            self.db.update_group_welcome(self.bot_id, 'media', None)
-            self.db.update_group_welcome(self.bot_id, 'media_type', None)
+            self._save_gw_setting(context, 'media', None)
+            self._save_gw_setting(context, 'media_type', None)
             await update.callback_query.answer("✅ Media dibuang!", show_alert=True)
             return await self.gw_menu(update, context)
         
@@ -3818,24 +3912,25 @@ class ChildBot:
         
         elif data.startswith("gw_ad_"):
             seconds = int(data.replace("gw_ad_", ""))
-            self.db.update_group_welcome(self.bot_id, 'autodelete', seconds)
+            self._save_gw_setting(context, 'autodelete', seconds)
             label = "OFF" if seconds == 0 else f"{seconds}s" if seconds < 60 else f"{seconds // 60} min" if seconds < 3600 else "1 jam"
             await update.callback_query.answer(f"✅ Auto-delete: {label}", show_alert=True)
             return await self.gw_menu(update, context)
         
         elif data == "gw_preview":
-            settings = self.db.get_group_welcome(self.bot_id)
+            settings = self._get_gw_settings(context)
             if not settings['text'] and not settings['media']:
                 await update.callback_query.answer("❌ Tiada text atau media ditetapkan!", show_alert=True)
                 return GW_MENU
             
             # Build preview with sample variables
             user = update.effective_user
+            group_name = context.user_data.get('gw_group_name', 'Test Group')
             preview_text = self._substitute_welcome_vars(
                 settings['text'],
                 user_name=user.first_name,
                 username=user.username,
-                group_name="Test Group",
+                group_name=group_name,
                 user_id=user.id
             )
             
@@ -3875,7 +3970,7 @@ class ChildBot:
     async def gw_save_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Save group welcome text"""
         formatted_text = message_to_html(update.message)
-        self.db.update_group_welcome(self.bot_id, 'text', formatted_text)
+        self._save_gw_setting(context, 'text', formatted_text)
         
         await update.message.reply_text(
             "✅ Welcome text berjaya dikemaskini!\n\n"
@@ -3914,8 +4009,8 @@ class ChildBot:
             return GW_MEDIA
         
         await file_obj.download_to_drive(file_path)
-        self.db.update_group_welcome(self.bot_id, 'media', file_path)
-        self.db.update_group_welcome(self.bot_id, 'media_type', media_type)
+        self._save_gw_setting(context, 'media', file_path)
+        self._save_gw_setting(context, 'media_type', media_type)
         
         await update.message.reply_text("✅ Welcome media berjaya dikemaskini!")
         
@@ -3966,8 +4061,13 @@ class ChildBot:
                             self.logger.error(f"Anti-bot kick error: {e}")
                         continue
             
-            # Check if welcome feature is enabled
-            settings = self.db.get_group_welcome(self.bot_id)
+            # Check per-group welcome first, fallback to default
+            group_id = update.effective_chat.id
+            settings = self.db.get_per_group_welcome(self.bot_id, group_id)
+            if settings is None:
+                # No per-group setting, use default bot-level welcome
+                settings = self.db.get_group_welcome(self.bot_id)
+            
             if not settings['enabled']:
                 return
             

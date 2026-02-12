@@ -244,6 +244,23 @@ class Database:
                 )
             ''')
 
+            # 7b. Per-Group Welcome Messages Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS group_welcomes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    group_id INTEGER NOT NULL,
+                    enabled BOOLEAN DEFAULT 1,
+                    text TEXT DEFAULT '',
+                    media TEXT DEFAULT NULL,
+                    media_type TEXT DEFAULT NULL,
+                    autodelete INTEGER DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE,
+                    UNIQUE(bot_id, group_id)
+                )
+            ''')
+
             # 8. Menu Buttons Table (Custom buttons for /start menu)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS menu_buttons (
@@ -652,6 +669,72 @@ class Database:
             conn.commit()
             conn.close()
             return True
+
+    # --- Per-Group Welcome Methods ---
+    def get_per_group_welcome(self, bot_id, group_id):
+        """Get welcome settings for a specific group. Returns None if no per-group setting exists."""
+        conn = self.get_connection()
+        row = conn.execute(
+            "SELECT * FROM group_welcomes WHERE bot_id = ? AND group_id = ?",
+            (bot_id, group_id)
+        ).fetchone()
+        conn.close()
+        if row:
+            return {
+                'id': row['id'],
+                'enabled': bool(row['enabled']),
+                'text': row['text'] or '',
+                'media': row['media'],
+                'media_type': row['media_type'],
+                'autodelete': row['autodelete'] or 0,
+            }
+        return None
+
+    def upsert_per_group_welcome(self, bot_id, group_id, field, value):
+        """Create or update a per-group welcome field"""
+        with self.lock:
+            conn = self.get_connection()
+            # Check if record exists
+            exists = conn.execute(
+                "SELECT id FROM group_welcomes WHERE bot_id = ? AND group_id = ?",
+                (bot_id, group_id)
+            ).fetchone()
+            if not exists:
+                conn.execute(
+                    "INSERT INTO group_welcomes (bot_id, group_id) VALUES (?, ?)",
+                    (bot_id, group_id)
+                )
+            conn.execute(
+                f"UPDATE group_welcomes SET {field} = ? WHERE bot_id = ? AND group_id = ?",
+                (value, bot_id, group_id)
+            )
+            conn.commit()
+            conn.close()
+            return True
+
+    def delete_per_group_welcome(self, bot_id, group_id):
+        """Delete per-group welcome settings (will fallback to default)"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "DELETE FROM group_welcomes WHERE bot_id = ? AND group_id = ?",
+                (bot_id, group_id)
+            )
+            conn.commit()
+            conn.close()
+            return True
+
+    def get_all_group_welcomes(self, bot_id):
+        """Get all per-group welcome settings for a bot"""
+        conn = self.get_connection()
+        rows = conn.execute(
+            "SELECT gw.*, bkg.group_name FROM group_welcomes gw "
+            "LEFT JOIN bot_known_groups bkg ON gw.bot_id = bkg.bot_id AND gw.group_id = bkg.group_id "
+            "WHERE gw.bot_id = ?",
+            (bot_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
 
     def get_last_withdrawal(self, bot_id, user_id):
         """Get most recent withdrawal for cooldown check"""
