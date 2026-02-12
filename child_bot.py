@@ -797,7 +797,6 @@ class ChildBot:
         
         # Admin-only buttons
         if is_admin:
-            keyboard.append([InlineKeyboardButton("📖 VIEW DETAILS", callback_data=f"view_{comp['id']}")])
             keyboard.append([InlineKeyboardButton("✏️ EDIT COMPANY", callback_data=f"edit_company_{comp['id']}")])
         
         keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
