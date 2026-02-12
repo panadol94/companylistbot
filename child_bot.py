@@ -171,6 +171,8 @@ class ChildBot:
     async def _register_commands(self):
         """Register bot commands so users see them in the '/' menu"""
         try:
+            referral_enabled = self.db.is_referral_enabled(self.bot_id)
+            
             # Commands for private chats
             private_commands = [
                 BotCommand("start", "Mulakan bot"),
@@ -178,8 +180,9 @@ class ChildBot:
                 BotCommand("list", "Lihat carousel company"),
                 BotCommand("menu", "Papar menu utama"),
                 BotCommand("4d", "4D Analyzer"),
-                BotCommand("wallet", "Dompet saya"),
             ]
+            if referral_enabled:
+                private_commands.append(BotCommand("wallet", "Dompet saya"))
             await self.app.bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
 
             # Commands for group chats (exclude wallet/admin stuff)
