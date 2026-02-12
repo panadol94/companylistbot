@@ -3132,11 +3132,11 @@ class ChildBot:
     
     async def admin_approve_withdrawal(self, update: Update, withdrawal_id: int):
         """Approve withdrawal and notify user"""
-        await update.callback_query.answer()  # Acknowledge button click immediately
         success = self.db.update_withdrawal_status(withdrawal_id, 'APPROVED', update.effective_user.id)
         
         if success:
             wd = self.db.get_withdrawal_by_id(withdrawal_id)
+            notified = False
             if wd:
                 try:
                     await self.app.bot.send_message(
@@ -3150,11 +3150,12 @@ class ChildBot:
                         ),
                         parse_mode='HTML'
                     )
+                    notified = True
                 except Exception as e:
-
-                    pass  # Silently handle exception
+                    self.logger.error(f"Failed to notify user {wd['user_id']} about approval: {e}")
             
-            await update.callback_query.answer("✅ Approved!", show_alert=True)
+            alert = "✅ Approved & user notified!" if notified else "✅ Approved! (⚠️ User notification failed)"
+            await update.callback_query.answer(alert, show_alert=True)
         else:
             await update.callback_query.answer("❌ Failed to approve", show_alert=True)
         
@@ -3162,11 +3163,11 @@ class ChildBot:
     
     async def admin_reject_withdrawal(self, update: Update, withdrawal_id: int):
         """Reject withdrawal, refund balance, and notify user"""
-        await update.callback_query.answer()  # Acknowledge button click immediately
         success = self.db.update_withdrawal_status(withdrawal_id, 'REJECTED', update.effective_user.id)
         
         if success:
             wd = self.db.get_withdrawal_by_id(withdrawal_id)
+            notified = False
             if wd:
                 try:
                     await self.app.bot.send_message(
@@ -3178,11 +3179,12 @@ class ChildBot:
                         ),
                         parse_mode='HTML'
                     )
+                    notified = True
                 except Exception as e:
-
-                    pass  # Silently handle exception
+                    self.logger.error(f"Failed to notify user {wd['user_id']} about rejection: {e}")
             
-            await update.callback_query.answer("❌ Rejected & Refunded", show_alert=True)
+            alert = "❌ Rejected & Refunded! User notified." if notified else "❌ Rejected & Refunded! (⚠️ User notification failed)"
+            await update.callback_query.answer(alert, show_alert=True)
         else:
             await update.callback_query.answer("❌ Failed to reject", show_alert=True)
         
