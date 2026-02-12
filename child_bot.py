@@ -2897,6 +2897,10 @@ class ChildBot:
         await update.callback_query.answer()  # Acknowledge button click immediately
         data = update.callback_query.data
         
+        if data == "cancel":
+            await update.callback_query.message.edit_text("❌ Cancelled.")
+            return ConversationHandler.END
+        
         if data == "rr_global":
             text = (
                 "⚠️ **WARNING: GLOBAL RESET**\n\n"
