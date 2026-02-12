@@ -5276,7 +5276,7 @@ class ChildBot:
                 reply_text = self.db.find_auto_reply(self.bot_id, text_to_check_ar)
                 if reply_text:
                     try:
-                        await update.message.reply_text(reply_text)
+                        await update.message.reply_text(reply_text, parse_mode='HTML')
                     except Exception as e:
                         self.logger.error(f"Auto-reply error: {e}")
         
