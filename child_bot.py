@@ -2,7 +2,7 @@ import logging
 import datetime
 import re
 import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, InputMediaAnimation
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, InputMediaAnimation, BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatMemberHandler
 from telegram.error import TimedOut, NetworkError
 from database import Database
@@ -153,6 +153,8 @@ class ChildBot:
         """Prepare bot application but do not start polling (Webhook mode)"""
         await self.app.initialize()
         await self.app.start()
+        # Register bot commands for menu visibility
+        await self._register_commands()
         # Reload recurring broadcast jobs from database
         self.reload_recurring_jobs()
 
@@ -165,6 +167,32 @@ class ChildBot:
                 self.logger.info(f"Reloaded recurring job: recurring_{b['id']}")
             except Exception as e:
                 self.logger.error(f"Failed to reload recurring job {b['id']}: {e}")
+
+    async def _register_commands(self):
+        """Register bot commands so users see them in the '/' menu"""
+        try:
+            # Commands for private chats
+            private_commands = [
+                BotCommand("start", "Mulakan bot"),
+                BotCommand("company", "Senarai company"),
+                BotCommand("list", "Lihat carousel company"),
+                BotCommand("menu", "Papar menu utama"),
+                BotCommand("4d", "4D Analyzer"),
+                BotCommand("wallet", "Dompet saya"),
+            ]
+            await self.app.bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
+
+            # Commands for group chats (exclude wallet/admin stuff)
+            group_commands = [
+                BotCommand("list", "Lihat senarai company"),
+                BotCommand("company", "Menu utama company"),
+                BotCommand("menu", "Papar menu utama"),
+                BotCommand("4d", "4D Analyzer"),
+            ]
+            await self.app.bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
+            self.logger.info("✅ Bot commands registered")
+        except Exception as e:
+            self.logger.warning(f"Failed to register commands: {e}")
 
     async def stop(self):
         await self.app.stop()
