@@ -10,14 +10,22 @@ from html import escape as html_escape
 def message_to_html(message) -> str:
     """
     Convert Telegram message with entities to HTML format.
-    Preserves bold, italic, underline, strikethrough, code, and links.
-    Also handles captions for photo/video messages.
-    All non-entity text is properly HTML-escaped.
+    Uses python-telegram-bot's built-in text_html/caption_html which
+    correctly handles nested/overlapping entities (e.g. bold + text_link).
     """
     if not message:
         return ""
     
-    # Support both text and caption (for media messages)
+    # Use built-in HTML conversion (handles nested entities correctly)
+    try:
+        if message.text_html:
+            return message.text_html
+        if message.caption_html:
+            return message.caption_html
+    except Exception:
+        pass
+    
+    # Fallback: manual conversion for edge cases
     text = message.text or message.caption or ""
     entities = message.entities or message.caption_entities or []
     
@@ -37,6 +45,10 @@ def message_to_html(message) -> str:
     for entity in sorted_entities:
         start = entity.offset
         end = entity.offset + entity.length
+        
+        # Skip if this entity overlaps with a previously processed one
+        if start < last_end:
+            continue
         
         # Escape the gap between last entity and this one
         if start > last_end:
@@ -58,8 +70,6 @@ def message_to_html(message) -> str:
         elif entity.type == "pre":
             parts.append(f"<pre>{escaped_content}</pre>")
         elif entity.type == "url":
-            # Plain URL auto-detected by Telegram - keep as clickable link
-            # Add https:// if no protocol (Telegram requires protocol in href)
             href_url = escaped_content if escaped_content.startswith('http') else f'https://{escaped_content}'
             parts.append(f'<a href="{href_url}">{escaped_content}</a>')
         elif entity.type == "text_link":
@@ -71,7 +81,6 @@ def message_to_html(message) -> str:
         elif entity.type == "spoiler":
             parts.append(f"<tg-spoiler>{escaped_content}</tg-spoiler>")
         else:
-            # Unknown entity type - just escape the content
             parts.append(escaped_content)
         
         last_end = end
