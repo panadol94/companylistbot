@@ -1066,10 +1066,19 @@ class ChildBot:
     
     async def start_withdrawal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point for withdrawal conversation"""
-        await update.callback_query.answer()  # Acknowledge immediately
+        try:
+            await update.callback_query.answer()
+        except Exception:
+            pass
+        
+        self.logger.info(f"💰 start_withdrawal called by user {update.effective_user.id}")
+        
         user = self.db.get_user(self.bot_id, update.effective_user.id)
         if not user:
-            await update.callback_query.answer("⚠️ Data not found", show_alert=True)
+            try:
+                await update.callback_query.answer("⚠️ Data not found", show_alert=True)
+            except Exception:
+                pass
             return ConversationHandler.END
         
         # Get custom settings
@@ -1078,10 +1087,13 @@ class ChildBot:
         context.user_data['min_withdrawal'] = min_wd  # Store for later validation
         
         if user['balance'] < min_wd:
-            await update.callback_query.answer(
-                f"⚠️ Balance tidak mencukupi!\n\nBalance: RM {user['balance']:.2f}\nMinimum: RM {min_wd:.2f}", 
-                show_alert=True
-            )
+            try:
+                await update.callback_query.answer(
+                    f"⚠️ Balance tidak mencukupi!\n\nBalance: RM {user['balance']:.2f}\nMinimum: RM {min_wd:.2f}", 
+                    show_alert=True
+                )
+            except Exception:
+                pass
             return ConversationHandler.END
         
         text = (
@@ -1095,7 +1107,12 @@ class ChildBot:
         
         try:
             await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
-        except Exception:
+        except Exception as e:
+            self.logger.error(f"start_withdrawal edit_text error: {e}")
+            try:
+                await update.callback_query.message.delete()
+            except Exception:
+                pass
             await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         
         return WD_AMOUNT
