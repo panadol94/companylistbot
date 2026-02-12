@@ -183,7 +183,9 @@ class ChildBot:
                 BUTTON_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_company_btn_text)],
                 BUTTON_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.add_company_btn_url)],
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$"), CallbackQueryHandler(self.handle_callback)]
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$"), CallbackQueryHandler(self.handle_callback)],
+            allow_reentry=True,
+            conversation_timeout=300
         )
         self.app.add_handler(add_conv)
 
@@ -257,7 +259,9 @@ class ChildBot:
 
             },
             fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern=r'^cancel$'), CallbackQueryHandler(self.handle_callback)],
-            per_message=False
+            per_message=False,
+            allow_reentry=True,
+            conversation_timeout=300
         )
         self.app.add_handler(edit_company_conv)
         
