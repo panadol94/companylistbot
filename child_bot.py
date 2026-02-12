@@ -330,7 +330,8 @@ class ChildBot:
             },
             fallbacks=[CallbackQueryHandler(self.handle_callback)],
             name="withdrawal_conversation",
-            persistent=False
+            persistent=False,
+            allow_reentry=True
         )
         self.app.add_handler(withdrawal_handler)
         
