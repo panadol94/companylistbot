@@ -859,7 +859,7 @@ class ChildBot:
 
             if is_local_file:
                 cached_file_id = comp.get('cached_file_id')
-                
+                self.logger.info(f"📊 Carousel: comp={comp['id']}, is_local={is_local_file}, is_cb_media={is_callback_media}, cached={bool(cached_file_id)}, media_type={comp.get('media_type')}, path={media_path}")                
                 # 1st priority: Use cached file_id for instant smooth edit
                 if cached_file_id and is_callback_media:
                     try:
@@ -896,6 +896,7 @@ class ChildBot:
                     _cache_file_id(result)
             else:
                 # Remote File ID - always smooth
+                self.logger.info(f"📊 Carousel remote: comp={comp['id']}, is_cb_media={is_callback_media}, media_type={comp.get('media_type')}, file_id={media_path[:30] if media_path else None}")
                 if is_callback_media:
                     try:
                         media_obj = get_input_media(None)
