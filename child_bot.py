@@ -5547,63 +5547,100 @@ class ChildBot:
             replied_msg_id = replied_msg.message_id
             
             forwarded_msgs = context.bot_data.get('forwarded_msgs', {})
-            original_user_id = forwarded_msgs.get(replied_msg_id)
+            msg_info = forwarded_msgs.get(replied_msg_id)
             
-            if original_user_id:
+            if msg_info:
+                # Support both old format (int) and new format (dict)
+                if isinstance(msg_info, dict):
+                    original_user_id = msg_info['user_id']
+                    source_chat_id = msg_info.get('chat_id', original_user_id)
+                    source_msg_id = msg_info.get('msg_id')
+                else:
+                    original_user_id = msg_info
+                    source_chat_id = original_user_id
+                    source_msg_id = None
+                
                 try:
+                    # Try DM first, fallback to group reply
+                    target_chat_id = original_user_id
+                    reply_to = None
+                    
+                    try:
+                        # Test if we can DM the user
+                        if source_chat_id != original_user_id:
+                            # Message from group - try DM first
+                            await context.bot.send_chat_action(chat_id=original_user_id, action='typing')
+                    except Exception:
+                        # Can't DM user, reply in group instead
+                        target_chat_id = source_chat_id
+                        reply_to = source_msg_id
+                    
                     if update.message.text:
                         await context.bot.send_message(
-                            chat_id=original_user_id, 
+                            chat_id=target_chat_id, 
                             text=f"💬 **Admin:**\n{update.message.text}", 
-                            parse_mode='Markdown'
+                            parse_mode='Markdown',
+                            reply_to_message_id=reply_to
                         )
                     elif update.message.photo:
                         await context.bot.send_photo(
-                            chat_id=original_user_id,
+                            chat_id=target_chat_id,
                             photo=update.message.photo[-1].file_id,
                             caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
-                            parse_mode='Markdown'
+                            parse_mode='Markdown',
+                            reply_to_message_id=reply_to
                         )
                     elif update.message.video:
                         await context.bot.send_video(
-                            chat_id=original_user_id,
+                            chat_id=target_chat_id,
                             video=update.message.video.file_id,
                             caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
-                            parse_mode='Markdown'
+                            parse_mode='Markdown',
+                            reply_to_message_id=reply_to
                         )
                     elif update.message.document:
                         await context.bot.send_document(
-                            chat_id=original_user_id,
+                            chat_id=target_chat_id,
                             document=update.message.document.file_id,
                             caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
-                            parse_mode='Markdown'
+                            parse_mode='Markdown',
+                            reply_to_message_id=reply_to
                         )
                     elif update.message.voice:
                         await context.bot.send_voice(
-                            chat_id=original_user_id,
-                            voice=update.message.voice.file_id
+                            chat_id=target_chat_id,
+                            voice=update.message.voice.file_id,
+                            reply_to_message_id=reply_to
                         )
                     elif update.message.sticker:
                         await context.bot.send_sticker(
-                            chat_id=original_user_id,
-                            sticker=update.message.sticker.file_id
+                            chat_id=target_chat_id,
+                            sticker=update.message.sticker.file_id,
+                            reply_to_message_id=reply_to
                         )
-                    await update.message.reply_text("✅ Sent to user!")
+                    
+                    where = "in group" if target_chat_id != original_user_id else "via DM"
+                    await update.message.reply_text(f"✅ Sent to user ({where})!")
                 except Exception as e:
                     await update.message.reply_text(f"❌ Failed: {str(e)}")
                 return
         
         # User -> Admin (forward message and store mapping)
         if user_id != owner_id and self.db.is_livegram_enabled(self.bot_id):
+            source_chat = update.effective_chat
             forwarded = await context.bot.forward_message(
                 chat_id=owner_id, 
-                from_chat_id=update.effective_chat.id, 
+                from_chat_id=source_chat.id, 
                 message_id=update.message.message_id
             )
             
             if 'forwarded_msgs' not in context.bot_data:
                 context.bot_data['forwarded_msgs'] = {}
-            context.bot_data['forwarded_msgs'][forwarded.message_id] = user_id
+            context.bot_data['forwarded_msgs'][forwarded.message_id] = {
+                'user_id': user_id,
+                'chat_id': source_chat.id,
+                'msg_id': update.message.message_id
+            }
             
             if len(context.bot_data['forwarded_msgs']) > 500:
                 oldest_keys = list(context.bot_data['forwarded_msgs'].keys())[:-500]
@@ -5611,9 +5648,11 @@ class ChildBot:
                     del context.bot_data['forwarded_msgs'][k]
             
             user_name = update.effective_user.first_name or "User"
+            is_group = source_chat.type in ['group', 'supergroup']
+            source_label = f"📍 Group: {source_chat.title}" if is_group else "📍 Private Chat"
             await context.bot.send_message(
                 chat_id=owner_id, 
-                text=f"👤 **{user_name}** (ID: `{user_id}`)\n\n💡 _Reply terus ke message di atas untuk balas._",
+                text=f"👤 **{user_name}** (ID: `{user_id}`)\n{source_label}\n\n💡 _Reply terus ke message di atas untuk balas._",
                 parse_mode='Markdown'
             )
         
