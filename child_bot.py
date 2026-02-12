@@ -854,7 +854,8 @@ class ChildBot:
             is_callback_media = update.callback_query and (
                 update.callback_query.message.photo or 
                 update.callback_query.message.video or 
-                update.callback_query.message.animation
+                update.callback_query.message.animation or
+                update.callback_query.message.document  # Telegram sends GIFs as documents
             )
 
             if is_local_file:
