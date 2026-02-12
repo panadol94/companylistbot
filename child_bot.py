@@ -244,7 +244,9 @@ class ChildBot:
                 SCHEDULE_TIME: [CallbackQueryHandler(self.broadcast_confirm)],
                 RECURRING_TYPE: [CallbackQueryHandler(self.recurring_type_handler)]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.handle_callback)]
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.handle_callback)],
+            allow_reentry=True,
+            conversation_timeout=300
         )
         self.app.add_handler(broadcast_conv)
 
@@ -255,7 +257,9 @@ class ChildBot:
                 WELCOME_PHOTO: [MessageHandler(filters.PHOTO | filters.VIDEO, self.save_welcome_photo)],
                 WELCOME_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.save_welcome_text)]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_welcome), CallbackQueryHandler(self.handle_callback)]
+            fallbacks=[CommandHandler("cancel", self.cancel_welcome), CallbackQueryHandler(self.handle_callback)],
+            allow_reentry=True,
+            conversation_timeout=300
         )
         self.app.add_handler(welcome_conv)
         
@@ -281,7 +285,9 @@ class ChildBot:
                 RR_CONFIRM: [CallbackQueryHandler(self.manage_ref_confirm_action)],
                 RR_INPUT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.manage_ref_input_id)]
             },
-            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$"), CallbackQueryHandler(self.handle_callback)]
+            fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern="^cancel$"), CallbackQueryHandler(self.handle_callback)],
+            allow_reentry=True,
+            conversation_timeout=300
         )
         self.app.add_handler(manage_ref_conv)
 
@@ -373,7 +379,9 @@ class ChildBot:
                 CommandHandler("cancel", self.cancel_op),
                 CallbackQueryHandler(self.handle_callback),
             ],
-            per_message=False
+            per_message=False,
+            allow_reentry=True,
+            conversation_timeout=300
         )
         self.app.add_handler(gw_conv)
 
