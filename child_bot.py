@@ -749,8 +749,10 @@ class ChildBot:
         # This handles legacy descriptions saved as raw text before message_to_html
         desc = comp['description'] or ''
         import re
-        # Only auto-link URLs NOT already inside an <a> tag
-        if '<a ' not in desc:
+        # Only auto-link URLs NOT already inside HTML tags
+        # Check if desc already contains ANY HTML tags (from message_to_html)
+        has_html = bool(re.search(r'<[a-zA-Z][^>]*>', desc))
+        if not has_html:
             # Description is plain text (legacy) - escape HTML and auto-link URLs
             desc = html_escape(desc)
             def _add_link(m):
