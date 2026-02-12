@@ -98,6 +98,12 @@ class Database:
 
                 pass  # Silently handle exception  # Column already exists
 
+            # Migration: Add cached_file_id column to companies
+            try:
+                cursor.execute("ALTER TABLE companies ADD COLUMN cached_file_id TEXT")
+            except Exception:
+                pass  # Column already exists
+
             # 3. Users Table (End users of child bots)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
@@ -531,9 +537,20 @@ class Database:
         with self.lock:
             conn = self.get_connection()
             conn.execute(f"UPDATE companies SET {field} = ? WHERE id = ?", (value, company_id))
+            # Clear cached file_id when media changes
+            if field in ('media_file_id', 'media_type'):
+                conn.execute("UPDATE companies SET cached_file_id = NULL WHERE id = ?", (company_id,))
             conn.commit()
             conn.close()
             return True
+    
+    def update_cached_file_id(self, company_id, file_id):
+        """Cache Telegram file_id for smooth carousel editing"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("UPDATE companies SET cached_file_id = ? WHERE id = ?", (file_id, company_id))
+            conn.commit()
+            conn.close()
     
     def update_company_position(self, company_id, new_position, bot_id):
         """Update company display order (1-indexed position)"""

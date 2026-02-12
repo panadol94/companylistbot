@@ -834,18 +834,38 @@ class ChildBot:
 
             # EXECUTION BLOCK
             if is_local_file:
-                # Open file context
+                # Try to use cached file_id first for smooth editing
+                cached_file_id = comp.get('cached_file_id')
+                
+                if cached_file_id and not caption_too_long and update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
+                    # Use cached file_id for smooth edit
+                    try:
+                        cached_media = get_input_media(cached_file_id)
+                        await update.callback_query.message.edit_media(media=cached_media, reply_markup=media_keyboard)
+                        return
+                    except Exception as e:
+                        if "Message is not modified" in str(e): return
+                        self.logger.warning(f"edit_media with cached file_id failed: {e}")
+                
+                # Upload local file
                 with open(media_path, 'rb') as f:
-                    media_obj = get_input_media(f)
-                    
-                    # Try edit if possible (only when caption fits - not split mode)
+                    # Try edit with file upload
                     if not caption_too_long and update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
                          try:
-                             await update.callback_query.message.edit_media(media=media_obj, reply_markup=media_keyboard)
+                             media_obj = get_input_media(f)
+                             result = await update.callback_query.message.edit_media(media=media_obj, reply_markup=media_keyboard)
+                             # Cache the file_id for future smooth edits
+                             if result:
+                                 new_file_id = None
+                                 if result.photo: new_file_id = result.photo[-1].file_id
+                                 elif result.video: new_file_id = result.video.file_id
+                                 elif result.animation: new_file_id = result.animation.file_id
+                                 if new_file_id:
+                                     self.db.update_cached_file_id(comp['id'], new_file_id)
                              return 
                          except Exception as e:
                              if "Message is not modified" in str(e): return
-                             pass 
+                             self.logger.warning(f"edit_media with local file failed: {e}")
                              
                     # Fallback: Delete + Send
                     if update.callback_query:
@@ -853,12 +873,22 @@ class ChildBot:
                         except Exception: pass
                     
                     f.seek(0)
+                    result = None
                     if comp['media_type'] == 'video':
-                        await update.effective_chat.send_video(video=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
+                        result = await update.effective_chat.send_video(video=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
                     elif comp['media_type'] == 'animation':
-                         await update.effective_chat.send_animation(animation=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
+                         result = await update.effective_chat.send_animation(animation=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
                     else:
-                         await update.effective_chat.send_photo(photo=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
+                         result = await update.effective_chat.send_photo(photo=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
+                    
+                    # Cache file_id from sent message
+                    if result:
+                        new_file_id = None
+                        if result.photo: new_file_id = result.photo[-1].file_id
+                        elif result.video: new_file_id = result.video.file_id
+                        elif result.animation: new_file_id = result.animation.file_id
+                        if new_file_id:
+                            self.db.update_cached_file_id(comp['id'], new_file_id)
             else:
                  # Remote File ID
                  media_obj = get_input_media(None)
@@ -869,7 +899,7 @@ class ChildBot:
                          return
                      except Exception as e:
                          if "Message is not modified" in str(e): return
-                         pass
+                         self.logger.warning(f"edit_media with file_id failed: {e}")
 
                  if update.callback_query:
                      try: await update.callback_query.message.delete()
