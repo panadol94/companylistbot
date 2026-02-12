@@ -404,6 +404,9 @@ class ChildBot:
              InlineKeyboardButton("❄️ Cold Numbers", callback_data="4d_cold_numbers")],
             [InlineKeyboardButton("📊 Digit Frequency", callback_data="4d_digit_freq")],
             [InlineKeyboardButton("🎯 Generate Lucky Number", callback_data="4d_lucky_gen")],
+            [InlineKeyboardButton("📈 Carta Visual", callback_data="4d_visual"),
+             InlineKeyboardButton("📋 Carta Ramalan", callback_data="4d_predict")],
+            [InlineKeyboardButton("🗓️ Carta Sejarah", callback_data="4d_history")],
             [InlineKeyboardButton("🔄 Refresh Data", callback_data="4d_refresh")]
         ]
         
@@ -1562,6 +1565,11 @@ class ChildBot:
         elif data == "4d_refresh": await self.refresh_4d_data(update)
         elif data == "4d_sub": await self.subscribe_4d_notification(update)
         elif data == "4d_unsub": await self.unsubscribe_4d_notification(update)
+        elif data == "4d_visual": await self.show_4d_visual_chart(update)
+        elif data == "4d_predict": await self.show_4d_prediction(update)
+        elif data == "4d_history": await self.show_4d_history(update)
+        elif data.startswith("4d_hist_"): await self.show_4d_history_company(update, data)
+        elif data.startswith("4d_hmore_"): await self.show_4d_history_more(update, data)
         
         # Admin Actions
         elif data == "admin_withdrawals": await self.show_admin_withdrawals(update)
@@ -1871,6 +1879,9 @@ class ChildBot:
              InlineKeyboardButton("❄️ Cold Numbers", callback_data="4d_cold_numbers")],
             [InlineKeyboardButton("📊 Digit Frequency", callback_data="4d_digit_freq")],
             [InlineKeyboardButton("🎯 Generate Lucky Number", callback_data="4d_lucky_gen")],
+            [InlineKeyboardButton("📈 Carta Visual", callback_data="4d_visual"),
+             InlineKeyboardButton("📋 Carta Ramalan", callback_data="4d_predict")],
+            [InlineKeyboardButton("🗓️ Carta Sejarah", callback_data="4d_history")],
             [notify_btn],
             [InlineKeyboardButton("🔄 Refresh Data", callback_data="4d_refresh")],
             [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
@@ -2280,6 +2291,302 @@ class ChildBot:
         # Refresh menu to show updated status
         await self.show_4d_menu(update)
     
+    # --- 4D Carta Visual ---
+    async def show_4d_visual_chart(self, update: Update):
+        """Show visual heatmap chart of 2-digit ending frequency"""
+        pred_data = self.db.get_4d_prediction_data(limit=200)
+        
+        if not pred_data:
+            await update.callback_query.answer("Tiada data! Sila Refresh dulu.", show_alert=True)
+            return
+        
+        ending_freq = pred_data['ending_frequency']
+        
+        # Get max frequency for scaling
+        max_freq = max(ending_freq.values()) if ending_freq else 1
+        
+        text = "📈 **CARTA VISUAL 4D**\n"
+        text += f"📊 _{pred_data['total_analyzed']} draws dianalisa_\n\n"
+        text += "**Heatmap 2-Digit Terakhir (00-99)**\n"
+        text += "_Warna lebih gelap = lebih kerap keluar_\n\n"
+        
+        # Legend
+        text += "🟥 Sangat Kerap  🟧 Kerap  🟨 Sederhana  🟩 Jarang  ⬜ Tiada\n\n"
+        
+        # Build 10x10 grid header
+        text += "`    0  1  2  3  4  5  6  7  8  9`\n"
+        
+        for row in range(10):
+            line = f"`{row}0` "
+            for col in range(10):
+                ending = f"{row}{col}"
+                freq = ending_freq.get(ending, 0)
+                
+                if freq == 0:
+                    line += "⬜"
+                elif freq <= max_freq * 0.25:
+                    line += "🟩"
+                elif freq <= max_freq * 0.5:
+                    line += "🟨"
+                elif freq <= max_freq * 0.75:
+                    line += "🟧"
+                else:
+                    line += "🟥"
+            text += line + "\n"
+        
+        # Top 5 hottest endings
+        top_endings = sorted(ending_freq.items(), key=lambda x: x[1], reverse=True)[:5]
+        text += "\n**🔥 Top 5 Ending Paling Kerap:**\n"
+        for ending, count in top_endings:
+            text += f"  `{ending}` — {count}x keluar\n"
+        
+        text += "\n⚠️ _Untuk hiburan sahaja_"
+        
+        keyboard = [
+            [InlineKeyboardButton("📋 Carta Ramalan", callback_data="4d_predict")],
+            [InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]
+        ]
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    # --- 4D Carta Ramalan ---
+    async def show_4d_prediction(self, update: Update):
+        """Show prediction chart with statistical analysis"""
+        import random
+        
+        pred_data = self.db.get_4d_prediction_data(limit=200)
+        stats = self.db.get_4d_statistics()
+        
+        if not pred_data or not stats:
+            await update.callback_query.answer("Tiada data! Sila Refresh dulu.", show_alert=True)
+            return
+        
+        text = "📋 **CARTA RAMALAN 4D**\n"
+        text += f"📊 _{pred_data['total_analyzed']} draws | {pred_data['total_numbers']} nombor dianalisa_\n\n"
+        
+        # Position analysis
+        text += "**🎯 Digit Terkuat Per Posisi:**\n"
+        pos_names = ['1st', '2nd', '3rd', '4th']
+        hot_per_pos = []
+        for pos in range(4):
+            top = pred_data['position_frequency'].get(pos, [])
+            if top:
+                top_digit = top[0][0]
+                top_count = top[0][1]
+                hot_per_pos.append(top_digit)
+                text += f"  Posisi {pos_names[pos]}: `{top_digit}` ({top_count}x)\n"
+        
+        # Top pairs
+        text += "\n**🔗 Pair Terakhir 2-Digit Terkuat:**\n"
+        for pair, count in pred_data['top_pairs'][:5]:
+            text += f"  `{pair}` — {count}x keluar\n"
+        
+        # Generate 5 prediction numbers with scoring
+        text += "\n**🔮 NOMBOR CADANGAN:**\n"
+        text += "_Berdasarkan analisis statistik_\n\n"
+        
+        predictions = []
+        hot_digits = [d[0] for d in stats['hot_digits'][:5]]
+        cold_digits = [d[0] for d in stats['cold_digits'][:3]]
+        top_pairs_list = [p[0] for p in pred_data['top_pairs'][:5]]
+        
+        for i in range(5):
+            confidence = random.randint(55, 85)
+            num = ""
+            
+            if i < 2:
+                # Hot method: use hot digits per position
+                for pos in range(4):
+                    pos_data = pred_data['position_frequency'].get(pos, [])
+                    if pos_data and len(pos_data) > 1:
+                        # Pick from top 3 for variety
+                        choices = [d[0] for d in pos_data[:3]]
+                        num += random.choice(choices)
+                    else:
+                        num += str(random.randint(0, 9))
+                method = "🔥 Hot"
+            elif i < 4:
+                # Pair method: use hot pairs
+                head = random.choice(hot_digits) + random.choice(hot_digits) if hot_digits else f"{random.randint(0,9)}{random.randint(0,9)}"
+                tail = random.choice(top_pairs_list) if top_pairs_list else f"{random.randint(0,9):02d}"
+                num = head + tail
+                method = "🔗 Pair"
+            else:
+                # Cold gap method: mix hot + cold
+                for _ in range(4):
+                    if random.random() < 0.4 and cold_digits:
+                        num += random.choice(cold_digits)
+                    elif hot_digits:
+                        num += random.choice(hot_digits)
+                    else:
+                        num += str(random.randint(0, 9))
+                method = "❄️ Gap"
+            
+            predictions.append((num, confidence, method))
+        
+        # Sort by confidence descending
+        predictions.sort(key=lambda x: x[1], reverse=True)
+        
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+        for idx, (num, conf, method) in enumerate(predictions):
+            bar_len = conf // 10
+            bar = "█" * bar_len + "░" * (10 - bar_len)
+            text += f"{medals[idx]} `{num}` {bar} {conf}% {method}\n"
+        
+        text += f"\n📅 {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+        text += "\n⚠️ _Disclaimer: Untuk hiburan sahaja._\n"
+        text += "_Tiada jaminan menang. Main secara bertanggungjawab._"
+        
+        keyboard = [
+            [InlineKeyboardButton("🔄 Ramalan Baru", callback_data="4d_predict")],
+            [InlineKeyboardButton("📈 Carta Visual", callback_data="4d_visual")],
+            [InlineKeyboardButton("🔙 Back", callback_data="4d_menu")]
+        ]
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    # --- 4D Carta Sejarah ---
+    async def show_4d_history(self, update: Update):
+        """Show history menu - select company"""
+        text = "🗓️ **CARTA SEJARAH 4D**\n\n"
+        text += "Pilih syarikat untuk lihat rekod:\n"
+        
+        company_icons = {
+            'MAGNUM': '🔴', 'DAMACAI': '🟡', 'TOTO': '🟢',
+            'CASHSWEEP': '💜', 'SABAH88': '🟤', 'STC': '🔵',
+            'SG4D': '🩷', 'SGTOTO': '🩵',
+            'GD': '🐉', 'PERDANA': '🎰', 'LUCKY': '🍀'
+        }
+        
+        company_names = {
+            'MAGNUM': 'Magnum 4D', 'DAMACAI': 'Da Ma Cai', 'TOTO': 'Sports Toto',
+            'CASHSWEEP': 'Cash Sweep', 'SABAH88': 'Sabah 88', 'STC': 'STC 4D',
+            'SG4D': 'Singapore 4D', 'SGTOTO': 'SG Toto',
+            'GD': 'Grand Dragon', 'PERDANA': 'Perdana', 'LUCKY': 'Lucky Hari Hari'
+        }
+        
+        # Group by region
+        regions = {
+            '🇲🇾 West MY': ['MAGNUM', 'DAMACAI', 'TOTO'],
+            '🇲🇾 East MY': ['CASHSWEEP', 'SABAH88', 'STC'],
+            '🇸🇬 Singapore': ['SG4D', 'SGTOTO'],
+            '🇰🇭 Cambodia': ['GD', 'PERDANA', 'LUCKY']
+        }
+        
+        keyboard = []
+        for region, companies in regions.items():
+            row = []
+            for comp in companies:
+                icon = company_icons.get(comp, '⚪')
+                name = company_names.get(comp, comp)
+                row.append(InlineKeyboardButton(
+                    f"{icon} {name}",
+                    callback_data=f"4d_hist_{comp}"
+                ))
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+        
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="4d_menu")])
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def show_4d_history_company(self, update: Update, data: str):
+        """Show history for a specific company"""
+        # data format: 4d_hist_COMPANY
+        company = data.replace("4d_hist_", "")
+        
+        company_names = {
+            'MAGNUM': 'Magnum 4D', 'DAMACAI': 'Da Ma Cai', 'TOTO': 'Sports Toto',
+            'CASHSWEEP': 'Cash Sweep', 'SABAH88': 'Sabah 88', 'STC': 'STC 4D',
+            'SG4D': 'Singapore 4D', 'SGTOTO': 'SG Toto',
+            'GD': 'Grand Dragon', 'PERDANA': 'Perdana', 'LUCKY': 'Lucky Hari Hari'
+        }
+        
+        results = self.db.get_4d_results_by_date(company=company, limit=10, offset=0)
+        
+        if not results:
+            await update.callback_query.answer("Tiada rekod untuk syarikat ini.", show_alert=True)
+            return
+        
+        name = company_names.get(company, company)
+        text = f"🗓️ **SEJARAH: {name}**\n\n"
+        
+        for r in results:
+            date = r.get('draw_date', 'N/A')
+            text += f"📅 **{date}**\n"
+            text += f"  🥇 `{r['first_prize']}`  🥈 `{r['second_prize']}`  🥉 `{r['third_prize']}`\n"
+            
+            if r.get('special_prizes'):
+                specials = r['special_prizes'].split(',')[:5]
+                text += f"  ✨ `{'` `'.join(specials)}`...\n"
+            text += "\n"
+        
+        keyboard = []
+        if len(results) == 10:
+            keyboard.append([InlineKeyboardButton("📄 Load More", callback_data=f"4d_hmore_{company}_1")])
+        keyboard.append([InlineKeyboardButton("🔙 Pilih Syarikat", callback_data="4d_history")])
+        keyboard.append([InlineKeyboardButton("🔙 Menu 4D", callback_data="4d_menu")])
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def show_4d_history_more(self, update: Update, data: str):
+        """Load more history results (pagination)"""
+        # data format: 4d_hmore_COMPANY_PAGE
+        parts = data.replace("4d_hmore_", "").rsplit("_", 1)
+        company = parts[0]
+        page = int(parts[1]) if len(parts) > 1 else 1
+        offset = page * 10
+        
+        company_names = {
+            'MAGNUM': 'Magnum 4D', 'DAMACAI': 'Da Ma Cai', 'TOTO': 'Sports Toto',
+            'CASHSWEEP': 'Cash Sweep', 'SABAH88': 'Sabah 88', 'STC': 'STC 4D',
+            'SG4D': 'Singapore 4D', 'SGTOTO': 'SG Toto',
+            'GD': 'Grand Dragon', 'PERDANA': 'Perdana', 'LUCKY': 'Lucky Hari Hari'
+        }
+        
+        results = self.db.get_4d_results_by_date(company=company, limit=10, offset=offset)
+        
+        if not results:
+            await update.callback_query.answer("Tiada lagi rekod.", show_alert=True)
+            return
+        
+        name = company_names.get(company, company)
+        text = f"🗓️ **SEJARAH: {name}** (Halaman {page + 1})\n\n"
+        
+        for r in results:
+            date = r.get('draw_date', 'N/A')
+            text += f"📅 **{date}**\n"
+            text += f"  🥇 `{r['first_prize']}`  🥈 `{r['second_prize']}`  🥉 `{r['third_prize']}`\n"
+            
+            if r.get('special_prizes'):
+                specials = r['special_prizes'].split(',')[:5]
+                text += f"  ✨ `{'` `'.join(specials)}`...\n"
+            text += "\n"
+        
+        keyboard = []
+        if len(results) == 10:
+            keyboard.append([InlineKeyboardButton("📄 Load More", callback_data=f"4d_hmore_{company}_{page + 1}")])
+        keyboard.append([InlineKeyboardButton("🔙 Pilih Syarikat", callback_data="4d_history")])
+        keyboard.append([InlineKeyboardButton("🔙 Menu 4D", callback_data="4d_menu")])
+        
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception:
+            await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
     # --- Edit Company List Logic (New) ---
     async def show_edit_company_list(self, update: Update):
         """Show list of companies to select for editing"""

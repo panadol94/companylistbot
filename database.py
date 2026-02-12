@@ -1913,6 +1913,102 @@ class Database:
             'digit_frequency': digit_count
         }
 
+    def get_4d_results_by_date(self, draw_date=None, company=None, limit=10, offset=0):
+        """Get 4D results filtered by date and/or company with pagination"""
+        conn = self.get_connection()
+        query = "SELECT * FROM results_4d WHERE 1=1"
+        params = []
+        
+        if draw_date:
+            query += " AND draw_date = ?"
+            params.append(draw_date)
+        if company:
+            query += " AND company = ?"
+            params.append(company)
+        
+        query += " ORDER BY draw_date DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        
+        results = conn.execute(query, params).fetchall()
+        conn.close()
+        return [dict(r) for r in results]
+
+    def get_4d_available_dates(self, limit=10):
+        """Get list of distinct draw dates available"""
+        conn = self.get_connection()
+        dates = conn.execute(
+            "SELECT DISTINCT draw_date FROM results_4d ORDER BY draw_date DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+        conn.close()
+        return [d['draw_date'] for d in dates]
+
+    def get_4d_prediction_data(self, limit=200):
+        """Get advanced statistical data for prediction chart"""
+        results = self.get_4d_results(limit=limit)
+        
+        if not results:
+            return None
+        
+        # Position frequency: which digits appear most at each position (1st digit, 2nd, 3rd, 4th)
+        position_freq = {i: {str(d): 0 for d in range(10)} for i in range(4)}
+        
+        # Track all winning numbers with their dates for gap analysis
+        number_last_seen = {}  # number -> draw_date
+        all_numbers = []
+        
+        # Two-digit pair frequency (last 2 digits)
+        pair_freq = {}
+        
+        for r in results:
+            for prize in [r['first_prize'], r['second_prize'], r['third_prize']]:
+                if prize and len(prize) == 4:
+                    all_numbers.append(prize)
+                    number_last_seen[prize] = r.get('draw_date', '')
+                    
+                    # Position analysis
+                    for pos, digit in enumerate(prize):
+                        position_freq[pos][digit] = position_freq[pos].get(digit, 0) + 1
+                    
+                    # Pair analysis (last 2 digits)
+                    pair = prize[2:]
+                    pair_freq[pair] = pair_freq.get(pair, 0) + 1
+            
+            # Also analyze special prizes
+            if r['special_prizes']:
+                for num in r['special_prizes'].split(','):
+                    num = num.strip()
+                    if len(num) == 4:
+                        all_numbers.append(num)
+                        number_last_seen[num] = r.get('draw_date', '')
+                        pair = num[2:]
+                        pair_freq[pair] = pair_freq.get(pair, 0) + 1
+        
+        # Sort position frequencies
+        top_per_position = {}
+        for pos in range(4):
+            sorted_digits = sorted(position_freq[pos].items(), key=lambda x: x[1], reverse=True)
+            top_per_position[pos] = sorted_digits[:5]
+        
+        # Top pairs
+        top_pairs = sorted(pair_freq.items(), key=lambda x: x[1], reverse=True)[:10]
+        
+        # Digit frequency for heatmap (2-digit endings 00-99)
+        ending_freq = {}
+        for num in all_numbers:
+            if len(num) == 4:
+                ending = num[2:]
+                ending_freq[ending] = ending_freq.get(ending, 0) + 1
+        
+        return {
+            'total_analyzed': len(results),
+            'total_numbers': len(all_numbers),
+            'position_frequency': top_per_position,
+            'top_pairs': top_pairs,
+            'ending_frequency': ending_freq,
+            'number_last_seen': number_last_seen
+        }
+
     # ==================== 4D NOTIFICATION SUBSCRIBERS ====================
     
     def subscribe_4d_notification(self, bot_id, user_id):
