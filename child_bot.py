@@ -590,12 +590,12 @@ class ChildBot:
                 InlineKeyboardButton("🔗 Share Link", callback_data="share_link")
             ])
             keyboard.append([
-                InlineKeyboardButton("🎰 4D Stats", callback_data="4d_menu"),
+                InlineKeyboardButton("🎰 4D Analyzer", callback_data="4d_menu"),
                 InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")
             ])
         else:
             keyboard.append([
-                InlineKeyboardButton("🎰 4D Stats", callback_data="4d_menu")
+                InlineKeyboardButton("🎰 4D Analyzer", callback_data="4d_menu")
             ])
         
         # Add custom menu buttons if any
@@ -1587,7 +1587,7 @@ class ChildBot:
         elif data == "ref_settings":
             await self.ref_settings_menu(update, context)
         
-        # 4D Stats Handlers
+        # 4D Analyzer Handlers
         elif data == "4d_menu": await self.show_4d_menu(update)
         elif data == "4d_latest": await self.show_4d_latest_results(update)
         elif data == "4d_check": await self.start_4d_check(update, context)
@@ -1871,7 +1871,7 @@ class ChildBot:
     
 
     
-    # --- 4D Stats Module ---
+    # --- 4D Analyzer Module ---
     async def show_4d_menu(self, update: Update):
         """Show 4D stats main menu"""
         stats = self.db.get_4d_statistics()
@@ -3949,7 +3949,7 @@ class ChildBot:
             "• **Wallet**: Paparan /wallet\n"
             "• **Share Link**: Paparan 'Share Link'\n"
             "• **Leaderboard**: Paparan Leaderboard\n"
-            "• **4D Stats**: Banner Menu 4D\n\n"
+            "• **4D Analyzer**: Banner Menu 4D\n\n"
             "💡 _Boleh set gambar atau video beserta caption._"
         )
         
@@ -3957,7 +3957,7 @@ class ChildBot:
             [InlineKeyboardButton("💰 Wallet", callback_data="media_section_wallet")],
             [InlineKeyboardButton("🔗 Share Link", callback_data="media_section_share")],
             [InlineKeyboardButton("🏆 Leaderboard", callback_data="media_section_leaderboard")],
-            [InlineKeyboardButton("🔢 4D Stats", callback_data="media_section_4d")],
+            [InlineKeyboardButton("🔢 4D Analyzer", callback_data="media_section_4d")],
             [InlineKeyboardButton("« Back", callback_data="media_back")]
         ]
         
@@ -3987,7 +3987,7 @@ class ChildBot:
             'wallet': '💰 Dompet Saya',
             'share': '🔗 Share Link',
             'leaderboard': '🏆 Leaderboard',
-            '4d': '🔢 4D Stats'
+            '4d': '🔢 4D Analyzer'
         }
         name = section_names.get(section_key, section_key.title())
         
