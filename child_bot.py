@@ -196,7 +196,7 @@ class ChildBot:
         welcome_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.edit_welcome_start, pattern="^edit_welcome$")],
             states={
-                WELCOME_PHOTO: [MessageHandler(filters.PHOTO, self.save_welcome_photo)],
+                WELCOME_PHOTO: [MessageHandler(filters.PHOTO | filters.VIDEO, self.save_welcome_photo)],
                 WELCOME_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.save_welcome_text)]
             },
             fallbacks=[CommandHandler("cancel", self.cancel_welcome), CallbackQueryHandler(self.handle_callback)]
@@ -612,14 +612,30 @@ class ChildBot:
                 keyboard.append([InlineKeyboardButton(btn['text'], url=btn['url'])])
         
 
+        # Parse banner type (supports new "type|file_id" format and legacy plain file_id)
+        banner_raw = bot_data['custom_banner'] if bot_data['custom_banner'] else None
+        banner_type = 'photo'
+        banner_file_id = None
+        if banner_raw:
+            if '|' in banner_raw:
+                banner_type, banner_file_id = banner_raw.split('|', 1)
+            else:
+                banner_file_id = banner_raw  # Legacy format (photo only)
+
         if update.callback_query:
             # Carousel style - edit existing message instead of delete+send
             try:
-                if bot_data['custom_banner']:
-                    await update.callback_query.message.edit_media(
-                        media=InputMediaPhoto(media=bot_data['custom_banner'], caption=caption, parse_mode='HTML'),
-                        reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
+                if banner_file_id:
+                    if banner_type == 'video':
+                        await update.callback_query.message.edit_media(
+                            media=InputMediaVideo(media=banner_file_id, caption=caption, parse_mode='HTML'),
+                            reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
+                    else:
+                        await update.callback_query.message.edit_media(
+                            media=InputMediaPhoto(media=banner_file_id, caption=caption, parse_mode='HTML'),
+                            reply_markup=InlineKeyboardMarkup(keyboard)
+                        )
                 else:
                     await update.callback_query.message.edit_text(
                         caption,
@@ -630,14 +646,20 @@ class ChildBot:
                 # Fallback: send new message if edit fails (e.g., different media type)
                 try: await update.callback_query.message.delete()
                 except Exception: pass
-                if bot_data['custom_banner']:
-                    await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                if banner_file_id:
+                    if banner_type == 'video':
+                        await update.effective_chat.send_video(video=banner_file_id, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    else:
+                        await update.effective_chat.send_photo(photo=banner_file_id, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
                 else:
                     await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         else:
             # Fresh /start command - send new message
-            if bot_data['custom_banner']:
-                await update.effective_chat.send_photo(photo=bot_data['custom_banner'], caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            if banner_file_id:
+                if banner_type == 'video':
+                    await update.effective_chat.send_video(video=banner_file_id, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                else:
+                    await update.effective_chat.send_photo(photo=banner_file_id, caption=caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
             else:
                 await update.effective_chat.send_message(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
@@ -4276,19 +4298,28 @@ class ChildBot:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text(
             "📸 **EDIT WELCOME MESSAGE**\n\n"
-            "Step 1: Upload your welcome banner image\n\n"
-            "Send a photo that will be displayed when users type /start\n\n"
+            "Step 1: Upload your welcome banner\n\n"
+            "Send a **photo** atau **video** yang akan dipaparkan bila user type /start\n\n"
             "Type /cancel to cancel."
         )
         return WELCOME_PHOTO
     
     async def save_welcome_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Save photo file_id and ask for caption"""
-        photo = update.message.photo[-1]  # Get highest resolution
-        context.user_data['welcome_banner'] = photo.file_id
+        """Save photo/video file_id and ask for caption"""
+        if update.message.video:
+            file_id = update.message.video.file_id
+            context.user_data['welcome_banner'] = file_id
+            context.user_data['welcome_banner_type'] = 'video'
+            media_type = "Video"
+        else:
+            photo = update.message.photo[-1]  # Get highest resolution
+            file_id = photo.file_id
+            context.user_data['welcome_banner'] = file_id
+            context.user_data['welcome_banner_type'] = 'photo'
+            media_type = "Photo"
         
         await update.message.reply_text(
-            "✅ Photo saved!\n\n"
+            f"✅ {media_type} saved!\n\n"
             "Step 2: Enter your welcome message text\n\n"
             "This text will be shown with the banner when users type /start\n\n"
             "Type /cancel to cancel."
@@ -4299,24 +4330,45 @@ class ChildBot:
         """Save caption to database and show preview"""
         caption_text = message_to_html(update.message)
         banner_file_id = context.user_data.get('welcome_banner')
+        banner_type = context.user_data.get('welcome_banner_type', 'photo')
         
-        # Update database
+        # Update database - store type with file_id (type|file_id)
+        stored_value = f"{banner_type}|{banner_file_id}"
         bot_data = self.db.get_bot_by_token(self.token)
-        self.db.update_welcome_settings(bot_data['id'], banner_file_id, caption_text)
+        self.db.update_welcome_settings(bot_data['id'], stored_value, caption_text)
         
         # Invalidate cache so new banner shows immediately
         self._invalidate_bot_cache()
         
         # Show preview
         keyboard = [[InlineKeyboardButton("🔙 Back to Settings", callback_data="customize_menu")]]
-        await update.message.reply_photo(
-            photo=banner_file_id,
-            caption=f"✅ <b>WELCOME MESSAGE UPDATED!</b>\n\n"
-                    f"Preview:\n{caption_text}\n\n"
-                    f"Users will see this when they type /start",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='HTML'
+        preview_caption = (
+            f"✅ <b>WELCOME MESSAGE UPDATED!</b>\n\n"
+            f"Preview:\n{caption_text}\n\n"
+            f"Users will see this when they type /start"
         )
+        
+        try:
+            if banner_type == 'video':
+                await update.message.reply_video(
+                    video=banner_file_id,
+                    caption=preview_caption,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='HTML'
+                )
+            else:
+                await update.message.reply_photo(
+                    photo=banner_file_id,
+                    caption=preview_caption,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='HTML'
+                )
+        except Exception:
+            await update.message.reply_text(
+                preview_caption,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
         
         # Clear user data
         context.user_data.clear()
