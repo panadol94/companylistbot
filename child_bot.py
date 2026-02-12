@@ -1066,17 +1066,12 @@ class ChildBot:
     
     async def start_withdrawal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point for withdrawal conversation"""
-        try:
-            await update.callback_query.answer()
-        except Exception:
-            pass
-        
         self.logger.info(f"💰 start_withdrawal called by user {update.effective_user.id}")
         
         user = self.db.get_user(self.bot_id, update.effective_user.id)
         if not user:
             try:
-                await update.callback_query.answer("⚠️ Data not found", show_alert=True)
+                await update.callback_query.answer("⚠️ Data not found. Taip /start dulu.", show_alert=True)
             except Exception:
                 pass
             return ConversationHandler.END
@@ -1084,7 +1079,7 @@ class ChildBot:
         # Get custom settings
         settings = self.db.get_referral_settings(self.bot_id)
         min_wd = settings['min_withdrawal']
-        context.user_data['min_withdrawal'] = min_wd  # Store for later validation
+        context.user_data['min_withdrawal'] = min_wd
         
         if user['balance'] < min_wd:
             try:
@@ -1092,9 +1087,15 @@ class ChildBot:
                     f"⚠️ Balance tidak mencukupi!\n\nBalance: RM {user['balance']:.2f}\nMinimum: RM {min_wd:.2f}", 
                     show_alert=True
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.error(f"start_withdrawal answer error: {e}")
             return ConversationHandler.END
+        
+        # Only answer() here (no alert) since we'll show the form
+        try:
+            await update.callback_query.answer()
+        except Exception:
+            pass
         
         text = (
             f"📤 <b>REQUEST WITHDRAWAL</b>\n\n"
