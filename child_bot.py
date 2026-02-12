@@ -1019,44 +1019,51 @@ class ChildBot:
             )
             
             keyboard = []
-            # Always show withdrawal button - will show popup if insufficient balance
             keyboard.append([InlineKeyboardButton("📤 REQUEST WITHDRAWAL", callback_data="req_withdraw")])
             keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
             
-            # Carousel Logic: Text -> Text (Edit), Media -> Text (Delete+Send)
+            # Check for wallet media asset
+            asset = self.db.get_asset(self.bot_id, 'wallet')
+            
+            # Answer callback first
             if update.callback_query:
                 try: await update.callback_query.answer()
                 except Exception: pass
+            
+            # Delete previous message (handles both media->media and text->media transitions)
+            if update.callback_query:
+                try: await update.callback_query.message.delete()
+                except Exception: pass
+            
+            # Send with or without media
+            if asset and asset.get('file_id'):
+                # Use asset caption if set, otherwise use wallet text
+                caption = text
                 
                 try:
-                    is_media = (update.callback_query.message.photo or 
-                               update.callback_query.message.video or 
-                               update.callback_query.message.animation)
-                    
-                    if is_media:
-                        # Media -> Text: Must delete and send new
-                        try: await update.callback_query.message.delete()
-                        except Exception: pass
-                        await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    if asset.get('file_type') == 'video':
+                        await update.effective_chat.send_video(
+                            video=asset['file_id'],
+                            caption=caption,
+                            reply_markup=reply_markup,
+                            parse_mode='HTML'
+                        )
                     else:
-                        # Text -> Text: Edit safely
-                        await update.callback_query.message.edit_text(
-                            text, 
-                            reply_markup=InlineKeyboardMarkup(keyboard), 
+                        await update.effective_chat.send_photo(
+                            photo=asset['file_id'],
+                            caption=caption,
+                            reply_markup=reply_markup,
                             parse_mode='HTML'
                         )
                 except Exception as e:
-                    err_msg = str(e)
-                    if "Message is not modified" in err_msg:
-                        return 
-                    
-                    self.logger.error(f"Error in show_wallet (Edit): {e}")
-                    # Fallback
-                    try: await update.callback_query.message.delete()
-                    except Exception: pass
-                    await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    self.logger.error(f"show_wallet media error: {e}")
+                    # Fallback to text
+                    await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode='HTML')
             else:
-                 await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                # No media - send text only
+                await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode='HTML')
+                
         except Exception as e:
             self.logger.error(f"CRITICAL Error in show_wallet: {e}")
             try: await update.effective_chat.send_message("❌ Error loading wallet.", parse_mode='HTML')
