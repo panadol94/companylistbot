@@ -544,7 +544,7 @@ class ChildBot:
         )
         
         keyboard = [
-            [InlineKeyboardButton("📤 WITHDRAW", callback_data="withdraw")],
+            [InlineKeyboardButton("📤 WITHDRAW", callback_data="req_withdraw")],
             [InlineKeyboardButton("🔗 Share Link", callback_data="share_link")],
             [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
         ]
