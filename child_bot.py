@@ -516,7 +516,18 @@ class ChildBot:
                         f"_Minimum withdrawal: RM{ref_settings['min_withdrawal']:.2f}_"
                     )
                     
-                    await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
+                    # Check for wallet media asset
+                    asset = self.db.get_asset(self.bot_id, 'wallet')
+                    if asset and asset.get('file_id'):
+                        try:
+                            if asset.get('file_type') == 'video':
+                                await context.bot.send_video(chat_id=user_id, video=asset['file_id'], caption=text, parse_mode='Markdown')
+                            else:
+                                await context.bot.send_photo(chat_id=user_id, photo=asset['file_id'], caption=text, parse_mode='Markdown')
+                        except Exception:
+                            await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
+                    else:
+                        await context.bot.send_message(chat_id=user_id, text=text, parse_mode='Markdown')
                 else:
                     await context.bot.send_message(chat_id=user_id, text="❌ Sila /start bot dulu.")
             except Exception as e:
@@ -548,7 +559,22 @@ class ChildBot:
             [InlineKeyboardButton("🔗 Share Link", callback_data="share_link")],
             [InlineKeyboardButton("🔙 BACK", callback_data="main_menu")]
         ]
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Check for wallet media asset
+        asset = self.db.get_asset(self.bot_id, 'wallet')
+        
+        if asset and asset.get('file_id'):
+            try:
+                if asset.get('file_type') == 'video':
+                    await update.message.reply_video(video=asset['file_id'], caption=text, reply_markup=reply_markup, parse_mode='Markdown')
+                else:
+                    await update.message.reply_photo(photo=asset['file_id'], caption=text, reply_markup=reply_markup, parse_mode='Markdown')
+                return
+            except Exception as e:
+                self.logger.error(f"wallet command media error: {e}")
+        
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
 
     # --- Start & Menu ---
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
