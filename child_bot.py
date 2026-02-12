@@ -5578,7 +5578,7 @@ class ChildBot:
                     if update.message.text:
                         await context.bot.send_message(
                             chat_id=target_chat_id, 
-                            text=f"💬 **Admin:**\n{update.message.text}", 
+                            text=update.message.text, 
                             parse_mode='Markdown',
                             reply_to_message_id=reply_to
                         )
@@ -5586,7 +5586,7 @@ class ChildBot:
                         await context.bot.send_photo(
                             chat_id=target_chat_id,
                             photo=update.message.photo[-1].file_id,
-                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
+                            caption=(update.message.caption or '')[:1024],
                             parse_mode='Markdown',
                             reply_to_message_id=reply_to
                         )
@@ -5594,7 +5594,7 @@ class ChildBot:
                         await context.bot.send_video(
                             chat_id=target_chat_id,
                             video=update.message.video.file_id,
-                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
+                            caption=(update.message.caption or '')[:1024],
                             parse_mode='Markdown',
                             reply_to_message_id=reply_to
                         )
@@ -5602,7 +5602,7 @@ class ChildBot:
                         await context.bot.send_document(
                             chat_id=target_chat_id,
                             document=update.message.document.file_id,
-                            caption=f"💬 **Admin:**\n{update.message.caption or ''}"[:1024],
+                            caption=(update.message.caption or '')[:1024],
                             parse_mode='Markdown',
                             reply_to_message_id=reply_to
                         )
@@ -5662,7 +5662,7 @@ class ChildBot:
                 parts = update.message.text.split(" ", 2)
                 target_id = int(parts[1])
                 msg = parts[2]
-                await context.bot.send_message(chat_id=target_id, text=f"💬 **Admin:**\n{msg}", parse_mode='Markdown')
+                await context.bot.send_message(chat_id=target_id, text=msg)
                 await update.message.reply_text("✅ Sent.")
             except Exception:
                 await update.message.reply_text("❌ Format: /reply USER_ID MESSAGE")
