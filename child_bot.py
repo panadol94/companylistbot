@@ -4,8 +4,20 @@ import re
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, InputMediaAnimation
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatMemberHandler
+from telegram.error import TimedOut, NetworkError
 from database import Database
 from html import escape as html_escape
+
+async def send_with_retry(coro_func, retries=3, delay=2):
+    """Retry a Telegram API call on timeout/network errors."""
+    for attempt in range(retries):
+        try:
+            return await coro_func()
+        except (TimedOut, NetworkError) as e:
+            if attempt < retries - 1:
+                await asyncio.sleep(delay * (attempt + 1))
+            else:
+                raise e
 
 def message_to_html(message) -> str:
     """
@@ -129,7 +141,9 @@ class ChildBot:
         self.bot_id = bot_id
         self.db = db
         self.scheduler = scheduler
-        self.app = Application.builder().token(token).build()
+        from telegram.request import HTTPXRequest
+        request = HTTPXRequest(connect_timeout=30, read_timeout=30, write_timeout=30, pool_timeout=30)
+        self.app = Application.builder().token(token).request(request).build()
         self.logger = logging.getLogger(f"Bot_{bot_id}")
         # Cache bot_data to avoid repeated DB lookups
         self._bot_data_cache = None
@@ -4399,18 +4413,20 @@ class ChildBot:
 
     # --- Add Company Wizard Steps ---
     async def add_company_start(self, update, context):
-        await update.callback_query.message.reply_text("Sila masukkan **NAMA Company**:\n\n💡 _Boleh masukkan emoji sekali, contoh: 🎰 Mega888_", parse_mode='Markdown')
+        await send_with_retry(lambda: update.callback_query.message.reply_text(
+            "Sila masukkan **NAMA Company**:\n\n💡 _Boleh masukkan emoji sekali, contoh: 🎰 Mega888_", parse_mode='Markdown'
+        ))
         return NAME
     
     async def add_company_name(self, update, context):
         formatted_name = message_to_html(update.message)
         context.user_data['new_comp'] = {'name': formatted_name}
-        await update.message.reply_text("Masukkan **Deskripsi Company**:", parse_mode='Markdown')
+        await send_with_retry(lambda: update.message.reply_text("Masukkan **Deskripsi Company**:", parse_mode='Markdown'))
         return DESC
 
     async def add_company_desc(self, update, context):
         context.user_data['new_comp']['desc'] = message_to_html(update.message)
-        await update.message.reply_text("Hantar **Gambar/Video** Banner:", parse_mode='Markdown')
+        await send_with_retry(lambda: update.message.reply_text("Hantar **Gambar/Video** Banner:", parse_mode='Markdown'))
         return MEDIA
 
     async def add_company_media(self, update, context):
