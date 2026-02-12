@@ -860,7 +860,7 @@ class ChildBot:
 
             if is_local_file:
                 cached_file_id = comp.get('cached_file_id')
-                self.logger.info(f"📊 Carousel: comp={comp['id']}, is_local={is_local_file}, is_cb_media={is_callback_media}, cached={bool(cached_file_id)}, media_type={comp.get('media_type')}, path={media_path}")                
+                
                 # 1st priority: Use cached file_id for instant smooth edit
                 if cached_file_id and is_callback_media:
                     try:
@@ -871,6 +871,10 @@ class ChildBot:
                         return
                     except Exception as e:
                         if "Message is not modified" in str(e): return
+                        if "Flood control" in str(e) or "Too Many Requests" in str(e):
+                            try: await update.callback_query.answer("⏳ Terlalu cepat, cuba lagi sebentar.", show_alert=True)
+                            except Exception: pass
+                            return
                         self.logger.warning(f"edit_media cached failed: {e}")
                 
                 # 2nd priority: Upload file + try edit
@@ -885,6 +889,10 @@ class ChildBot:
                             return
                         except Exception as e:
                             if "Message is not modified" in str(e): return
+                            if "Flood control" in str(e) or "Too Many Requests" in str(e):
+                                try: await update.callback_query.answer("⏳ Terlalu cepat, cuba lagi sebentar.", show_alert=True)
+                                except Exception: pass
+                                return
                             self.logger.warning(f"edit_media upload failed: {e}")
                     
                     # Fallback: Delete + Send new
@@ -893,11 +901,16 @@ class ChildBot:
                         except Exception: pass
                     
                     f.seek(0)
-                    result = await _send_new_media(f)
-                    _cache_file_id(result)
+                    try:
+                        result = await _send_new_media(f)
+                        _cache_file_id(result)
+                    except Exception as e:
+                        if "Flood control" in str(e) or "Too Many Requests" in str(e):
+                            await update.effective_chat.send_message("⏳ Terlalu cepat, cuba lagi sebentar.", reply_markup=media_keyboard)
+                            return
+                        raise
             else:
                 # Remote File ID - always smooth
-                self.logger.info(f"📊 Carousel remote: comp={comp['id']}, is_cb_media={is_callback_media}, media_type={comp.get('media_type')}, file_id={media_path[:30] if media_path else None}")
                 if is_callback_media:
                     try:
                         media_obj = get_input_media(None)
@@ -907,6 +920,10 @@ class ChildBot:
                         return
                     except Exception as e:
                         if "Message is not modified" in str(e): return
+                        if "Flood control" in str(e) or "Too Many Requests" in str(e):
+                            try: await update.callback_query.answer("⏳ Terlalu cepat, cuba lagi sebentar.", show_alert=True)
+                            except Exception: pass
+                            return
                         self.logger.warning(f"edit_media file_id failed: {e}")
 
                 if update.callback_query:
@@ -921,10 +938,11 @@ class ChildBot:
 
         except Exception as e:
              self.logger.error(f"Media error in show_page: {e}")
-             if update.callback_query:
-                 try: await update.callback_query.message.delete()
-                 except Exception: pass
-             await update.effective_chat.send_message(full_caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+             # Don't delete on error - keep previous media intact for navigation
+             try:
+                 if update.callback_query:
+                     await update.callback_query.answer("⚠️ Gagal memuatkan. Cuba lagi.", show_alert=True)
+             except Exception: pass
 
     async def view_company(self, update: Update, comp_id: int):
         # Redirect to Carousel View (find index)
