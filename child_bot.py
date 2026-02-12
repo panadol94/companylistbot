@@ -2183,7 +2183,15 @@ class ChildBot:
         """Fetch latest 4D data from web sources with timeout protection"""
         import asyncio
         
-        await update.callback_query.answer("🔄 Loading 4D data... (mungkin ambil 10-30 saat)", show_alert=False)
+        await update.callback_query.answer()
+        
+        # Show visible loading message
+        loading_msg = await update.effective_chat.send_message(
+            "⏳ **LOADING 4D DATA...**\n\n"
+            "🔄 Sedang fetch data dari 11 syarikat...\n"
+            "⏱️ _Sila tunggu 10-30 saat_",
+            parse_mode='Markdown'
+        )
         
         try:
             # Import scraper
@@ -2212,9 +2220,9 @@ class ChildBot:
                         if success:
                             saved += 1
                 
-                # Send success message as new message to avoid callback issues
+                # Update loading message with success
                 try:
-                    await update.effective_chat.send_message(
+                    await loading_msg.edit_text(
                         f"✅ **4D DATA UPDATED!**\n\n"
                         f"📊 Loaded: {len(results)} companies\n"
                         f"💾 Saved: {saved} new results",
@@ -2223,16 +2231,25 @@ class ChildBot:
                 except Exception:
                     pass
             else:
-                await update.effective_chat.send_message("⚠️ Gagal fetch data. Cuba lagi.")
+                try:
+                    await loading_msg.edit_text("⚠️ Gagal fetch data. Cuba lagi.")
+                except Exception:
+                    pass
                 
         except ImportError as e:
             self.logger.error(f"4D import error: {e}")
             # If scraper not available, use sample data for demo
             await self._load_sample_4d_data()
-            await update.effective_chat.send_message("✅ Sample data loaded for demo!")
+            try:
+                await loading_msg.edit_text("✅ Sample data loaded for demo!")
+            except Exception:
+                pass
         except Exception as e:
             self.logger.error(f"4D fetch error: {e}")
-            await update.effective_chat.send_message(f"❌ Error: {str(e)[:100]}")
+            try:
+                await loading_msg.edit_text(f"❌ Error: {str(e)[:100]}")
+            except Exception:
+                pass
         
         # Refresh menu with delay to avoid callback conflict
         await asyncio.sleep(0.5)
