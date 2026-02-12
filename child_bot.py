@@ -589,12 +589,14 @@ class ChildBot:
                 InlineKeyboardButton("💰 Dompet Saya", callback_data="wallet"),
                 InlineKeyboardButton("🔗 Share Link", callback_data="share_link")
             ])
-        
-        # Add 4D and Leaderboard row
-        keyboard.append([
-            InlineKeyboardButton("🎰 4D Stats", callback_data="4d_menu"),
-            InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")
-        ])
+            keyboard.append([
+                InlineKeyboardButton("🎰 4D Stats", callback_data="4d_menu"),
+                InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")
+            ])
+        else:
+            keyboard.append([
+                InlineKeyboardButton("🎰 4D Stats", callback_data="4d_menu")
+            ])
         
         # Add custom menu buttons if any
         custom_buttons = self.db.get_menu_buttons(self.bot_id)
