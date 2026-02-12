@@ -826,8 +826,8 @@ class ChildBot:
             
             keyboard.append(nav_row)
         
-        # Admin-only buttons
-        if is_admin:
+        # Admin-only buttons (private chat only)
+        if is_admin and update.effective_chat.type == 'private':
             keyboard.append([InlineKeyboardButton("✏️ EDIT COMPANY", callback_data=f"edit_company_{comp['id']}")])
         
         keyboard.append([InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")])
