@@ -829,100 +829,96 @@ class ChildBot:
                  else:
                      return InputMediaPhoto(media=media_source, caption=media_caption, parse_mode='HTML')
 
-            # Determine keyboard placement: on media if caption fits, on text message if split
-            media_keyboard = None if caption_too_long else InlineKeyboardMarkup(keyboard)
+            # ALWAYS put keyboard on media message for smooth carousel navigation
+            media_keyboard = InlineKeyboardMarkup(keyboard)
 
-            # EXECUTION BLOCK
+            # Helper: extract and cache file_id from result
+            def _cache_file_id(result):
+                if result:
+                    fid = None
+                    if result.photo: fid = result.photo[-1].file_id
+                    elif result.video: fid = result.video.file_id
+                    elif result.animation: fid = result.animation.file_id
+                    if fid:
+                        self.db.update_cached_file_id(comp['id'], fid)
+
+            # Helper: send new media message
+            async def _send_new_media(file_source):
+                if comp['media_type'] == 'video':
+                    return await update.effective_chat.send_video(video=file_source, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
+                elif comp['media_type'] == 'animation':
+                    return await update.effective_chat.send_animation(animation=file_source, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
+                else:
+                    return await update.effective_chat.send_photo(photo=file_source, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
+
+            is_callback_media = update.callback_query and (
+                update.callback_query.message.photo or 
+                update.callback_query.message.video or 
+                update.callback_query.message.animation
+            )
+
             if is_local_file:
-                # Try to use cached file_id first for smooth editing
                 cached_file_id = comp.get('cached_file_id')
                 
-                if cached_file_id and not caption_too_long and update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
-                    # Use cached file_id for smooth edit
+                # 1st priority: Use cached file_id for instant smooth edit
+                if cached_file_id and is_callback_media:
                     try:
                         cached_media = get_input_media(cached_file_id)
                         await update.callback_query.message.edit_media(media=cached_media, reply_markup=media_keyboard)
+                        if caption_too_long:
+                            await update.effective_chat.send_message(full_caption, parse_mode='HTML')
                         return
                     except Exception as e:
                         if "Message is not modified" in str(e): return
-                        self.logger.warning(f"edit_media with cached file_id failed: {e}")
+                        self.logger.warning(f"edit_media cached failed: {e}")
                 
-                # Upload local file
+                # 2nd priority: Upload file + try edit
                 with open(media_path, 'rb') as f:
-                    # Try edit with file upload
-                    if not caption_too_long and update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
-                         try:
-                             media_obj = get_input_media(f)
-                             result = await update.callback_query.message.edit_media(media=media_obj, reply_markup=media_keyboard)
-                             # Cache the file_id for future smooth edits
-                             if result:
-                                 new_file_id = None
-                                 if result.photo: new_file_id = result.photo[-1].file_id
-                                 elif result.video: new_file_id = result.video.file_id
-                                 elif result.animation: new_file_id = result.animation.file_id
-                                 if new_file_id:
-                                     self.db.update_cached_file_id(comp['id'], new_file_id)
-                             return 
-                         except Exception as e:
-                             if "Message is not modified" in str(e): return
-                             self.logger.warning(f"edit_media with local file failed: {e}")
-                             
-                    # Fallback: Delete + Send
+                    if is_callback_media:
+                        try:
+                            media_obj = get_input_media(f)
+                            result = await update.callback_query.message.edit_media(media=media_obj, reply_markup=media_keyboard)
+                            _cache_file_id(result)
+                            if caption_too_long:
+                                await update.effective_chat.send_message(full_caption, parse_mode='HTML')
+                            return
+                        except Exception as e:
+                            if "Message is not modified" in str(e): return
+                            self.logger.warning(f"edit_media upload failed: {e}")
+                    
+                    # Fallback: Delete + Send new
                     if update.callback_query:
                         try: await update.callback_query.message.delete()
                         except Exception: pass
                     
                     f.seek(0)
-                    result = None
-                    if comp['media_type'] == 'video':
-                        result = await update.effective_chat.send_video(video=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
-                    elif comp['media_type'] == 'animation':
-                         result = await update.effective_chat.send_animation(animation=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
-                    else:
-                         result = await update.effective_chat.send_photo(photo=f, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
-                    
-                    # Cache file_id from sent message
-                    if result:
-                        new_file_id = None
-                        if result.photo: new_file_id = result.photo[-1].file_id
-                        elif result.video: new_file_id = result.video.file_id
-                        elif result.animation: new_file_id = result.animation.file_id
-                        if new_file_id:
-                            self.db.update_cached_file_id(comp['id'], new_file_id)
+                    result = await _send_new_media(f)
+                    _cache_file_id(result)
             else:
-                 # Remote File ID
-                 media_obj = get_input_media(None)
-                 
-                 if not caption_too_long and update.callback_query and (update.callback_query.message.photo or update.callback_query.message.video or update.callback_query.message.animation):
-                     try:
-                         await update.callback_query.message.edit_media(media=media_obj, reply_markup=media_keyboard)
-                         return
-                     except Exception as e:
-                         if "Message is not modified" in str(e): return
-                         self.logger.warning(f"edit_media with file_id failed: {e}")
+                # Remote File ID - always smooth
+                if is_callback_media:
+                    try:
+                        media_obj = get_input_media(None)
+                        await update.callback_query.message.edit_media(media=media_obj, reply_markup=media_keyboard)
+                        if caption_too_long:
+                            await update.effective_chat.send_message(full_caption, parse_mode='HTML')
+                        return
+                    except Exception as e:
+                        if "Message is not modified" in str(e): return
+                        self.logger.warning(f"edit_media file_id failed: {e}")
 
-                 if update.callback_query:
-                     try: await update.callback_query.message.delete()
-                     except Exception: pass
-                 
-                 if comp['media_type'] == 'video':
-                     await update.effective_chat.send_video(video=media_path, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
-                 elif comp['media_type'] == 'animation':
-                     await update.effective_chat.send_animation(animation=media_path, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
-                 else:
-                     await update.effective_chat.send_photo(photo=media_path, caption=media_caption, reply_markup=media_keyboard, parse_mode='HTML')
+                if update.callback_query:
+                    try: await update.callback_query.message.delete()
+                    except Exception: pass
+                
+                await _send_new_media(media_path)
 
-            # If caption was too long, send full text as a separate message (4096 char limit)
+            # If caption was too long, send full text as separate (no keyboard - keyboard stays on media)
             if caption_too_long:
-                await update.effective_chat.send_message(
-                    full_caption,
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='HTML'
-                )
+                await update.effective_chat.send_message(full_caption, parse_mode='HTML')
 
         except Exception as e:
              self.logger.error(f"Media error in show_page: {e}")
-             # Absolute Fallback - send as text message (4096 char limit, no truncation)
              if update.callback_query:
                  try: await update.callback_query.message.delete()
                  except Exception: pass
