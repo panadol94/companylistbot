@@ -1464,38 +1464,41 @@ class ChildBot:
             )
             
             keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
             
+            # Check for share media asset
+            asset = self.db.get_asset(self.bot_id, 'share')
+            
+            # Answer callback first
             if update.callback_query:
                 try: await update.callback_query.answer()
                 except Exception: pass
-                
+            
+            # Delete previous message
+            if update.callback_query:
+                try: await update.callback_query.message.delete()
+                except Exception: pass
+            
+            # Send with or without media
+            if asset and asset.get('file_id'):
+                caption = text
                 try:
-                    is_media = (update.callback_query.message.photo or 
-                               update.callback_query.message.video or 
-                               update.callback_query.message.animation)
-                    
-                    if is_media:
-                         # Media -> Text: Must delete and send new
-                        try: await update.callback_query.message.delete()
-                        except Exception: pass
-                        await update.effective_chat.send_message(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    if asset.get('file_type') == 'video':
+                        await update.effective_chat.send_video(
+                            video=asset['file_id'], caption=caption,
+                            reply_markup=reply_markup, parse_mode='HTML'
+                        )
                     else:
-                        await update.callback_query.message.edit_text(
-                            text,
-                            reply_markup=InlineKeyboardMarkup(keyboard),
-                            parse_mode='HTML'
+                        await update.effective_chat.send_photo(
+                            photo=asset['file_id'], caption=caption,
+                            reply_markup=reply_markup, parse_mode='HTML'
                         )
                 except Exception as e:
-                    err_msg = str(e)
-                    if "Message is not modified" in err_msg:
-                        return 
-                        
-                    self.logger.error(f"Error in show_share_link (Edit): {e}")
-                    try: await update.callback_query.message.delete()
-                    except Exception: pass
-                    await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+                    self.logger.error(f"show_share_link media error: {e}")
+                    await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode='HTML')
             else:
-                 await update.message.reply_text(text, parse_mode='HTML')
+                await update.effective_chat.send_message(text, reply_markup=reply_markup, parse_mode='HTML')
+                
         except Exception as e:
              self.logger.error(f"CRITICAL Error in show_share_link: {e}")
              try: await update.effective_chat.send_message("❌ Error generating link.", parse_mode='HTML')
@@ -1530,7 +1533,7 @@ class ChildBot:
             keyboard = [[InlineKeyboardButton("🔙 BACK TO MENU", callback_data="main_menu")]]
             
             # Smart Edit Logic
-            asset = self.db.get_asset(self.bot_id, 'leaderboard_photo')
+            asset = self.db.get_asset(self.bot_id, 'leaderboard')
             
             if asset:
                  # Case 1: Custom Asset Exists (Force Media)
