@@ -6462,17 +6462,27 @@ class ChildBot:
                 return
         
         # AI Chatbot — respond to messages with company promotions
-        # Private: all text messages | Group: only when @mentioned or replied to bot
+        # Private: all text messages from non-owner | Group: when @mentioned or replied to bot
         should_ai_respond = False
         user_text = update.message.text or ''
         
-        if user_id != owner_id and user_text and not is_forwarded:
-            if chat.type == 'private':
+        # In groups: passively record all messages for context
+        if chat.type in ['group', 'supergroup'] and user_text:
+            group_key = f'group_chat_{chat.id}'
+            if group_key not in context.bot_data:
+                context.bot_data[group_key] = []
+            sender_name = update.effective_user.first_name or 'User'
+            context.bot_data[group_key].append(f"{sender_name}: {user_text[:200]}")
+            # Keep last 20 messages
+            context.bot_data[group_key] = context.bot_data[group_key][-20:]
+        
+        if user_text and not is_forwarded:
+            if chat.type == 'private' and user_id != owner_id:
                 should_ai_respond = True
             elif chat.type in ['group', 'supergroup']:
                 bot_username = (await context.bot.get_me()).username
                 # Check if bot is @mentioned
-                if f'@{bot_username}'.lower() in user_text.lower():
+                if bot_username and f'@{bot_username}'.lower() in user_text.lower():
                     user_text = user_text.lower().replace(f'@{bot_username}'.lower(), '').strip()
                     should_ai_respond = True
                 # Check if replying to bot's message
@@ -6490,11 +6500,28 @@ class ChildBot:
                     for c in companies:
                         c['buttons'] = self.db.get_company_buttons(c['id'])
                     
-                    # Get chat history from user_data
-                    if 'ai_chat_history' not in context.user_data:
-                        context.user_data['ai_chat_history'] = []
-                    
-                    chat_history = context.user_data['ai_chat_history']
+                    # Build chat history based on context
+                    chat_history = []
+                    if chat.type in ['group', 'supergroup']:
+                        # Use group message memory as context
+                        group_key = f'group_chat_{chat.id}'
+                        recent_msgs = context.bot_data.get(group_key, [])
+                        if recent_msgs:
+                            # Pack recent group messages as system context
+                            group_context = "\n".join(recent_msgs[-15:])
+                            chat_history.append({
+                                "role": "user",
+                                "content": f"[Perbualan terkini dalam group ini:]\n{group_context}\n\n[Sekarang jawab soalan terbaru]"
+                            })
+                            chat_history.append({
+                                "role": "assistant", 
+                                "content": "Baik, saya dah baca perbualan group. Saya sedia membantu!"
+                            })
+                    else:
+                        # Private chat: use per-user history
+                        if 'ai_chat_history' not in context.user_data:
+                            context.user_data['ai_chat_history'] = []
+                        chat_history = context.user_data['ai_chat_history']
                     
                     # Show typing indicator
                     await context.bot.send_chat_action(chat_id=chat.id, action='typing')
@@ -6502,11 +6529,11 @@ class ChildBot:
                     response = await ai_chat(user_text, companies, chat_history)
                     
                     if response:
-                        # Save to chat history
-                        chat_history.append({"role": "user", "content": user_text})
-                        chat_history.append({"role": "assistant", "content": response})
-                        # Keep only last 10 messages
-                        context.user_data['ai_chat_history'] = chat_history[-10:]
+                        if chat.type == 'private':
+                            # Save to per-user chat history
+                            chat_history.append({"role": "user", "content": user_text})
+                            chat_history.append({"role": "assistant", "content": response})
+                            context.user_data['ai_chat_history'] = chat_history[-10:]
                         
                         # Add company list button (only in private)
                         keyboard = None
