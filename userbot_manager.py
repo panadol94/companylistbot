@@ -683,14 +683,62 @@ class UserbotInstance:
                     # Apply caption modification
                     caption = _apply_caption(msg.message or '')
 
-                    # Always copy content (no "Forwarded from" label)
                     if msg.media:
-                        await self.client.send_message(
-                            target_entity,
-                            message=caption,
-                            file=msg.media,
-                            formatting_entities=msg.entities if caption_modifier and caption_modifier.get('mode') != 'keep' and caption_modifier.get('mode') != 'replace' else msg.entities
-                        )
+                        # Try direct media reference first (fast, no download)
+                        try:
+                            await self.client.send_message(
+                                target_entity,
+                                message=caption,
+                                file=msg.media,
+                                formatting_entities=msg.entities if caption_modifier and caption_modifier.get('mode') not in ('keep', 'replace') else msg.entities
+                            )
+                        except Exception as send_err:
+                            err_str = str(send_err).lower()
+                            if 'protected' in err_str or 'forward' in err_str or 'restricted' in err_str:
+                                # Protected channel — download to bytes and re-upload
+                                from io import BytesIO
+                                from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+                                
+                                buffer = BytesIO()
+                                await self.client.download_media(msg, file=buffer)
+                                media_bytes = buffer.getvalue()
+                                
+                                if not media_bytes:
+                                    errors += 1
+                                    logger.warning(f"[UB-{self.bot_id}] Clone msg {msg.id}: download returned empty")
+                                    continue
+                                
+                                # Determine file extension for proper upload
+                                if isinstance(msg.media, MessageMediaPhoto):
+                                    buffer = BytesIO(media_bytes)
+                                    buffer.name = 'photo.jpg'
+                                elif isinstance(msg.media, MessageMediaDocument):
+                                    doc = msg.media.document
+                                    mime = getattr(doc, 'mime_type', '') or ''
+                                    # Get original filename if any
+                                    fname = None
+                                    for attr in (doc.attributes or []):
+                                        if hasattr(attr, 'file_name'):
+                                            fname = attr.file_name
+                                            break
+                                    if not fname:
+                                        ext = mime.split('/')[-1] if '/' in mime else 'bin'
+                                        fname = f'file.{ext}'
+                                    buffer = BytesIO(media_bytes)
+                                    buffer.name = fname
+                                else:
+                                    buffer = BytesIO(media_bytes)
+                                    buffer.name = 'file.bin'
+                                
+                                await self.client.send_message(
+                                    target_entity,
+                                    message=caption,
+                                    file=buffer,
+                                    formatting_entities=msg.entities
+                                )
+                                logger.info(f"[UB-{self.bot_id}] Clone msg {msg.id}: re-uploaded from bytes (protected)")
+                            else:
+                                raise send_err  # Non-protected error, re-raise
                     elif caption:
                         await self.client.send_message(
                             target_entity,
