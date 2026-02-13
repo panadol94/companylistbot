@@ -329,6 +329,9 @@ class UserbotInstance:
         try:
             msg_count = 0
             scraped = []
+            
+            # Get companies for auto-matching
+            companies = self.db.get_companies(self.bot_id)
 
             async for msg in self.client.iter_messages(entity, limit=None):
                 # Stop when we reach messages older than our cutoff
@@ -343,6 +346,14 @@ class UserbotInstance:
                 has_media = bool(msg.photo or msg.video)
                 if not text and not has_media:
                     continue
+
+                # Auto-detect company
+                matched_company = None
+                if text and companies:
+                    for company in companies:
+                        if match_company_in_text(company['name'], text):
+                            matched_company = company
+                            break
 
                 # Get source name (only once)
                 if not scraped:
@@ -374,6 +385,7 @@ class UserbotInstance:
                     'media_type': media_type,
                     'msg_date': msg.date.strftime('%Y-%m-%d %H:%M') if msg.date else '',
                     'msg_id': msg.id,
+                    'matched_company': matched_company,  # Auto-detected company dict or None
                 })
 
                 await asyncio.sleep(0.2)  # Rate limit
@@ -381,7 +393,8 @@ class UserbotInstance:
         except Exception as e:
             logger.error(f"[UB-{self.bot_id}] Error scanning history for {channel_id}: {e}")
 
-        logger.info(f"[UB-{self.bot_id}] Scanned {msg_count} messages in {channel_id}, scraped {len(scraped)} items")
+        auto_matched = sum(1 for s in scraped if s.get('matched_company'))
+        logger.info(f"[UB-{self.bot_id}] Scanned {msg_count} messages in {channel_id}, scraped {len(scraped)} items ({auto_matched} auto-matched)")
         return scraped
 
 

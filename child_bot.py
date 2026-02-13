@@ -7455,6 +7455,9 @@ class ChildBot:
         elif data.startswith("scan_show_item_"):
             return await self._show_scraped_item(update, context)
 
+        elif data.startswith("scan_picker_"):
+            return await self._show_company_picker_override(update, context)
+
         elif data.startswith("scan_pick_"):
             return await self._scan_pick_company(update, context)
 
@@ -7565,12 +7568,17 @@ class ChildBot:
             context.user_data['scraped_items'] = all_scraped
             context.user_data['scraped_index'] = 0
 
+        auto_count = sum(1 for s in all_scraped if s.get('matched_company'))
+        manual_count = len(all_scraped) - auto_count
+
         # Show results summary, then first item
         await status_msg.edit_text(
             f"✅ **SCAN SELESAI!**\n\n"
             f"📢 {len(channels)} channel discanned\n"
-            f"📥 {len(all_scraped)} mesej ditemui\n\n"
-            f"Pilih company untuk setiap mesej 👇",
+            f"📥 {len(all_scraped)} mesej ditemui\n"
+            f"🤖 {auto_count} auto-detected\n"
+            f"❓ {manual_count} perlu pilih manual\n\n"
+            f"Tekan untuk review 👇",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 Lihat Mesej ▶", callback_data="scan_show_item_0")],
@@ -7580,7 +7588,7 @@ class ChildBot:
         return UB_MENU
 
     async def _show_scraped_item(self, update: Update, context=None):
-        """Show a scraped item with company picker"""
+        """Show a scraped item — auto-detected company shown as confirm, or company picker if no match"""
         query = update.callback_query
         await query.answer()
 
@@ -7606,28 +7614,45 @@ class ChildBot:
         msg_date = item.get('msg_date', '')
         media_bytes = item.get('media_bytes')
         media_type = item.get('media_type')
+        matched = item.get('matched_company')
 
         # Build caption
-        caption = (
-            f"📋 **Mesej {idx + 1}/{len(items)}**\n"
-            f"📢 Source: {source}\n"
-            f"📅 Tarikh: {msg_date}\n\n"
-            f"{text[:800] if text else '(media sahaja)'}\n\n"
-            f"👇 **Pilih company untuk swap link:**"
-        )
+        if matched:
+            caption = (
+                f"📋 **Mesej {idx + 1}/{len(items)}**\n"
+                f"📢 Source: {source}\n"
+                f"📅 Tarikh: {msg_date}\n"
+                f"🤖 Auto: **{matched['name']}** ✅\n\n"
+                f"{text[:600] if text else '(media sahaja)'}"
+            )
+        else:
+            caption = (
+                f"📋 **Mesej {idx + 1}/{len(items)}**\n"
+                f"📢 Source: {source}\n"
+                f"📅 Tarikh: {msg_date}\n"
+                f"❓ Company: **Tak dikesan**\n\n"
+                f"{text[:600] if text else '(media sahaja)'}\n\n"
+                f"👇 **Pilih company:**"
+            )
 
-        # Build company picker buttons (max 2 per row)
-        companies = self.db.get_companies(self.bot_id)
-        company_buttons = []
-        row = []
-        for i, c in enumerate(companies):
-            btn_text = c['name'][:20]  # Trim long names
-            row.append(InlineKeyboardButton(btn_text, callback_data=f"scan_pick_{idx}_{c['id']}"))
-            if len(row) == 2:
-                company_buttons.append(row)
-                row = []
-        if row:
-            company_buttons.append(row)
+        # Build buttons
+        buttons = []
+
+        if matched:
+            # Auto-detected — show confirm + change option
+            buttons.append([InlineKeyboardButton(f"✅ Guna {matched['name'][:25]}", callback_data=f"scan_pick_{idx}_{matched['id']}")])
+            buttons.append([InlineKeyboardButton("🔄 Tukar Company", callback_data=f"scan_picker_{idx}")])
+        else:
+            # No match — show company picker
+            companies = self.db.get_companies(self.bot_id)
+            row = []
+            for c in companies:
+                row.append(InlineKeyboardButton(c['name'][:20], callback_data=f"scan_pick_{idx}_{c['id']}"))
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row:
+                buttons.append(row)
 
         # Navigation buttons
         nav_row = []
@@ -7636,10 +7661,10 @@ class ChildBot:
         nav_row.append(InlineKeyboardButton(f"{idx + 1}/{len(items)}", callback_data="noop"))
         if idx < len(items) - 1:
             nav_row.append(InlineKeyboardButton("Skip ▶", callback_data=f"scan_show_item_{idx + 1}"))
-        company_buttons.append(nav_row)
-        company_buttons.append([InlineKeyboardButton("❌ Tutup", callback_data="ub_menu")])
+        buttons.append(nav_row)
+        buttons.append([InlineKeyboardButton("❌ Tutup", callback_data="ub_menu")])
 
-        keyboard = InlineKeyboardMarkup(company_buttons)
+        keyboard = InlineKeyboardMarkup(buttons)
 
         # Send with media if available
         try:
@@ -7647,7 +7672,6 @@ class ChildBot:
                 from io import BytesIO
                 photo_file = BytesIO(media_bytes)
                 photo_file.name = 'scraped.jpg'
-                # Delete old message, send new photo
                 try:
                     await query.message.delete()
                 except Exception:
@@ -7701,6 +7725,61 @@ class ChildBot:
                 reply_markup=keyboard
             )
 
+        return UB_MENU
+
+    async def _show_company_picker_override(self, update: Update, context=None):
+        """Show full company picker for overriding auto-detected company"""
+        query = update.callback_query
+        await query.answer()
+
+        if not context or 'scraped_items' not in context.user_data:
+            await query.message.edit_text("❌ Data scan sudah expired. Scan semula.")
+            return UB_MENU
+
+        # Parse: scan_picker_{idx}
+        idx = int(query.data.split('_')[-1])
+        items = context.user_data['scraped_items']
+        if idx >= len(items):
+            return UB_MENU
+
+        item = items[idx]
+        text = item.get('original_text', '')[:300]
+
+        caption = (
+            f"🔄 **Tukar Company — Mesej {idx + 1}/{len(items)}**\n\n"
+            f"{text}\n\n"
+            f"👇 Pilih company:"
+        )
+
+        companies = self.db.get_companies(self.bot_id)
+        buttons = []
+        row = []
+        for c in companies:
+            row.append(InlineKeyboardButton(c['name'][:20], callback_data=f"scan_pick_{idx}_{c['id']}"))
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append([InlineKeyboardButton("◀ Kembali", callback_data=f"scan_show_item_{idx}")])
+
+        try:
+            await query.message.edit_text(
+                caption,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+        except Exception:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await self.app.bot.send_message(
+                chat_id=query.from_user.id,
+                text=caption,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
         return UB_MENU
 
     async def _scan_pick_company(self, update: Update, context=None):
