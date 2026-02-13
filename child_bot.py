@@ -6461,8 +6461,26 @@ class ChildBot:
                     await update.message.reply_text(f"❌ Failed: {str(e)}")
                 return
         
-        # AI Chatbot — respond to private messages with company promotions
-        if user_id != owner_id and chat.type == 'private' and update.message.text and not is_forwarded:
+        # AI Chatbot — respond to messages with company promotions
+        # Private: all text messages | Group: only when @mentioned or replied to bot
+        should_ai_respond = False
+        user_text = update.message.text or ''
+        
+        if user_id != owner_id and user_text and not is_forwarded:
+            if chat.type == 'private':
+                should_ai_respond = True
+            elif chat.type in ['group', 'supergroup']:
+                bot_username = (await context.bot.get_me()).username
+                # Check if bot is @mentioned
+                if f'@{bot_username}'.lower() in user_text.lower():
+                    user_text = user_text.lower().replace(f'@{bot_username}'.lower(), '').strip()
+                    should_ai_respond = True
+                # Check if replying to bot's message
+                elif update.message.reply_to_message and update.message.reply_to_message.from_user:
+                    if update.message.reply_to_message.from_user.id == context.bot.id:
+                        should_ai_respond = True
+
+        if should_ai_respond:
             try:
                 from ai_rewriter import ai_chat
                 companies = self.db.get_companies(self.bot_id)
@@ -6481,19 +6499,21 @@ class ChildBot:
                     # Show typing indicator
                     await context.bot.send_chat_action(chat_id=chat.id, action='typing')
                     
-                    response = await ai_chat(update.message.text, companies, chat_history)
+                    response = await ai_chat(user_text, companies, chat_history)
                     
                     if response:
                         # Save to chat history
-                        chat_history.append({"role": "user", "content": update.message.text})
+                        chat_history.append({"role": "user", "content": user_text})
                         chat_history.append({"role": "assistant", "content": response})
                         # Keep only last 10 messages
                         context.user_data['ai_chat_history'] = chat_history[-10:]
                         
-                        # Add company list button
-                        keyboard = InlineKeyboardMarkup([
-                            [InlineKeyboardButton("📋 Senarai Company", callback_data="main_menu")]
-                        ])
+                        # Add company list button (only in private)
+                        keyboard = None
+                        if chat.type == 'private':
+                            keyboard = InlineKeyboardMarkup([
+                                [InlineKeyboardButton("📋 Senarai Company", callback_data="main_menu")]
+                            ])
                         
                         await update.message.reply_text(
                             response,
