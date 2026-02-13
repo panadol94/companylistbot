@@ -335,6 +335,7 @@ class UserbotInstance:
         try:
             msg_count = 0
             scraped = []
+            resolved_channel_id = entity.id  # Store real channel ID for forwarding later
             
             # Get companies for auto-matching
             companies = self.db.get_companies(self.bot_id)
@@ -381,33 +382,18 @@ class UserbotInstance:
                 else:
                     source_name = scraped[0]['source_channel']
 
-                # Download media
-                media_bytes = None
-                media_type = None
-                if msg.photo:
-                    media_type = 'photo'
-                    try:
-                        media_bytes = await self.client.download_media(msg, bytes)
-                    except Exception as e:
-                        logger.warning(f"[UB-{self.bot_id}] Failed to download photo: {e}")
-                elif msg.video:
-                    media_type = 'video'
-                    try:
-                        media_bytes = await self.client.download_media(msg, bytes)
-                    except Exception as e:
-                        logger.warning(f"[UB-{self.bot_id}] Failed to download video: {e}")
-
+                # Store msg reference for forwarding later (no download needed!)
                 scraped.append({
                     'source_channel': source_name,
                     'original_text': text,
-                    'media_bytes': media_bytes,
-                    'media_type': media_type,
-                    'msg_date': msg.date.strftime('%Y-%m-%d %H:%M') if msg.date else '',
+                    'channel_id': resolved_channel_id,  # For forwarding
                     'msg_id': msg.id,
-                    'matched_company': matched_company,  # Auto-detected company dict or None
+                    'has_media': has_media,
+                    'msg_date': msg.date.strftime('%Y-%m-%d %H:%M') if msg.date else '',
+                    'matched_company': matched_company,
                 })
 
-                await asyncio.sleep(0.2)  # Rate limit
+                await asyncio.sleep(0.1)  # Rate limit (faster since no download)
 
         except Exception as e:
             logger.error(f"[UB-{self.bot_id}] Error scanning history for {channel_id}: {e}")
@@ -415,6 +401,22 @@ class UserbotInstance:
         auto_matched = sum(1 for s in scraped if s.get('matched_company'))
         logger.info(f"[UB-{self.bot_id}] Scanned {msg_count} messages in {channel_id}, scraped {len(scraped)} items ({auto_matched} auto-matched)")
         return scraped
+
+    async def forward_message(self, from_channel_id, msg_id, to_user_id):
+        """Forward a message from a channel to a user via the userbot.
+        
+        Returns True if forwarded successfully, False otherwise.
+        """
+        if not self.client or not self.client.is_connected():
+            logger.error(f"[UB-{self.bot_id}] Client not connected for forwarding")
+            return False
+
+        try:
+            await self.client.forward_messages(to_user_id, msg_id, from_channel_id)
+            return True
+        except Exception as e:
+            logger.error(f"[UB-{self.bot_id}] Forward failed: {e}")
+            return False
 
 
 class UserbotManager:

@@ -7634,7 +7634,7 @@ class ChildBot:
         return UB_MENU
 
     async def _show_scraped_item(self, update: Update, context=None):
-        """Show a scraped item — auto-detected company shown as confirm, or company picker if no match"""
+        """Show a scraped item — forward original message via userbot, then show buttons"""
         query = update.callback_query
         await query.answer()
 
@@ -7658,38 +7658,53 @@ class ChildBot:
         text = item.get('original_text', '')
         source = item.get('source_channel', 'Unknown')
         msg_date = item.get('msg_date', '')
-        media_bytes = item.get('media_bytes')
-        media_type = item.get('media_type')
+        channel_id = item.get('channel_id')
+        msg_id = item.get('msg_id')
         matched = item.get('matched_company')
+        admin_id = query.from_user.id
 
-        # Build caption
+        # Delete previous message
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+
+        # Forward original message from channel via userbot
+        forwarded = False
+        if channel_id and msg_id and self.userbot_manager:
+            instance = self.userbot_manager.instances.get(self.bot_id)
+            if instance:
+                try:
+                    forwarded = await instance.forward_message(channel_id, msg_id, admin_id)
+                except Exception as e:
+                    self.logger.error(f"Forward failed: {e}")
+
+        # Build info caption for the buttons message
         if matched:
             caption = (
                 f"📋 **Mesej {idx + 1}/{len(items)}**\n"
                 f"📢 Source: {source}\n"
-                f"📅 Tarikh: {msg_date}\n"
-                f"🤖 Auto: **{matched['name']}** ✅\n\n"
-                f"{text[:600] if text else '(media sahaja)'}"
+                f"🤖 Auto: **{matched['name']}** ✅"
             )
         else:
             caption = (
                 f"📋 **Mesej {idx + 1}/{len(items)}**\n"
                 f"📢 Source: {source}\n"
-                f"📅 Tarikh: {msg_date}\n"
-                f"❓ Company: **Tak dikesan**\n\n"
-                f"{text[:600] if text else '(media sahaja)'}\n\n"
+                f"❓ Company: **Tak dikesan**\n"
                 f"👇 **Pilih company:**"
             )
+
+        if not forwarded:
+            # Fallback: show text preview if forward failed
+            caption += f"\n\n{text[:600] if text else '(media sahaja)'}"
 
         # Build buttons
         buttons = []
 
         if matched:
-            # Auto-detected — show confirm + change option
             buttons.append([InlineKeyboardButton(f"✅ Guna {matched['name'][:25]}", callback_data=f"scan_pick_{idx}_{matched['id']}")])
             buttons.append([InlineKeyboardButton("🔄 Tukar Company", callback_data=f"scan_picker_{idx}")])
         else:
-            # No match — show company picker
             companies = self.db.get_companies(self.bot_id)
             row = []
             for c in companies:
@@ -7699,6 +7714,9 @@ class ChildBot:
                     row = []
             if row:
                 buttons.append(row)
+
+        # AI Rewrite button
+        buttons.append([InlineKeyboardButton("🤖 AI Rewrite", callback_data=f"scan_ai_{idx}")])
 
         # Navigation buttons
         nav_row = []
@@ -7712,64 +7730,16 @@ class ChildBot:
 
         keyboard = InlineKeyboardMarkup(buttons)
 
-        # Send with media if available
+        # Send buttons message
         try:
-            if media_bytes and media_type == 'photo':
-                from io import BytesIO
-                photo_file = BytesIO(media_bytes)
-                photo_file.name = 'scraped.jpg'
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                await self.app.bot.send_photo(
-                    chat_id=query.from_user.id,
-                    photo=photo_file,
-                    caption=caption[:1024],
-                    parse_mode='Markdown',
-                    reply_markup=keyboard
-                )
-            elif media_bytes and media_type == 'video':
-                from io import BytesIO
-                video_file = BytesIO(media_bytes)
-                video_file.name = 'scraped.mp4'
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-                await self.app.bot.send_video(
-                    chat_id=query.from_user.id,
-                    video=video_file,
-                    caption=caption[:1024],
-                    parse_mode='Markdown',
-                    reply_markup=keyboard
-                )
-            else:
-                try:
-                    await query.message.edit_text(
-                        caption,
-                        parse_mode='Markdown',
-                        reply_markup=keyboard
-                    )
-                except Exception:
-                    try:
-                        await query.message.delete()
-                    except Exception:
-                        pass
-                    await self.app.bot.send_message(
-                        chat_id=query.from_user.id,
-                        text=caption,
-                        parse_mode='Markdown',
-                        reply_markup=keyboard
-                    )
-        except Exception as e:
-            self.logger.error(f"Error showing scraped item: {e}")
             await self.app.bot.send_message(
-                chat_id=query.from_user.id,
-                text=caption[:4000],
+                chat_id=admin_id,
+                text=caption,
                 parse_mode='Markdown',
                 reply_markup=keyboard
             )
+        except Exception as e:
+            self.logger.error(f"Error showing scraped item buttons: {e}")
 
         return UB_MENU
 
