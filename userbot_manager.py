@@ -276,14 +276,23 @@ class UserbotInstance:
             )
             promo_data['promo_id'] = promo_id
             
-            # Notify via callback
+            # Notify via callback — fire as background task so handler
+            # returns immediately and doesn't block subsequent events
             if self.notify_callback:
-                await self.notify_callback(self.bot_id, promo_data)
+                import asyncio
+                asyncio.create_task(self._safe_notify(promo_data))
             
             logger.info(f"[UB-{self.bot_id}] Promo forwarded: company={company_name or 'PENDING'} from {source_name}")
             
         except Exception as e:
             logger.error(f"[UB-{self.bot_id}] Error processing message: {e}")
+    
+    async def _safe_notify(self, promo_data):
+        """Wrapper to safely call notify_callback without crashing"""
+        try:
+            await self.notify_callback(self.bot_id, promo_data)
+        except Exception as e:
+            logger.error(f"[UB-{self.bot_id}] Notify callback error: {e}")
     
     async def join_channel(self, channel_link):
         """Join a channel/group and return its info"""
