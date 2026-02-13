@@ -5522,6 +5522,7 @@ class ChildBot:
         """Create a single grid image from multiple photos using Pillow."""
         from PIL import Image
         import math
+        import os
         
         # Download all photos
         paths = []
@@ -5571,6 +5572,7 @@ class ChildBot:
         """Create a single grid video from mixed photos+videos using FFmpeg."""
         import subprocess
         import math
+        import os
         
         # Download all media
         paths = []
