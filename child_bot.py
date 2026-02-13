@@ -141,6 +141,8 @@ GW_MENU, GW_TEXT, GW_MEDIA = range(90, 93)
 BROADCAST_TYPE = 100
 GRID_MEDIA, GRID_CAPTION, GRID_BUTTONS = range(101, 104)
 SINGLE_BUTTONS = 105
+# States for Userbot Setup
+UB_MENU, UB_SETUP_API, UB_SETUP_HASH, UB_SETUP_PHONE, UB_SETUP_OTP, UB_SETUP_2FA, UB_ADD_CHANNEL = range(110, 117)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -154,6 +156,7 @@ class ChildBot:
         self.logger = logging.getLogger(f"Bot_{bot_id}")
         # Cache bot_data to avoid repeated DB lookups
         self._bot_data_cache = None
+        self.userbot_manager = None  # Set by BotManager after spawn
         self.setup_handlers()
 
     async def initialize(self):
@@ -414,6 +417,31 @@ class ChildBot:
             conversation_timeout=300
         )
         self.app.add_handler(gw_conv)
+
+        # Userbot Setup Wizard (Admin)
+        ub_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.ub_menu, pattern=r'^ub_menu$')],
+            states={
+                UB_MENU: [
+                    CallbackQueryHandler(self.ub_handle_action, pattern=r'^ub_'),
+                ],
+                UB_SETUP_API: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_save_api_id)],
+                UB_SETUP_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_save_api_hash)],
+                UB_SETUP_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_save_phone)],
+                UB_SETUP_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_verify_otp)],
+                UB_SETUP_2FA: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_verify_2fa)],
+                UB_ADD_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_add_channel_link)],
+            },
+            fallbacks=[
+                CallbackQueryHandler(self.ub_menu, pattern=r'^ub_menu$'),
+                CommandHandler("cancel", self.cancel_op),
+                CallbackQueryHandler(self.handle_callback),
+            ],
+            per_message=False,
+            allow_reentry=True,
+            conversation_timeout=300
+        )
+        self.app.add_handler(ub_conv)
 
         # New Chat Members Handler (Group Welcome)
         self.app.add_handler(MessageHandler(
@@ -1887,6 +1915,10 @@ class ChildBot:
         elif data == "forwarder_manage_sources": await self.show_forwarder_sources(update)
         elif data.startswith("forwarder_remove_source_"): await self.remove_forwarder_source_handler(update, int(data.split("_")[3]))
         elif data == "forwarder_back": await self.show_admin_settings(update)
+        # Promo Monitor Actions
+        elif data.startswith("promo_bc_groups_"): await self._promo_broadcast_action(update, int(data.split("_")[3]), 'groups')
+        elif data.startswith("promo_bc_users_"): await self._promo_broadcast_action(update, int(data.split("_")[3]), 'users')
+        elif data.startswith("promo_skip_"): await self._promo_skip_action(update, int(data.split("_")[2]))
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -3105,7 +3137,8 @@ class ChildBot:
                 [InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram"), InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring")],
                 [InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu"), InlineKeyboardButton("📊 Analytics", callback_data="show_analytics")],
                 [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")],
-                [InlineKeyboardButton("🛡️ Group Management", callback_data="group_mgmt")]
+                [InlineKeyboardButton("🛡️ Group Management", callback_data="group_mgmt")],
+                [InlineKeyboardButton("🤖 Auto Promo Monitor", callback_data="ub_menu")]
             ]
             
             # Only owner can manage admins
@@ -7249,3 +7282,467 @@ class ChildBot:
         except Exception as e:
             self.logger.error(f"Bot status change handler error: {e}")
 
+    # === USERBOT AUTO PROMO MONITOR ===
+
+    async def ub_menu(self, update: Update, context=None):
+        """Show userbot promo monitor menu"""
+        query = update.callback_query
+        if query:
+            await query.answer()
+
+        user_id = update.effective_user.id
+        if not self._is_admin(user_id):
+            return ConversationHandler.END
+
+        session = self.db.get_userbot_session(self.bot_id)
+        channels = self.db.get_monitored_channels(self.bot_id)
+
+        if session and session.get('session_string'):
+            is_active = session.get('is_active', 0)
+            auto_mode = session.get('auto_mode', 0)
+            status_text = "🟢 Active" if is_active else "🔴 Inactive"
+            mode_text = "Auto" if auto_mode else "Manual"
+            phone = session.get('phone', '***')
+
+            text = (
+                f"🤖 **AUTO PROMO MONITOR**\n\n"
+                f"📱 Phone: `{phone}`\n"
+                f"📡 Status: {status_text}\n"
+                f"⚙️ Mode: {mode_text}\n"
+                f"📢 Channels: {len(channels)} monitored"
+            )
+            keyboard = [
+                [InlineKeyboardButton(f"{'🔴 Turn OFF' if is_active else '🟢 Turn ON'}", callback_data="ub_toggle")],
+                [InlineKeyboardButton(f"🔄 Mode: {'Auto → Manual' if auto_mode else 'Manual → Auto'}", callback_data="ub_mode")],
+                [InlineKeyboardButton("📢 Manage Channels", callback_data="ub_channels")],
+                [InlineKeyboardButton("🔄 Reconnect", callback_data="ub_setup")],
+                [InlineKeyboardButton("🗑️ Disconnect", callback_data="ub_disconnect")],
+                [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+            ]
+        else:
+            text = (
+                "🤖 **AUTO PROMO MONITOR**\n\n"
+                "Monitor channel/group untuk detect promo syarikat, "
+                "auto-swap link dengan link kau, dan broadcast terus!\n\n"
+                "⚡ Belum setup. Tekan Setup untuk mula."
+            )
+            keyboard = [
+                [InlineKeyboardButton("⚙️ Setup Userbot", callback_data="ub_setup")],
+                [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+            ]
+
+        if query:
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+        return UB_MENU
+
+    async def ub_handle_action(self, update: Update, context=None):
+        """Handle userbot menu actions"""
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+
+        if data == "ub_toggle":
+            session = self.db.get_userbot_session(self.bot_id)
+            if not session or not session.get('session_string'):
+                await query.message.edit_text("❌ Sila setup userbot dulu.", reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("« Back", callback_data="ub_menu")]]
+                ))
+                return UB_MENU
+
+            is_active = session.get('is_active', 0)
+            if is_active:
+                # Turn off
+                if self.userbot_manager:
+                    await self.userbot_manager.stop_instance(self.bot_id)
+                self.db.toggle_userbot(self.bot_id, False)
+            else:
+                # Turn on
+                if self.userbot_manager:
+                    success = await self.userbot_manager.start_instance(self.bot_id)
+                    if not success:
+                        await query.message.edit_text("❌ Gagal connect. Cuba reconnect.", reply_markup=InlineKeyboardMarkup(
+                            [[InlineKeyboardButton("« Back", callback_data="ub_menu")]]
+                        ))
+                        return UB_MENU
+                self.db.toggle_userbot(self.bot_id, True)
+
+            return await self.ub_menu(update, context)
+
+        elif data == "ub_mode":
+            session = self.db.get_userbot_session(self.bot_id)
+            if session:
+                new_mode = not session.get('auto_mode', 0)
+                self.db.set_userbot_mode(self.bot_id, new_mode)
+            return await self.ub_menu(update, context)
+
+        elif data == "ub_setup":
+            text = (
+                "⚙️ **SETUP USERBOT**\n\n"
+                "1️⃣ Pergi ke https://my.telegram.org\n"
+                "2️⃣ Login dan buat App\n"
+                "3️⃣ Copy API ID\n\n"
+                "📝 Masukkan **API ID** (nombor sahaja):"
+            )
+            await query.message.edit_text(text, parse_mode='Markdown')
+            return UB_SETUP_API
+
+        elif data == "ub_channels":
+            return await self._show_channels_menu(update)
+
+        elif data == "ub_disconnect":
+            if self.userbot_manager:
+                await self.userbot_manager.stop_instance(self.bot_id)
+            self.db.delete_userbot_session(self.bot_id)
+            await query.message.edit_text("✅ Userbot disconnected.", reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("« Back", callback_data="ub_menu")]]
+            ))
+            return UB_MENU
+
+        elif data.startswith("ub_rmch_"):
+            # Remove channel
+            ch_id = int(data.replace("ub_rmch_", ""))
+            self.db.remove_monitored_channel(ch_id)
+            return await self._show_channels_menu(update)
+
+        elif data == "ub_add_ch":
+            await query.message.edit_text(
+                "📢 **ADD CHANNEL**\n\n"
+                "Paste link channel/group yang nak monitor:\n"
+                "Contoh: `https://t.me/channelname` atau `@channelname`",
+                parse_mode='Markdown'
+            )
+            return UB_ADD_CHANNEL
+
+        return UB_MENU
+
+    async def _show_channels_menu(self, update: Update):
+        """Show monitored channels list"""
+        query = update.callback_query
+        channels = self.db.get_monitored_channels(self.bot_id)
+
+        if channels:
+            text = "📢 **MONITORED CHANNELS**\n\n"
+            keyboard = []
+            for ch in channels:
+                title = ch.get('channel_title', 'Unknown')
+                username = ch.get('channel_username', '')
+                display = f"@{username}" if username else title
+                text += f"• {display}\n"
+                keyboard.append([InlineKeyboardButton(f"❌ Remove {display}", callback_data=f"ub_rmch_{ch['id']}")])
+            keyboard.append([InlineKeyboardButton("➕ Add Channel", callback_data="ub_add_ch")])
+            keyboard.append([InlineKeyboardButton("« Back", callback_data="ub_menu")])
+        else:
+            text = "📢 **MONITORED CHANNELS**\n\nBelum ada channel. Tekan Add untuk mula."
+            keyboard = [
+                [InlineKeyboardButton("➕ Add Channel", callback_data="ub_add_ch")],
+                [InlineKeyboardButton("« Back", callback_data="ub_menu")]
+            ]
+
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return UB_MENU
+
+    # --- SETUP WIZARD ---
+
+    async def ub_save_api_id(self, update: Update, context=None):
+        """Step 1: Save API ID"""
+        api_id = update.message.text.strip()
+        if not api_id.isdigit():
+            await update.message.reply_text("❌ API ID mesti nombor sahaja. Cuba lagi:")
+            return UB_SETUP_API
+
+        if not context or not context.user_data:
+            context.user_data['ub_setup'] = {}
+        context.user_data.setdefault('ub_setup', {})['api_id'] = api_id
+
+        await update.message.reply_text(
+            "✅ API ID saved!\n\n"
+            "📝 Sekarang masukkan **API Hash**:",
+            parse_mode='Markdown'
+        )
+        return UB_SETUP_HASH
+
+    async def ub_save_api_hash(self, update: Update, context=None):
+        """Step 2: Save API Hash"""
+        api_hash = update.message.text.strip()
+        if len(api_hash) < 10:
+            await update.message.reply_text("❌ API Hash tidak valid. Cuba lagi:")
+            return UB_SETUP_HASH
+
+        context.user_data.setdefault('ub_setup', {})['api_hash'] = api_hash
+
+        await update.message.reply_text(
+            "✅ API Hash saved!\n\n"
+            "📱 Masukkan **nombor telefon** (format: +60123456789):",
+            parse_mode='Markdown'
+        )
+        return UB_SETUP_PHONE
+
+    async def ub_save_phone(self, update: Update, context=None):
+        """Step 3: Save phone and send OTP"""
+        phone = update.message.text.strip()
+        if not phone.startswith('+'):
+            phone = '+' + phone
+
+        setup = context.user_data.get('ub_setup', {})
+        api_id = setup.get('api_id')
+        api_hash = setup.get('api_hash')
+
+        if not api_id or not api_hash:
+            await update.message.reply_text("❌ Session expired. Sila mula semula.")
+            return ConversationHandler.END
+
+        context.user_data['ub_setup']['phone'] = phone
+
+        await update.message.reply_text("📤 Menghantar kod OTP...")
+
+        if self.userbot_manager:
+            success = await self.userbot_manager.begin_auth(self.bot_id, api_id, api_hash, phone)
+            if success:
+                await update.message.reply_text(
+                    "✅ Kod OTP dihantar ke Telegram/SMS kau!\n\n"
+                    "📝 Masukkan **kod OTP** (contoh: 12345):",
+                    parse_mode='Markdown'
+                )
+                return UB_SETUP_OTP
+            else:
+                await update.message.reply_text(
+                    "❌ Gagal hantar OTP. Semak API ID/Hash dan nombor telefon.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="ub_menu")]])
+                )
+                return UB_MENU
+        else:
+            await update.message.reply_text("❌ Userbot manager tidak aktif. Sila restart platform.")
+            return ConversationHandler.END
+
+    async def ub_verify_otp(self, update: Update, context=None):
+        """Step 4: Verify OTP"""
+        code = update.message.text.strip()
+
+        if self.userbot_manager:
+            success, needs_2fa = await self.userbot_manager.verify_code(self.bot_id, code)
+
+            if needs_2fa:
+                await update.message.reply_text(
+                    "🔐 Akaun ini ada **2FA**!\n\n"
+                    "📝 Masukkan **password 2FA**:",
+                    parse_mode='Markdown'
+                )
+                return UB_SETUP_2FA
+
+            if success:
+                await update.message.reply_text(
+                    "✅ **USERBOT CONNECTED!** 🎉\n\n"
+                    "Sekarang tambah channel untuk monitor.\n"
+                    "Tekan button di bawah:",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📢 Add Channel", callback_data="ub_add_ch")],
+                        [InlineKeyboardButton("🟢 Activate Now", callback_data="ub_toggle")],
+                        [InlineKeyboardButton("« Back to Menu", callback_data="ub_menu")]
+                    ])
+                )
+                return UB_MENU
+            else:
+                await update.message.reply_text("❌ Kod OTP salah. Cuba lagi:")
+                return UB_SETUP_OTP
+        else:
+            await update.message.reply_text("❌ Userbot manager tidak aktif.")
+            return ConversationHandler.END
+
+    async def ub_verify_2fa(self, update: Update, context=None):
+        """Step 5: Verify 2FA password"""
+        password = update.message.text.strip()
+
+        if self.userbot_manager:
+            success = await self.userbot_manager.verify_2fa(self.bot_id, password)
+
+            if success:
+                await update.message.reply_text(
+                    "✅ **USERBOT CONNECTED!** 🎉\n\n"
+                    "Sekarang tambah channel untuk monitor.",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📢 Add Channel", callback_data="ub_add_ch")],
+                        [InlineKeyboardButton("🟢 Activate Now", callback_data="ub_toggle")],
+                        [InlineKeyboardButton("« Back to Menu", callback_data="ub_menu")]
+                    ])
+                )
+                return UB_MENU
+            else:
+                await update.message.reply_text("❌ Password salah. Cuba lagi:")
+                return UB_SETUP_2FA
+        else:
+            await update.message.reply_text("❌ Userbot manager tidak aktif.")
+            return ConversationHandler.END
+
+    async def ub_add_channel_link(self, update: Update, context=None):
+        """Add channel to monitor"""
+        link = update.message.text.strip()
+
+        if not self.userbot_manager or not self.userbot_manager.is_running(self.bot_id):
+            # Not running but session exists - try to join without userbot
+            self.db.add_monitored_channel(
+                self.bot_id,
+                channel_id=link,
+                channel_title=link,
+                channel_username=link.replace('https://t.me/', '').replace('@', '').strip('/')
+            )
+            await update.message.reply_text(
+                f"✅ Channel `{link}` ditambah!\n\n"
+                "⚠️ Userbot belum aktif. Sila activate untuk mula monitor.",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📢 Manage Channels", callback_data="ub_channels")],
+                    [InlineKeyboardButton("« Back", callback_data="ub_menu")]
+                ])
+            )
+            return UB_MENU
+
+        await update.message.reply_text("⏳ Joining channel...")
+
+        result = await self.userbot_manager.join_channel_for_bot(self.bot_id, link)
+
+        if result:
+            self.db.add_monitored_channel(
+                self.bot_id,
+                channel_id=result['id'],
+                channel_title=result['title'],
+                channel_username=result.get('username')
+            )
+            await update.message.reply_text(
+                f"✅ Joined **{result['title']}**!\n"
+                f"Channel akan dimonitor untuk promo.",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("➕ Add Another", callback_data="ub_add_ch")],
+                    [InlineKeyboardButton("📢 View Channels", callback_data="ub_channels")],
+                    [InlineKeyboardButton("« Back", callback_data="ub_menu")]
+                ])
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Gagal join channel. Pastikan link betul.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Cuba Lagi", callback_data="ub_add_ch")],
+                    [InlineKeyboardButton("« Back", callback_data="ub_menu")]
+                ])
+            )
+        return UB_MENU
+
+    # --- PROMO NOTIFICATION CALLBACK ---
+
+    async def handle_promo_notification(self, bot_id, promo_data):
+        """Called by UserbotManager when promo is detected"""
+        try:
+            bot_data = self.db.get_bot_by_token(self.token)
+            owner_id = bot_data.get('owner_id') if bot_data else None
+            if not owner_id:
+                return
+
+            auto_mode = promo_data.get('auto_mode', 0)
+            source = promo_data.get('source_channel', 'Unknown')
+            company = promo_data.get('matched_company', 'Unknown')
+            swapped = promo_data.get('swapped_text', '')
+            promo_id = promo_data.get('promo_id', 0)
+
+            if auto_mode:
+                # Auto-broadcast
+                text = (
+                    f"📤 **AUTO-BROADCAST SENT**\n\n"
+                    f"📢 Source: {source}\n"
+                    f"🏢 Company: {company}\n\n"
+                    f"📝 Caption:\n{swapped[:500]}"
+                )
+                await self.app.bot.send_message(
+                    chat_id=owner_id,
+                    text=text,
+                    parse_mode='Markdown'
+                )
+                # TODO: actual broadcast to groups/users
+                self.db.update_promo_status(promo_id, 'broadcast')
+            else:
+                # Manual mode - notify admin
+                text = (
+                    f"🔔 **PROMO DETECTED!**\n\n"
+                    f"📢 Source: {source}\n"
+                    f"🏢 Match: {company}\n\n"
+                    f"📝 Caption (link swapped ✅):\n"
+                    f"{swapped[:800]}"
+                )
+                keyboard = [
+                    [InlineKeyboardButton("📤 Broadcast Groups", callback_data=f"promo_bc_groups_{promo_id}"),
+                     InlineKeyboardButton("📤 Broadcast Users", callback_data=f"promo_bc_users_{promo_id}")],
+                    [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
+                ]
+                await self.app.bot.send_message(
+                    chat_id=owner_id,
+                    text=text,
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+
+        except Exception as e:
+            self.logger.error(f"Promo notification error: {e}")
+
+    async def _promo_broadcast_action(self, update: Update, promo_id, target):
+        """Handle promo broadcast button"""
+        query = update.callback_query
+        await query.answer("📤 Broadcasting...")
+
+        try:
+            # Get promo from DB
+            conn = self.db.get_connection()
+            row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
+            conn.close()
+
+            if not row:
+                await query.message.edit_text("❌ Promo tidak ditemui.")
+                return
+
+            promo = dict(row)
+            text = promo.get('swapped_text', '')
+
+            if target == 'groups':
+                groups = self.db.get_known_groups(self.bot_id)
+                count = 0
+                for g in groups:
+                    try:
+                        await self.app.bot.send_message(
+                            chat_id=g['group_id'],
+                            text=text,
+                            parse_mode='HTML'
+                        )
+                        count += 1
+                    except Exception:
+                        pass
+                self.db.update_promo_status(promo_id, 'broadcast')
+                await query.message.edit_text(f"✅ Broadcast ke {count} group berjaya!")
+            else:
+                users = self.db.get_users(self.bot_id)
+                count = 0
+                for u in users:
+                    try:
+                        await self.app.bot.send_message(
+                            chat_id=u['telegram_id'],
+                            text=text,
+                            parse_mode='HTML'
+                        )
+                        count += 1
+                    except Exception:
+                        pass
+                self.db.update_promo_status(promo_id, 'broadcast')
+                await query.message.edit_text(f"✅ Broadcast ke {count} users berjaya!")
+
+        except Exception as e:
+            self.logger.error(f"Promo broadcast error: {e}")
+            await query.message.edit_text(f"❌ Error: {e}")
+
+    async def _promo_skip_action(self, update: Update, promo_id):
+        """Handle promo skip button"""
+        query = update.callback_query
+        await query.answer()
+        self.db.update_promo_status(promo_id, 'skipped')
+        await query.message.edit_text("⏭️ Promo skipped.")

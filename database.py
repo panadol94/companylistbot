@@ -473,6 +473,53 @@ class Database:
                 )
             ''')
 
+            # 13. Userbot Sessions Table (Telethon sessions per bot)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS userbot_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL UNIQUE,
+                    api_id TEXT,
+                    api_hash TEXT,
+                    session_string TEXT,
+                    phone TEXT,
+                    is_active BOOLEAN DEFAULT 0,
+                    auto_mode BOOLEAN DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
+                )
+            ''')
+
+            # 14. Monitored Channels Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS monitored_channels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    channel_id TEXT,
+                    channel_title TEXT,
+                    channel_username TEXT,
+                    is_active BOOLEAN DEFAULT 1,
+                    added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
+                )
+            ''')
+
+            # 15. Detected Promos Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS detected_promos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL,
+                    source_channel TEXT,
+                    original_text TEXT,
+                    swapped_text TEXT,
+                    media_file_ids TEXT,
+                    media_types TEXT,
+                    matched_company TEXT,
+                    status TEXT DEFAULT 'pending',
+                    detected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
+                )
+            ''')
+
             conn.commit()
             conn.close()
 
@@ -2516,3 +2563,129 @@ class Database:
             conn.commit()
             conn.close()
             return True
+
+    # === USERBOT SESSION METHODS ===
+
+    def save_userbot_session(self, bot_id, api_id, api_hash, session_string, phone):
+        """Save or update userbot session"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("""
+                INSERT INTO userbot_sessions (bot_id, api_id, api_hash, session_string, phone, is_active)
+                VALUES (?, ?, ?, ?, ?, 0)
+                ON CONFLICT(bot_id) DO UPDATE SET
+                    api_id = excluded.api_id,
+                    api_hash = excluded.api_hash,
+                    session_string = excluded.session_string,
+                    phone = excluded.phone
+            """, (bot_id, api_id, api_hash, session_string, phone))
+            conn.commit()
+            conn.close()
+
+    def get_userbot_session(self, bot_id):
+        """Get userbot session for a bot"""
+        conn = self.get_connection()
+        row = conn.execute("SELECT * FROM userbot_sessions WHERE bot_id = ?", (bot_id,)).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def toggle_userbot(self, bot_id, active):
+        """Toggle userbot on/off"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("UPDATE userbot_sessions SET is_active = ? WHERE bot_id = ?", (1 if active else 0, bot_id))
+            conn.commit()
+            conn.close()
+
+    def set_userbot_mode(self, bot_id, auto_mode):
+        """Set auto/manual mode"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("UPDATE userbot_sessions SET auto_mode = ? WHERE bot_id = ?", (1 if auto_mode else 0, bot_id))
+            conn.commit()
+            conn.close()
+
+    def update_userbot_session_string(self, bot_id, session_string):
+        """Update session string after auth"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("UPDATE userbot_sessions SET session_string = ? WHERE bot_id = ?", (session_string, bot_id))
+            conn.commit()
+            conn.close()
+
+    def delete_userbot_session(self, bot_id):
+        """Delete userbot session"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("DELETE FROM userbot_sessions WHERE bot_id = ?", (bot_id,))
+            conn.commit()
+            conn.close()
+
+    def get_all_active_userbot_sessions(self):
+        """Get all active userbot sessions (for startup)"""
+        conn = self.get_connection()
+        rows = conn.execute("SELECT * FROM userbot_sessions WHERE is_active = 1 AND session_string IS NOT NULL").fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    # === MONITORED CHANNELS METHODS ===
+
+    def add_monitored_channel(self, bot_id, channel_id, channel_title, channel_username=None):
+        """Add a channel to monitor"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("""
+                INSERT OR IGNORE INTO monitored_channels (bot_id, channel_id, channel_title, channel_username)
+                VALUES (?, ?, ?, ?)
+            """, (bot_id, str(channel_id), channel_title, channel_username))
+            conn.commit()
+            conn.close()
+
+    def get_monitored_channels(self, bot_id):
+        """Get all monitored channels for a bot"""
+        conn = self.get_connection()
+        rows = conn.execute("SELECT * FROM monitored_channels WHERE bot_id = ? AND is_active = 1", (bot_id,)).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def remove_monitored_channel(self, channel_db_id):
+        """Remove a monitored channel"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("DELETE FROM monitored_channels WHERE id = ?", (channel_db_id,))
+            conn.commit()
+            conn.close()
+
+    # === DETECTED PROMOS METHODS ===
+
+    def save_detected_promo(self, bot_id, source_channel, original_text, swapped_text, media_file_ids, media_types, matched_company):
+        """Save a detected promo"""
+        import json
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("""
+                INSERT INTO detected_promos (bot_id, source_channel, original_text, swapped_text, media_file_ids, media_types, matched_company)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (bot_id, source_channel, original_text, swapped_text,
+                  json.dumps(media_file_ids) if media_file_ids else None,
+                  json.dumps(media_types) if media_types else None,
+                  matched_company))
+            conn.commit()
+            promo_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.close()
+            return promo_id
+
+    def get_pending_promos(self, bot_id):
+        """Get pending promos for a bot"""
+        conn = self.get_connection()
+        rows = conn.execute("SELECT * FROM detected_promos WHERE bot_id = ? AND status = 'pending' ORDER BY detected_at DESC", (bot_id,)).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def update_promo_status(self, promo_id, status):
+        """Update promo status (pending/broadcast/skipped)"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("UPDATE detected_promos SET status = ? WHERE id = ?", (status, promo_id))
+            conn.commit()
+            conn.close()

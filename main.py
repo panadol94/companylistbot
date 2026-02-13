@@ -9,6 +9,7 @@ from database import Database
 from config import MOTHER_TOKEN, DB_FILE, DOMAIN_URL
 from mother_bot import MotherBot
 from child_bot import ChildBot
+from userbot_manager import UserbotManager
 import uvicorn
 
 # Logging Config
@@ -24,6 +25,7 @@ class BotManager:
         self.scheduler = AsyncIOScheduler()
         self.bots = {} # {token: ChildBotInstance}
         self.mother_bot = None
+        self.userbot_manager = UserbotManager(self.db)
 
     async def start(self):
         logger.info("🚀 Starting Bot SaaS Platform...")
@@ -70,6 +72,9 @@ class BotManager:
         logger.info(f"📂 Found {len(bots_data)} existing child bots.")
         for bot_data in bots_data:
             await self.spawn_bot(bot_data)
+        
+        # 3. Start Userbot Manager (load all active sessions)
+        await self.userbot_manager.start_all()
         
         logger.info(f"🌟 Platform Running. Domain: {DOMAIN_URL}")
 
@@ -261,6 +266,9 @@ class BotManager:
 
         try:
             child = ChildBot(token, bot_data['id'], self.db, self.scheduler)
+            child.userbot_manager = self.userbot_manager  # Inject UserbotManager
+            # Set notification callback for this bot
+            self.userbot_manager.set_notify_callback(bot_data['id'], child.handle_promo_notification)
             await child.initialize() # Setup App
             await self.enable_bot_updates(child.app, token)
             
@@ -331,6 +339,7 @@ class BotManager:
 
     async def shutdown(self):
         logger.info("🔻 Shutting down platform...")
+        await self.userbot_manager.stop_all()
         self.scheduler.shutdown()
 
 # --- FastAPI Lifecycle ---
