@@ -7313,12 +7313,13 @@ class ChildBot:
                 f"📱 Phone: `{phone}`\n"
                 f"📡 Status: {status_text}\n"
                 f"⚙️ Mode: {mode_text}\n"
-                f"📢 Channels: {len(channels)} monitored"
+                f"📢 Channels/Groups: {len(channels)} monitored"
             )
             keyboard = [
                 [InlineKeyboardButton(f"{'🔴 Turn OFF' if is_active else '🟢 Turn ON'}", callback_data="ub_toggle")],
                 [InlineKeyboardButton(f"🔄 Mode: {'Auto → Manual' if auto_mode else 'Manual → Auto'}", callback_data="ub_mode")],
-                [InlineKeyboardButton("📢 Manage Channels", callback_data="ub_channels")],
+                [InlineKeyboardButton("📢 Manage Channels/Groups", callback_data="ub_channels")],
+                [InlineKeyboardButton("📥 Scan 1 Bulan", callback_data="ub_scan_history")],
                 [InlineKeyboardButton("🔄 Reconnect", callback_data="ub_setup")],
                 [InlineKeyboardButton("🗑️ Disconnect", callback_data="ub_disconnect")],
                 [InlineKeyboardButton("« Back", callback_data="admin_settings")]
@@ -7435,12 +7436,19 @@ class ChildBot:
 
         elif data == "ub_add_ch":
             await query.message.edit_text(
-                "📢 **ADD CHANNEL**\n\n"
-                "Paste link channel/group yang nak monitor:\n"
-                "Contoh: `https://t.me/channelname` atau `@channelname`",
+                "📢 **ADD CHANNEL / GROUP**\n\n"
+                "Paste link channel atau group yang nak monitor:\n\n"
+                "Contoh:\n"
+                "• `https://t.me/channelname`\n"
+                "• `@channelname`\n"
+                "• `https://t.me/+invitehash`",
                 parse_mode='Markdown'
             )
             return UB_ADD_CHANNEL
+
+        elif data == "ub_scan_history":
+            return await self._scan_history_action(update, context)
+
 
         return UB_MENU
 
@@ -7450,7 +7458,7 @@ class ChildBot:
         channels = self.db.get_monitored_channels(self.bot_id)
 
         if channels:
-            text = "📢 **MONITORED CHANNELS**\n\n"
+            text = "📢 **MONITORED CHANNELS / GROUPS**\n\n"
             keyboard = []
             for ch in channels:
                 title = ch.get('channel_title', 'Unknown')
@@ -7458,16 +7466,84 @@ class ChildBot:
                 display = f"@{username}" if username else title
                 text += f"• {display}\n"
                 keyboard.append([InlineKeyboardButton(f"❌ Remove {display}", callback_data=f"ub_rmch_{ch['id']}")])
-            keyboard.append([InlineKeyboardButton("➕ Add Channel", callback_data="ub_add_ch")])
+            keyboard.append([InlineKeyboardButton("➕ Add Channel/Group", callback_data="ub_add_ch")])
             keyboard.append([InlineKeyboardButton("« Back", callback_data="ub_menu")])
         else:
-            text = "📢 **MONITORED CHANNELS**\n\nBelum ada channel. Tekan Add untuk mula."
+            text = "📢 **MONITORED CHANNELS / GROUPS**\n\nBelum ada. Tekan Add untuk mula."
             keyboard = [
-                [InlineKeyboardButton("➕ Add Channel", callback_data="ub_add_ch")],
+                [InlineKeyboardButton("➕ Add Channel/Group", callback_data="ub_add_ch")],
                 [InlineKeyboardButton("« Back", callback_data="ub_menu")]
             ]
 
-        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        try:
+            if query:
+                await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            else:
+                await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        except Exception as e:
+            self.logger.error(f"Show channels menu error: {e}")
+            if query:
+                await query.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        return UB_MENU
+
+    async def _scan_history_action(self, update: Update, context=None):
+        """Scan last 30 days of all monitored channels/groups for company matches"""
+        query = update.callback_query
+
+        if not self.userbot_manager or not self.userbot_manager.is_running(self.bot_id):
+            await query.message.edit_text(
+                "❌ Userbot belum aktif!\n\n"
+                "Sila **Turn ON** dulu sebelum scan.",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="ub_menu")]])
+            )
+            return UB_MENU
+
+        channels = self.db.get_monitored_channels(self.bot_id)
+        if not channels:
+            await query.message.edit_text(
+                "❌ Tiada channel/group untuk scan.\n"
+                "Tambah channel dulu.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="ub_menu")]])
+            )
+            return UB_MENU
+
+        # Show scanning message
+        status_msg = await query.message.edit_text(
+            f"🔍 **SCANNING HISTORY (30 HARI)**\n\n"
+            f"📢 {len(channels)} channel/group\n"
+            f"⏳ Sedang scan...\n\n"
+            f"_Ini mungkin ambil masa beberapa minit._",
+            parse_mode='Markdown'
+        )
+
+        async def progress_cb(current, total, ch_name, match_count):
+            try:
+                await status_msg.edit_text(
+                    f"🔍 **SCANNING HISTORY (30 HARI)**\n\n"
+                    f"📊 Progress: {current}/{total}\n"
+                    f"📢 Current: {ch_name}\n"
+                    f"✅ Matches: {match_count}\n\n"
+                    f"_Sabar ya..._",
+                    parse_mode='Markdown'
+                )
+            except Exception:
+                pass
+
+        total_matches = await self.userbot_manager.scan_all_channels_history(
+            self.bot_id, days=30, progress_callback=progress_cb
+        )
+
+        # Show results
+        await status_msg.edit_text(
+            f"✅ **SCAN SELESAI!**\n\n"
+            f"📢 {len(channels)} channel/group discanned\n"
+            f"🎯 {total_matches} promo ditemui\n\n"
+            f"{'Semak notification untuk broadcast.' if total_matches > 0 else 'Tiada promo yang match dengan company list kau.'}",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="ub_menu")]])
+        )
         return UB_MENU
 
     # --- SETUP WIZARD ---

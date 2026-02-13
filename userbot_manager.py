@@ -7,6 +7,7 @@ import asyncio
 import logging
 import re
 import json
+from datetime import datetime, timedelta, timezone
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import JoinChannelRequest
@@ -207,6 +208,115 @@ class UserbotInstance:
             logger.error(f"[UB-{self.bot_id}] Failed to join channel: {e}")
             return None
 
+    async def scan_channel_history(self, channel_id, days=30):
+        """Scan last N days of messages in a channel for company matches.
+        Returns count of matches found.
+        """
+        if not self.client:
+            return 0
+
+        companies = self.db.get_companies(self.bot_id)
+        if not companies:
+            return 0
+
+        since_date = datetime.now(timezone.utc) - timedelta(days=days)
+        matches = 0
+
+        try:
+            entity = await self.client.get_entity(int(channel_id))
+        except ValueError:
+            try:
+                entity = await self.client.get_entity(channel_id)
+            except Exception as e:
+                logger.error(f"[UB-{self.bot_id}] Cannot resolve entity {channel_id}: {e}")
+                return 0
+
+        try:
+            async for msg in self.client.iter_messages(entity, offset_date=since_date, reverse=True):
+                text = msg.message or ""
+                if not text:
+                    continue
+
+                matched_company = None
+                for company in companies:
+                    company_name = company['name'].lower()
+                    if company_name in text.lower():
+                        matched_company = company
+                        break
+
+                if not matched_company:
+                    continue
+
+                # Swap links
+                swapped_text = text
+                if matched_company.get('button_url'):
+                    target_url = matched_company['button_url']
+                    if target_url.startswith('t.me/'):
+                        target_url = 'https://' + target_url
+
+                    urls_found = URL_PATTERN.findall(text)
+                    if urls_found:
+                        for url in urls_found:
+                            swapped_text = swapped_text.replace(url, target_url)
+                    else:
+                        swapped_text += f"\n\n🔗 {target_url}"
+
+                # Get source name
+                chat = await msg.get_chat()
+                source_name = getattr(chat, 'title', None) or str(channel_id)
+
+                # Capture media
+                media_file_ids = []
+                media_types = []
+                if msg.photo:
+                    media_types.append('photo')
+                    media_file_ids.append('photo_pending')
+                elif msg.video:
+                    media_types.append('video')
+                    media_file_ids.append('video_pending')
+
+                # Check auto mode
+                session_data = self.db.get_userbot_session(self.bot_id)
+                auto_mode = session_data.get('auto_mode', 0) if session_data else 0
+
+                promo_data = {
+                    'bot_id': self.bot_id,
+                    'source_channel': source_name,
+                    'original_text': text,
+                    'swapped_text': swapped_text,
+                    'media_file_ids': media_file_ids,
+                    'media_types': media_types,
+                    'matched_company': matched_company['name'],
+                    'company_button_url': matched_company.get('button_url', ''),
+                    'company_button_text': matched_company.get('button_text', matched_company['name']),
+                    'auto_mode': auto_mode,
+                    'message': msg,
+                    'is_history': True
+                }
+
+                # Save promo record
+                promo_id = self.db.save_detected_promo(
+                    bot_id=self.bot_id,
+                    source_channel=source_name,
+                    original_text=text,
+                    swapped_text=swapped_text,
+                    media_file_ids=media_file_ids,
+                    media_types=media_types,
+                    matched_company=matched_company['name']
+                )
+                promo_data['promo_id'] = promo_id
+
+                if self.notify_callback:
+                    await self.notify_callback(self.bot_id, promo_data)
+
+                matches += 1
+                await asyncio.sleep(0.3)  # Rate limit
+
+        except Exception as e:
+            logger.error(f"[UB-{self.bot_id}] Error scanning history for {channel_id}: {e}")
+
+        return matches
+
 
 class UserbotManager:
     """Manages all userbot instances across the platform"""
@@ -385,3 +495,37 @@ class UserbotManager:
     def is_running(self, bot_id):
         """Check if userbot is running for a bot"""
         return bot_id in self.instances and self.instances[bot_id].running
+
+    async def scan_all_channels_history(self, bot_id, days=30, progress_callback=None):
+        """Scan history of all monitored channels for a bot.
+        
+        progress_callback: async func(current, total, channel_name, matches_found)
+        Returns total matches found.
+        """
+        instance = self.instances.get(bot_id)
+        if not instance or not instance.client:
+            return -1  # Not connected
+
+        channels = self.db.get_monitored_channels(bot_id)
+        if not channels:
+            return 0
+
+        total_matches = 0
+        for i, ch in enumerate(channels):
+            channel_id = ch['channel_id']
+            channel_name = ch.get('channel_title', channel_id)
+
+            try:
+                matches = await instance.scan_channel_history(channel_id, days=days)
+                total_matches += matches
+
+                if progress_callback:
+                    await progress_callback(i + 1, len(channels), channel_name, matches)
+
+            except Exception as e:
+                logger.error(f"[UB-{bot_id}] Scan failed for {channel_name}: {e}")
+                if progress_callback:
+                    await progress_callback(i + 1, len(channels), f"❌ {channel_name}", 0)
+
+        logger.info(f"[UB-{bot_id}] History scan complete: {total_matches} matches in {len(channels)} channels")
+        return total_matches
