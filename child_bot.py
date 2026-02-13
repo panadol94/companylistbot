@@ -6461,6 +6461,50 @@ class ChildBot:
                     await update.message.reply_text(f"❌ Failed: {str(e)}")
                 return
         
+        # AI Chatbot — respond to private messages with company promotions
+        if user_id != owner_id and chat.type == 'private' and update.message.text and not is_forwarded:
+            try:
+                from ai_rewriter import ai_chat
+                companies = self.db.get_companies(self.bot_id)
+                
+                if companies:
+                    # Enrich companies with buttons
+                    for c in companies:
+                        c['buttons'] = self.db.get_company_buttons(c['id'])
+                    
+                    # Get chat history from user_data
+                    if 'ai_chat_history' not in context.user_data:
+                        context.user_data['ai_chat_history'] = []
+                    
+                    chat_history = context.user_data['ai_chat_history']
+                    
+                    # Show typing indicator
+                    await context.bot.send_chat_action(chat_id=chat.id, action='typing')
+                    
+                    response = await ai_chat(update.message.text, companies, chat_history)
+                    
+                    if response:
+                        # Save to chat history
+                        chat_history.append({"role": "user", "content": update.message.text})
+                        chat_history.append({"role": "assistant", "content": response})
+                        # Keep only last 10 messages
+                        context.user_data['ai_chat_history'] = chat_history[-10:]
+                        
+                        # Add company list button
+                        keyboard = InlineKeyboardMarkup([
+                            [InlineKeyboardButton("📋 Senarai Company", callback_data="main_menu")]
+                        ])
+                        
+                        await update.message.reply_text(
+                            response,
+                            parse_mode='Markdown',
+                            reply_markup=keyboard,
+                            disable_web_page_preview=True
+                        )
+                        return
+            except Exception as e:
+                self.logger.error(f"AI chatbot error: {e}")
+
         # User -> Admin (forward message and store mapping)
         if user_id != owner_id and self.db.is_livegram_enabled(self.bot_id):
             source_chat = update.effective_chat

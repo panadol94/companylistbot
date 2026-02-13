@@ -147,3 +147,94 @@ def _basic_keywords(name: str) -> str:
     keywords.add(name_lower.replace(' ', '-'))
 
     return ', '.join(sorted(keywords))
+
+
+CHAT_SYSTEM_PROMPT = """Kau adalah AI assistant untuk platform gaming/betting Malaysia.
+Kau tahu semua company dan platform yang tersedia. Tugas kau:
+
+1. Jawab soalan user dengan mesra dan membantu
+2. SELALU promote company yang berkaitan — masukkan nama dan link daftar
+3. Guna bahasa campur BM + English, santai tapi professional
+4. Tambah emoji yang sesuai 🔥💰🎰⚡🎁
+5. Kalau user tanya pasal slot/casino/bet → recommend company yang sesuai
+6. Kalau user tanya soalan umum → jawab dan selitkan promo
+7. JANGAN buat info palsu — guna data company yang diberi sahaja
+8. Pendek dan padat — max 400 aksara
+9. Sertakan link daftar dalam format: [DAFTAR SINI](url)
+10. Kalau ada multiple company sesuai, recommend 2-3 yang terbaik"""
+
+
+async def ai_chat(user_message: str, companies: list, chat_history: list = None) -> str:
+    """AI chatbot that promotes companies based on user questions.
+    
+    Args:
+        user_message: The user's message
+        companies: List of company dicts with name, description, button_url
+        chat_history: Optional list of previous messages for context
+    
+    Returns:
+        AI response text
+    """
+    if not GROQ_API_KEY:
+        return None
+
+    # Build company context
+    company_info = []
+    for c in companies:
+        name = c.get('name', '')
+        desc = c.get('description', '')
+        url = c.get('button_url', '')
+        # Get buttons if available
+        buttons = c.get('buttons', [])
+        link = url
+        if buttons:
+            link = buttons[0].get('url', url)
+        
+        info = f"- {name}"
+        if desc:
+            info += f": {desc[:200]}"
+        if link:
+            info += f" | Link: {link}"
+        company_info.append(info)
+
+    company_context = "\n".join(company_info) if company_info else "(Tiada company)"
+
+    system = CHAT_SYSTEM_PROMPT + f"\n\n=== SENARAI COMPANY ===\n{company_context}\n=== END ==="
+
+    messages = [{"role": "system", "content": system}]
+
+    # Add chat history if available (last 6 messages for context)
+    if chat_history:
+        for msg in chat_history[-6:]:
+            messages.append(msg)
+
+    messages.append({"role": "user", "content": user_message})
+
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": messages,
+        "temperature": 0.7,
+        "max_tokens": 500,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(GROQ_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"Groq chat API error {resp.status}: {error_text[:200]}")
+                    return None
+
+                data = await resp.json()
+                response = data['choices'][0]['message']['content'].strip()
+                logger.info(f"AI chat response: {len(response)} chars")
+                return response
+
+    except Exception as e:
+        logger.error(f"Groq chat failed: {e}")
+        return None
