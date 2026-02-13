@@ -339,6 +339,18 @@ class UserbotInstance:
             # Get companies for auto-matching
             companies = self.db.get_companies(self.bot_id)
 
+            # Auto-generate keywords for companies that don't have any yet
+            for company in companies:
+                if not company.get('keywords'):
+                    try:
+                        from ai_rewriter import generate_keywords
+                        kw = await generate_keywords(company['name'])
+                        self.db.edit_company(company['id'], 'keywords', kw)
+                        company['keywords'] = kw  # Update in-memory too
+                        logger.info(f"[UB-{self.bot_id}] Auto-generated keywords for {company['name']}: {kw}")
+                    except Exception as e:
+                        logger.warning(f"[UB-{self.bot_id}] Failed to generate keywords: {e}")
+
             async for msg in self.client.iter_messages(entity, limit=None):
                 # Stop when we reach messages older than our cutoff
                 if msg.date and msg.date.replace(tzinfo=timezone.utc) < since_date:

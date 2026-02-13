@@ -1965,7 +1965,6 @@ class ChildBot:
             [InlineKeyboardButton("🔗 Button Text", callback_data="ef_btn_text")],
             [InlineKeyboardButton("🌐 Button URL", callback_data="ef_btn_url")],
             [InlineKeyboardButton("🔘 Manage Buttons", callback_data="ef_manage_btns")],
-            [InlineKeyboardButton("🔑 Keywords", callback_data="ef_keywords")],
             [cancel_btn]
         ]
         
@@ -2025,9 +2024,20 @@ class ChildBot:
         formatted_name = message_to_html(update.message)
         self.db.edit_company(company_id, 'name', formatted_name)
         
+        # Auto-generate keywords using AI
+        try:
+            from ai_rewriter import generate_keywords
+            keywords = await generate_keywords(formatted_name)
+            self.db.edit_company(company_id, 'keywords', keywords)
+            kw_msg = f"\n🔑 Keywords auto: `{keywords[:100]}`"
+        except Exception as e:
+            self.logger.error(f"Auto keywords failed: {e}")
+            kw_msg = ""
+        
         keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
         await update.message.reply_text(
-            "✅ Nama company berjaya dikemaskini!",
+            f"✅ Nama company berjaya dikemaskini!{kw_msg}",
+            parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
         return ConversationHandler.END
@@ -4841,6 +4851,13 @@ class ChildBot:
             data['company_id'] = company_id
             # Also add first button to company_buttons table
             self.db.add_company_button(company_id, data['btn_text'], url)
+            # Auto-generate keywords using AI
+            try:
+                from ai_rewriter import generate_keywords
+                keywords = await generate_keywords(data['name'])
+                self.db.edit_company(company_id, 'keywords', keywords)
+            except Exception as e:
+                self.logger.error(f"Auto keywords on add failed: {e}")
         else:
             # Additional buttons
             self.db.add_company_button(data['company_id'], data['btn_text'], url)
