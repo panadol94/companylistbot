@@ -291,6 +291,9 @@ class UserbotInstance:
 
         try:
             msg_count = 0
+            company_names = [c['name'].lower() for c in companies]
+            logger.info(f"[UB-{self.bot_id}] Scanning with {len(companies)} companies: {company_names[:10]}")
+
             async for msg in self.client.iter_messages(entity, limit=None):
                 # Stop when we reach messages older than our cutoff
                 if msg.date and msg.date.replace(tzinfo=timezone.utc) < since_date:
@@ -300,6 +303,10 @@ class UserbotInstance:
                 text = msg.message or ""
                 if not text:
                     continue
+
+                # Log first few messages for debugging
+                if msg_count <= 3:
+                    logger.info(f"[UB-{self.bot_id}] Sample msg #{msg_count}: {text[:100]}")
 
                 matched_company = None
                 for company in companies:
