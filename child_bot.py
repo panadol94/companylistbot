@@ -5743,7 +5743,7 @@ class ChildBot:
                     
                     await bot.send_message(
                         chat_id=chat_id,
-                        text='⬆️',
+                        text='\u2800',
                         reply_markup=InlineKeyboardMarkup(keyboard_rows)
                     )
             finally:
