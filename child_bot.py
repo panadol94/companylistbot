@@ -1927,6 +1927,9 @@ class ChildBot:
         elif data.startswith("promo_bc_groups_"): await self._promo_broadcast_action(update, int(data.split("_")[3]), 'groups')
         elif data.startswith("promo_bc_users_"): await self._promo_broadcast_action(update, int(data.split("_")[3]), 'users')
         elif data.startswith("promo_skip_"): await self._promo_skip_action(update, int(data.split("_")[2]))
+        elif data.startswith("rt_pick_"):
+            parts = data.split("_")
+            await self._rt_pick_company(update, int(parts[2]), int(parts[3]))
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
