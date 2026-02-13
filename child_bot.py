@@ -8166,10 +8166,10 @@ class ChildBot:
         # Show loading
         try:
             await query.message.edit_text(
-                f"✨ **AI sedang menulis semula...**\n\n"
+                f"✨ <b>AI sedang menulis semula...</b>\n\n"
                 f"🏢 Company: {company_name}\n"
                 f"⏳ Tunggu sekejap...",
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
         except Exception:
             pass
@@ -8193,7 +8193,7 @@ class ChildBot:
 
         # Show result
         result_text = (
-            f"✨ **AI REWRITE SELESAI!**\n\n"
+            f"✨ <b>AI REWRITE SELESAI!</b>\n\n"
             f"🏢 Company: {company_name}\n"
             f"📢 Source: {source}\n\n"
             f"📝 Text baru:\n{rewritten[:800]}\n\n"
@@ -8214,7 +8214,7 @@ class ChildBot:
         try:
             await query.message.edit_text(
                 result_text,
-                parse_mode='Markdown',
+                parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         except Exception:
@@ -8225,7 +8225,7 @@ class ChildBot:
             await self.app.bot.send_message(
                 chat_id=query.from_user.id,
                 text=result_text,
-                parse_mode='Markdown',
+                parse_mode='HTML',
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
 
