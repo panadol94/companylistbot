@@ -7725,15 +7725,63 @@ class ChildBot:
             source = item.get('source_channel', 'Unknown')
             matched = item.get('matched_company')
 
-            # Forward original message via userbot
-            fwd_ok = False
+            # Get message content via userbot (downloads media)
+            msg_content = None
             if channel_id and msg_id and self.userbot_manager:
                 instance = self.userbot_manager.instances.get(self.bot_id)
                 if instance:
                     try:
-                        fwd_ok = await instance.forward_message(channel_id, msg_id, admin_id)
+                        msg_content = await instance.get_message_content(channel_id, msg_id)
                     except Exception as e:
-                        self.logger.error(f"Batch forward failed for item {idx}: {e}")
+                        self.logger.error(f"Get content failed for item {idx}: {e}")
+
+            # Send the original message content via child bot
+            if msg_content:
+                media_path = msg_content.get('media_path')
+                media_type = msg_content.get('media_type')
+                msg_text = msg_content.get('text', '')
+                
+                try:
+                    if media_path and media_type:
+                        with open(media_path, 'rb') as f:
+                            if media_type == 'photo':
+                                await self.app.bot.send_photo(
+                                    chat_id=admin_id,
+                                    photo=f,
+                                    caption=msg_text[:1024] if msg_text else None,
+                                )
+                            elif media_type == 'video':
+                                await self.app.bot.send_video(
+                                    chat_id=admin_id,
+                                    video=f,
+                                    caption=msg_text[:1024] if msg_text else None,
+                                )
+                            elif media_type == 'document':
+                                await self.app.bot.send_document(
+                                    chat_id=admin_id,
+                                    document=f,
+                                    caption=msg_text[:1024] if msg_text else None,
+                                )
+                            else:
+                                # sticker or unknown — send as document
+                                await self.app.bot.send_document(
+                                    chat_id=admin_id,
+                                    document=f,
+                                    caption=msg_text[:1024] if msg_text else None,
+                                )
+                        # Cleanup temp file
+                        import os
+                        try:
+                            os.remove(media_path)
+                        except Exception:
+                            pass
+                    elif msg_text:
+                        await self.app.bot.send_message(
+                            chat_id=admin_id,
+                            text=msg_text,
+                        )
+                except Exception as e:
+                    self.logger.error(f"Send content failed for item {idx}: {e}")
 
             # Build caption with company info
             if matched:
@@ -7749,7 +7797,7 @@ class ChildBot:
                     f"❓ Company: **Tak dikesan** — pilih 👇"
                 )
 
-            if not fwd_ok:
+            if not msg_content:
                 caption += f"\n\n{text[:500] if text else '(media sahaja)'}"
 
             # Company buttons

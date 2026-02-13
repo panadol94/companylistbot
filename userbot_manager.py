@@ -450,6 +450,62 @@ class UserbotInstance:
             logger.error(f"[UB-{self.bot_id}] Forward/copy failed: {e}")
             return False
 
+    async def get_message_content(self, channel_id, msg_id):
+        """Get message content from a channel — downloads media if present.
+        
+        Returns dict with: text, media_path, media_type, caption, entities
+        Returns None if failed.
+        """
+        if not self.client or not self.client.is_connected():
+            return None
+
+        try:
+            msg = await self.client.get_messages(channel_id, ids=msg_id)
+            if not msg:
+                return None
+
+            result = {
+                'text': msg.message or '',
+                'media_path': None,
+                'media_type': None,  # 'photo', 'video', 'document', 'sticker'
+                'caption': msg.message or '',
+            }
+
+            # Download media if present
+            if msg.media:
+                import tempfile
+                import os
+                from telethon.tl.types import (
+                    MessageMediaPhoto, MessageMediaDocument
+                )
+
+                if isinstance(msg.media, MessageMediaPhoto):
+                    result['media_type'] = 'photo'
+                elif isinstance(msg.media, MessageMediaDocument):
+                    doc = msg.media.document
+                    mime = getattr(doc, 'mime_type', '') or ''
+                    if mime.startswith('video/'):
+                        result['media_type'] = 'video'
+                    elif 'sticker' in mime or any(
+                        type(a).__name__ == 'DocumentAttributeSticker' 
+                        for a in (doc.attributes or [])
+                    ):
+                        result['media_type'] = 'sticker'
+                    else:
+                        result['media_type'] = 'document'
+
+                if result['media_type']:
+                    tmp_dir = tempfile.mkdtemp()
+                    path = await self.client.download_media(msg, file=tmp_dir)
+                    if path:
+                        result['media_path'] = path
+
+            return result
+
+        except Exception as e:
+            logger.error(f"[UB-{self.bot_id}] get_message_content failed: {e}")
+            return None
+
 
 class UserbotManager:
     """Manages all userbot instances across the platform"""
