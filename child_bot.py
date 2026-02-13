@@ -7291,7 +7291,11 @@ class ChildBot:
             await query.answer()
 
         user_id = update.effective_user.id
-        if not self._is_admin(user_id):
+        bot_data = self.db.get_bot_by_token(self.token)
+        owner_id = int(bot_data.get('owner_id', 0)) if bot_data else 0
+        is_owner = user_id == owner_id
+        is_admin = self.db.is_bot_admin(self.bot_id, user_id)
+        if not (is_owner or is_admin):
             return ConversationHandler.END
 
         session = self.db.get_userbot_session(self.bot_id)
