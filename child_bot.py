@@ -7635,7 +7635,9 @@ class ChildBot:
                 title = ch.get('channel_title', 'Unknown')
                 username = ch.get('channel_username', '')
                 display = f"@{username}" if username else title
-                text += f"• {display}\n"
+                # Escape Markdown special chars in display name
+                safe_display = display.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
+                text += f"• {safe_display}\n"
                 keyboard.append([InlineKeyboardButton(f"❌ Remove {display}", callback_data=f"ub_rmch_{ch['id']}")])
             keyboard.append([InlineKeyboardButton("➕ Add Channel/Group", callback_data="ub_add_ch")])
             keyboard.append([InlineKeyboardButton("« Back", callback_data="ub_menu")])
@@ -7654,8 +7656,9 @@ class ChildBot:
                 await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
         except Exception as e:
             self.logger.error(f"Show channels menu error: {e}")
+            # Fallback: send without Markdown if parse fails
             if query:
-                await query.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+                await query.message.reply_text(text, reply_markup=reply_markup)
         return UB_MENU
 
     async def _scan_history_action(self, update: Update, context=None):
