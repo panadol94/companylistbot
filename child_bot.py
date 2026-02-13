@@ -7782,25 +7782,48 @@ class ChildBot:
             company = promo_data.get('matched_company', 'Unknown')
             swapped = promo_data.get('swapped_text', '')
             promo_id = promo_data.get('promo_id', 0)
+            media_bytes = promo_data.get('media_bytes')
+            media_type = promo_data.get('media_type')
 
             if auto_mode:
                 # Auto-broadcast
-                text = (
+                caption = (
                     f"📤 **AUTO-BROADCAST SENT**\n\n"
                     f"📢 Source: {source}\n"
                     f"🏢 Company: {company}\n\n"
-                    f"📝 Caption:\n{swapped[:500]}"
+                    f"📝 Caption:\n{swapped[:800]}"
                 )
-                await self.app.bot.send_message(
-                    chat_id=owner_id,
-                    text=text,
-                    parse_mode='Markdown'
-                )
+                if media_bytes and media_type == 'photo':
+                    from io import BytesIO
+                    photo_file = BytesIO(media_bytes)
+                    photo_file.name = 'promo.jpg'
+                    await self.app.bot.send_photo(
+                        chat_id=owner_id,
+                        photo=photo_file,
+                        caption=caption[:1024],
+                        parse_mode='Markdown'
+                    )
+                elif media_bytes and media_type == 'video':
+                    from io import BytesIO
+                    video_file = BytesIO(media_bytes)
+                    video_file.name = 'promo.mp4'
+                    await self.app.bot.send_video(
+                        chat_id=owner_id,
+                        video=video_file,
+                        caption=caption[:1024],
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await self.app.bot.send_message(
+                        chat_id=owner_id,
+                        text=caption,
+                        parse_mode='Markdown'
+                    )
                 # TODO: actual broadcast to groups/users
                 self.db.update_promo_status(promo_id, 'broadcast')
             else:
                 # Manual mode - notify admin
-                text = (
+                caption = (
                     f"🔔 **PROMO DETECTED!**\n\n"
                     f"📢 Source: {source}\n"
                     f"🏢 Match: {company}\n\n"
@@ -7812,12 +7835,36 @@ class ChildBot:
                      InlineKeyboardButton("📤 Broadcast Users", callback_data=f"promo_bc_users_{promo_id}")],
                     [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
                 ]
-                await self.app.bot.send_message(
-                    chat_id=owner_id,
-                    text=text,
-                    parse_mode='Markdown',
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
+
+                if media_bytes and media_type == 'photo':
+                    from io import BytesIO
+                    photo_file = BytesIO(media_bytes)
+                    photo_file.name = 'promo.jpg'
+                    await self.app.bot.send_photo(
+                        chat_id=owner_id,
+                        photo=photo_file,
+                        caption=caption[:1024],
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                elif media_bytes and media_type == 'video':
+                    from io import BytesIO
+                    video_file = BytesIO(media_bytes)
+                    video_file.name = 'promo.mp4'
+                    await self.app.bot.send_video(
+                        chat_id=owner_id,
+                        video=video_file,
+                        caption=caption[:1024],
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    await self.app.bot.send_message(
+                        chat_id=owner_id,
+                        text=caption,
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
 
         except Exception as e:
             self.logger.error(f"Promo notification error: {e}")

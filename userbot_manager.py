@@ -367,15 +367,21 @@ class UserbotInstance:
                 chat = await msg.get_chat()
                 source_name = getattr(chat, 'title', None) or str(channel_id)
 
-                # Capture media
-                media_file_ids = []
-                media_types = []
+                # Download media from Telethon message
+                media_bytes = None
+                media_type = None
                 if msg.photo:
-                    media_types.append('photo')
-                    media_file_ids.append('photo_pending')
+                    media_type = 'photo'
+                    try:
+                        media_bytes = await self.client.download_media(msg, bytes)
+                    except Exception as e:
+                        logger.warning(f"[UB-{self.bot_id}] Failed to download photo: {e}")
                 elif msg.video:
-                    media_types.append('video')
-                    media_file_ids.append('video_pending')
+                    media_type = 'video'
+                    try:
+                        media_bytes = await self.client.download_media(msg, bytes)
+                    except Exception as e:
+                        logger.warning(f"[UB-{self.bot_id}] Failed to download video: {e}")
 
                 # Check auto mode
                 session_data = self.db.get_userbot_session(self.bot_id)
@@ -386,8 +392,8 @@ class UserbotInstance:
                     'source_channel': source_name,
                     'original_text': text,
                     'swapped_text': swapped_text,
-                    'media_file_ids': media_file_ids,
-                    'media_types': media_types,
+                    'media_bytes': media_bytes,
+                    'media_type': media_type,
                     'matched_company': matched_company['name'],
                     'company_button_url': matched_company.get('button_url', ''),
                     'company_button_text': matched_company.get('button_text', matched_company['name']),
