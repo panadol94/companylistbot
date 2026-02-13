@@ -7602,6 +7602,21 @@ class ChildBot:
             await query.answer()
             return UB_MENU
 
+        elif data.startswith("promo_bc_groups_"):
+            promo_id = int(data.split("_")[3])
+            await self._promo_broadcast_action(update, promo_id, 'groups')
+            return UB_MENU
+
+        elif data.startswith("promo_bc_users_"):
+            promo_id = int(data.split("_")[3])
+            await self._promo_broadcast_action(update, promo_id, 'users')
+            return UB_MENU
+
+        elif data.startswith("promo_skip_"):
+            promo_id = int(data.split("_")[2])
+            await self._promo_skip_action(update, promo_id)
+            return UB_MENU
+
 
         return UB_MENU
 
