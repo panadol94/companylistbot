@@ -412,10 +412,42 @@ class UserbotInstance:
             return False
 
         try:
-            await self.client.forward_messages(to_user_id, msg_id, from_channel_id)
+            # Get the original message first
+            msg = await self.client.get_messages(from_channel_id, ids=msg_id)
+            if not msg:
+                logger.error(f"[UB-{self.bot_id}] Message {msg_id} not found in {from_channel_id}")
+                return False
+
+            # Try forward first
+            try:
+                await self.client.forward_messages(to_user_id, msg, from_channel_id)
+                logger.info(f"[UB-{self.bot_id}] Forwarded msg {msg_id} to {to_user_id}")
+                return True
+            except Exception as fwd_err:
+                logger.warning(f"[UB-{self.bot_id}] Forward failed ({fwd_err}), trying send_message copy...")
+
+            # Fallback: copy the message content (for restricted forward channels)
+            if msg.media:
+                await self.client.send_message(
+                    to_user_id,
+                    message=msg.message or '',
+                    file=msg.media,
+                    formatting_entities=msg.entities
+                )
+            elif msg.message:
+                await self.client.send_message(
+                    to_user_id,
+                    message=msg.message,
+                    formatting_entities=msg.entities
+                )
+            else:
+                return False
+
+            logger.info(f"[UB-{self.bot_id}] Sent copy of msg {msg_id} to {to_user_id}")
             return True
+
         except Exception as e:
-            logger.error(f"[UB-{self.bot_id}] Forward failed: {e}")
+            logger.error(f"[UB-{self.bot_id}] Forward/copy failed: {e}")
             return False
 
 
