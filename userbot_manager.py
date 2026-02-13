@@ -24,14 +24,24 @@ def match_company_in_text(company_name, text):
     """Smart company name matching with multiple strategies.
     
     Handles variations like:
-    - DB: "CM8 Platform" → matches "CM8" in text
-    - DB: "BossBet8" → matches "boss bet 8" in text
+    - DB: "🚀CM8 Platform" → matches "CM8" in text
+    - DB: "🎮BossBet8" → matches "bossbet8" in text
     - DB: "Mega888" → matches "mega888" in text
     
     Returns True if company matches, False otherwise.
     """
-    name_lower = company_name.lower().strip()
+    # Strip emoji and special unicode chars from company name
+    # Keep only alphanumeric, spaces, hyphens, underscores
+    cleaned_name = re.sub(r'[^\w\s\-]', '', company_name, flags=re.UNICODE)
+    # Also remove non-ASCII that aren't word chars (catches remaining emoji)
+    cleaned_name = ''.join(c for c in cleaned_name if ord(c) < 0x10000 or c.isalnum())
+    cleaned_name = cleaned_name.strip()
+    
+    name_lower = cleaned_name.lower()
     text_lower = text.lower()
+
+    if not name_lower:
+        return False
 
     # 1) Exact substring match
     if name_lower in text_lower:
@@ -408,8 +418,8 @@ class UserbotInstance:
                     source_channel=source_name,
                     original_text=text,
                     swapped_text=swapped_text,
-                    media_file_ids=media_file_ids,
-                    media_types=media_types,
+                    media_file_ids=[media_type] if media_type else [],
+                    media_types=[media_type] if media_type else [],
                     matched_company=matched_company['name']
                 )
                 promo_data['promo_id'] = promo_id
