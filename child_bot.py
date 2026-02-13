@@ -7620,6 +7620,14 @@ class ChildBot:
             await self._promo_skip_action(update, promo_id)
             return UB_MENU
 
+        elif data.startswith("rt_pick_"):
+            # Real-time company pick: rt_pick_{promo_id}_{company_id}
+            parts = data.split("_")
+            promo_id = int(parts[2])
+            company_id = int(parts[3])
+            await self._rt_pick_company(update, promo_id, company_id)
+            return UB_MENU
+
 
         return UB_MENU
 
@@ -8507,8 +8515,9 @@ class ChildBot:
                     self.logger.error(f"Send promo failed to {chat_id}: {e}")
                     return None
 
-            if auto_mode:
+            if auto_mode and company:
                 # === AUTO MODE: broadcast to groups + notify admin ===
+                # (only auto-broadcast when company is matched)
                 
                 # First send to admin for record
                 admin_caption = (
@@ -8577,19 +8586,40 @@ class ChildBot:
                     pass
                     
             else:
-                # === MANUAL MODE: notify admin with broadcast buttons ===
-                caption = (
-                    f"🔔 <b>PROMO DETECTED!</b>\n\n"
-                    f"📢 Source: {source}\n"
-                    f"🏢 Match: {company}\n\n"
-                    f"📝 Caption (link swapped ✅):\n"
-                    f"{swapped[:800]}"
-                )
-                keyboard = [
-                    [InlineKeyboardButton("📤 Broadcast Groups", callback_data=f"promo_bc_groups_{promo_id}"),
-                     InlineKeyboardButton("📤 Broadcast Users", callback_data=f"promo_bc_users_{promo_id}")],
-                    [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
-                ]
+                # === MANUAL MODE or NO COMPANY MATCH ===
+                
+                if company:
+                    # Company matched — show broadcast buttons
+                    caption = (
+                        f"🔔 <b>PROMO DETECTED!</b>\n\n"
+                        f"📢 Source: {source}\n"
+                        f"🏢 Match: {company}\n\n"
+                        f"📝 Caption (link swapped ✅):\n"
+                        f"{swapped[:800]}"
+                    )
+                    keyboard = [
+                        [InlineKeyboardButton("✨ AI Rewrite", callback_data=f"scan_ai_0_{promo_id}")],
+                        [InlineKeyboardButton("📤 Broadcast Groups", callback_data=f"promo_bc_groups_{promo_id}"),
+                         InlineKeyboardButton("📤 Broadcast Users", callback_data=f"promo_bc_users_{promo_id}")],
+                        [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
+                    ]
+                else:
+                    # No company match — show company pick buttons
+                    caption = (
+                        f"🔔 <b>NEW POST DETECTED!</b>\n\n"
+                        f"📢 Source: {source}\n"
+                        f"❓ Company: <i>Belum dipilih</i>\n\n"
+                        f"📝 Text:\n{text[:800]}\n\n"
+                        f"👇 Pilih company:"
+                    )
+                    companies = self.db.get_companies(self.bot_id)
+                    keyboard = []
+                    for c in companies[:20]:  # Max 20 buttons
+                        keyboard.append([InlineKeyboardButton(
+                            f"🏢 {c['name']}", 
+                            callback_data=f"rt_pick_{promo_id}_{c['id']}"
+                        )])
+                    keyboard.append([InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")])
 
                 sent_msg = await send_with_media(owner_id, caption, keyboard)
                 
@@ -8724,3 +8754,88 @@ class ChildBot:
         await query.answer()
         self.db.update_promo_status(promo_id, 'skipped')
         await query.message.edit_text("⏭️ Promo skipped.")
+
+    async def _rt_pick_company(self, update: Update, promo_id, company_id):
+        """Handle real-time company pick — admin picks which company for detected post"""
+        query = update.callback_query
+        await query.answer("🏢 Company dipilih...")
+        
+        try:
+            # Get company info
+            companies = self.db.get_companies(self.bot_id)
+            company = None
+            for c in companies:
+                if c['id'] == company_id:
+                    company = c
+                    break
+            
+            if not company:
+                await query.message.edit_text("❌ Company tidak ditemui.")
+                return
+            
+            # Get promo from DB
+            conn = self.db.get_connection()
+            row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
+            conn.close()
+            
+            if not row:
+                await query.message.edit_text("❌ Promo tidak ditemui.")
+                return
+            
+            promo = dict(row)
+            original_text = promo.get('original_text', '')
+            
+            # Swap links with selected company
+            swapped_text = original_text
+            if company.get('button_url'):
+                target_url = company['button_url']
+                if target_url.startswith('t.me/'):
+                    target_url = 'https://' + target_url
+                
+                import re
+                urls_found = re.findall(r'https?://[^\s<>"{}|\\^`\[\]]+', original_text)
+                if urls_found:
+                    for url in urls_found:
+                        swapped_text = swapped_text.replace(url, target_url)
+                else:
+                    swapped_text += f"\n\n🔗 {target_url}"
+            
+            # Update DB
+            try:
+                conn = self.db.get_connection()
+                conn.execute(
+                    "UPDATE detected_promos SET matched_company = ?, swapped_text = ? WHERE id = ?",
+                    (company['name'], swapped_text, promo_id)
+                )
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                self.logger.error(f"Failed to update promo company: {e}")
+            
+            # Show broadcast buttons
+            source = promo.get('source_channel', '')
+            caption = (
+                f"🔔 <b>COMPANY SELECTED!</b>\n\n"
+                f"📢 Source: {source}\n"
+                f"🏢 Company: {company['name']}\n\n"
+                f"📝 Caption (link swapped ✅):\n"
+                f"{swapped_text[:800]}"
+            )
+            keyboard = [
+                [InlineKeyboardButton("✨ AI Rewrite", callback_data=f"scan_ai_0_{promo_id}")],
+                [InlineKeyboardButton("📤 Broadcast Groups", callback_data=f"promo_bc_groups_{promo_id}"),
+                 InlineKeyboardButton("📤 Broadcast Users", callback_data=f"promo_bc_users_{promo_id}")],
+                [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
+            ]
+            
+            await query.message.edit_text(
+                caption, parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+        except Exception as e:
+            self.logger.error(f"RT pick company error: {e}")
+            try:
+                await query.message.edit_text(f"❌ Error: {e}")
+            except Exception:
+                pass

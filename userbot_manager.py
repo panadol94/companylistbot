@@ -181,7 +181,7 @@ class UserbotInstance:
                     import re
                     text = re.sub(r'  +', ' ', cleaned).strip()
             
-            # Try to match a company
+            # Try to match a company (optional — no longer required)
             companies = self.db.get_companies(self.bot_id)
             matched_company = None
             
@@ -190,13 +190,14 @@ class UserbotInstance:
                     matched_company = company
                     break
             
-            if not matched_company:
-                logger.info(f"[UB-{self.bot_id}] No company match for msg from {chat_id}, skipping. Companies: {[c['name'] for c in companies]}")
-                return  # No company match, skip
+            if matched_company:
+                logger.info(f"[UB-{self.bot_id}] Auto-matched company: {matched_company['name']}")
+            else:
+                logger.info(f"[UB-{self.bot_id}] No company match — will forward to admin for manual pick")
             
-            # Swap links
+            # Swap links if company matched
             swapped_text = text
-            if matched_company.get('button_url'):
+            if matched_company and matched_company.get('button_url'):
                 target_url = matched_company['button_url']
                 if target_url.startswith('t.me/'):
                     target_url = 'https://' + target_url
@@ -206,7 +207,6 @@ class UserbotInstance:
                     for url in urls_found:
                         swapped_text = swapped_text.replace(url, target_url)
                 else:
-                    # No URLs found, append link
                     swapped_text += f"\n\n🔗 {target_url}"
             
             # Get channel info
@@ -247,6 +247,8 @@ class UserbotInstance:
             session_data = self.db.get_userbot_session(self.bot_id)
             auto_mode = session_data.get('auto_mode', 0) if session_data else 0
             
+            company_name = matched_company['name'] if matched_company else ''
+            
             promo_data = {
                 'bot_id': self.bot_id,
                 'source_channel': source_name,
@@ -254,9 +256,9 @@ class UserbotInstance:
                 'swapped_text': swapped_text,
                 'media_file_ids': media_file_ids,
                 'media_types': media_types,
-                'matched_company': matched_company['name'],
-                'company_button_url': matched_company.get('button_url', ''),
-                'company_button_text': matched_company.get('button_text', matched_company['name']),
+                'matched_company': company_name,
+                'company_button_url': matched_company.get('button_url', '') if matched_company else '',
+                'company_button_text': matched_company.get('button_text', '') if matched_company else '',
                 'auto_mode': auto_mode,
                 'media_bytes': media_bytes,
                 'media_type': media_type,
@@ -270,7 +272,7 @@ class UserbotInstance:
                 swapped_text=swapped_text,
                 media_file_ids=media_file_ids,
                 media_types=media_types,
-                matched_company=matched_company['name']
+                matched_company=company_name
             )
             promo_data['promo_id'] = promo_id
             
@@ -278,7 +280,7 @@ class UserbotInstance:
             if self.notify_callback:
                 await self.notify_callback(self.bot_id, promo_data)
             
-            logger.info(f"[UB-{self.bot_id}] Promo detected: {matched_company['name']} from {source_name}")
+            logger.info(f"[UB-{self.bot_id}] Promo forwarded: company={company_name or 'PENDING'} from {source_name}")
             
         except Exception as e:
             logger.error(f"[UB-{self.bot_id}] Error processing message: {e}")
