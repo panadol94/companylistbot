@@ -5540,12 +5540,10 @@ class ChildBot:
             if grid_buttons_json:
                 buttons = json.loads(grid_buttons_json) if isinstance(grid_buttons_json, str) else grid_buttons_json
             
-            has_followup = bool(buttons) or bool(caption_text)
-            
-            # Build media group - caption on album ONLY if no follow-up
+            # Build media group - caption ALWAYS on first item
             media_group = []
             for i, item in enumerate(media_items):
-                if i == 0 and caption_text and not has_followup:
+                if i == 0 and caption_text:
                     cap = caption_text
                     pm = 'HTML'
                 else:
@@ -5563,26 +5561,21 @@ class ChildBot:
             self.logger.info(f"Sending media group with {len(media_group)} items to {chat_id}")
             await bot.send_media_group(chat_id=chat_id, media=media_group)
             
-            # Small delay before follow-up to avoid rate limit
-            if has_followup:
+            # Send follow-up ONLY for buttons (caption already on album)
+            if buttons:
                 await asyncio.sleep(0.3)
                 
-                keyboard = None
-                if buttons:
-                    keyboard_rows = []
-                    for btn in buttons:
-                        url = btn['url']
-                        if url.startswith('t.me/'):
-                            url = 'https://' + url
-                        keyboard_rows.append([InlineKeyboardButton(btn['text'], url=url)])
-                    keyboard = InlineKeyboardMarkup(keyboard_rows)
+                keyboard_rows = []
+                for btn in buttons:
+                    url = btn['url']
+                    if url.startswith('t.me/'):
+                        url = 'https://' + url
+                    keyboard_rows.append([InlineKeyboardButton(btn['text'], url=url)])
                 
-                follow_text = caption_text or '⬆️'
                 await bot.send_message(
                     chat_id=chat_id,
-                    text=follow_text,
-                    reply_markup=keyboard,
-                    parse_mode='HTML'
+                    text='⬆️',
+                    reply_markup=InlineKeyboardMarkup(keyboard_rows)
                 )
         else:
             # Single media or text-only mode
