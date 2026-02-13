@@ -1,0 +1,70 @@
+"""
+AI Promo Rewriter using Groq API (free, fast LLM inference).
+Rewrites scraped promo text into engaging, professional Malay/English promotional content.
+"""
+import os
+import logging
+import aiohttp
+
+logger = logging.getLogger(__name__)
+
+GROQ_API_KEY = os.environ.get('GROQ_API_KEY', '')
+GROQ_MODEL = os.environ.get('GROQ_MODEL', 'llama-3.3-70b-versatile')
+GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
+
+SYSTEM_PROMPT = """Kau adalah pakar copywriter untuk promosi online di Malaysia.
+Tugas kau: tulis semula teks promosi supaya lebih menarik, profesional dan engaging.
+
+Peraturan:
+- Guna bahasa campur (Malay + sedikit English) — gaya santai tapi profesional
+- Tambah emoji yang sesuai (🔥💰⚡🎰🎁 dll)
+- Pastikan link/URL yang ada KEKAL — jangan tukar atau buang
+- Jangan tambah link baru
+- Pendek dan padat — max 500 aksara
+- Fokus pada urgency dan benefit
+- Jangan guna perkataan "saya" — guna "korang", "anda", "bro"
+- Output teks sahaja, tiada penjelasan tambahan"""
+
+
+async def rewrite_promo(original_text: str, company_name: str = '') -> str:
+    """Rewrite promo text using Groq AI.
+    
+    Returns rewritten text, or original text if API fails.
+    """
+    if not GROQ_API_KEY:
+        logger.warning("GROQ_API_KEY not set, skipping AI rewrite")
+        return original_text
+
+    user_prompt = f"Company: {company_name}\n\nTeks asal:\n{original_text}\n\nTulis semula teks promosi ini supaya lebih menarik:"
+
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt}
+        ],
+        "temperature": 0.8,
+        "max_tokens": 600,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(GROQ_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"Groq API error {resp.status}: {error_text[:200]}")
+                    return original_text
+
+                data = await resp.json()
+                rewritten = data['choices'][0]['message']['content'].strip()
+                logger.info(f"AI rewrite success: {len(original_text)} -> {len(rewritten)} chars")
+                return rewritten
+
+    except Exception as e:
+        logger.error(f"Groq API failed: {e}")
+        return original_text

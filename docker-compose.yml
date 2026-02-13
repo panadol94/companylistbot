@@ -10,6 +10,7 @@ services:
       - DB_FILE=/data/bot_platform.db
       - DOMAIN_URL=${DOMAIN_URL}
       - MEDIA_DIR=/data/media
+      - GROQ_API_KEY=${GROQ_API_KEY}
     volumes:
       - ./data:/data
       - ./data/backups:/data/backups

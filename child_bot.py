@@ -7455,6 +7455,9 @@ class ChildBot:
         elif data.startswith("scan_pick_"):
             return await self._scan_pick_company(update, context)
 
+        elif data.startswith("scan_ai_"):
+            return await self._scan_ai_rewrite(update, context)
+
         elif data == "noop":
             await query.answer()
             return UB_MENU
@@ -7768,12 +7771,107 @@ class ChildBot:
         )
 
         keyboard = [
+            [InlineKeyboardButton("✨ AI Rewrite", callback_data=f"scan_ai_{idx}_{promo_id}")],
             [InlineKeyboardButton("📤 Broadcast Groups", callback_data=f"promo_bc_groups_{promo_id}"),
              InlineKeyboardButton("📤 Broadcast Users", callback_data=f"promo_bc_users_{promo_id}")],
             [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
         ]
 
         # Next item button
+        if idx + 1 < len(items):
+            keyboard.append([InlineKeyboardButton(f"📋 Next Mesej ({idx + 2}/{len(items)}) ▶", callback_data=f"scan_show_item_{idx + 1}")])
+        keyboard.append([InlineKeyboardButton("« Back to Menu", callback_data="ub_menu")])
+
+        try:
+            await query.message.edit_text(
+                result_text,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await self.app.bot.send_message(
+                chat_id=query.from_user.id,
+                text=result_text,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
+        return UB_MENU
+
+    async def _scan_ai_rewrite(self, update: Update, context=None):
+        """AI rewrite the promo text using Groq"""
+        query = update.callback_query
+        await query.answer("✨ AI sedang menulis...")
+
+        # Parse: scan_ai_{idx}_{promo_id}
+        parts = query.data.split('_')
+        idx = int(parts[2])
+        promo_id = int(parts[3])
+
+        items = context.user_data.get('scraped_items', []) if context else []
+
+        # Get promo from DB
+        conn = self.db.get_connection()
+        row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
+        conn.close()
+
+        if not row:
+            await query.message.edit_text("❌ Promo tidak ditemui.")
+            return UB_MENU
+
+        promo = dict(row)
+        original_text = promo.get('swapped_text', '') or promo.get('original_text', '')
+        company_name = promo.get('matched_company', '')
+        source = promo.get('source_channel', '')
+
+        # Show loading
+        try:
+            await query.message.edit_text(
+                f"✨ **AI sedang menulis semula...**\n\n"
+                f"🏢 Company: {company_name}\n"
+                f"⏳ Tunggu sekejap...",
+                parse_mode='Markdown'
+            )
+        except Exception:
+            pass
+
+        # Call Groq AI
+        from ai_rewriter import rewrite_promo
+        rewritten = await rewrite_promo(original_text, company_name)
+
+        # Update promo in DB
+        try:
+            conn = self.db.get_connection()
+            conn.execute("UPDATE detected_promos SET swapped_text = ? WHERE id = ?", (rewritten, promo_id))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.logger.error(f"Failed to update promo: {e}")
+
+        # Update context
+        if context and f'promo_{promo_id}' in context.user_data:
+            context.user_data[f'promo_{promo_id}']['swapped_text'] = rewritten
+
+        # Show result
+        result_text = (
+            f"✨ **AI REWRITE SELESAI!**\n\n"
+            f"🏢 Company: {company_name}\n"
+            f"📢 Source: {source}\n\n"
+            f"📝 Text baru:\n{rewritten[:800]}\n\n"
+            f"Nak broadcast?"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("✨ Rewrite Lagi", callback_data=f"scan_ai_{idx}_{promo_id}")],
+            [InlineKeyboardButton("📤 Broadcast Groups", callback_data=f"promo_bc_groups_{promo_id}"),
+             InlineKeyboardButton("📤 Broadcast Users", callback_data=f"promo_bc_users_{promo_id}")],
+            [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
+        ]
+
         if idx + 1 < len(items):
             keyboard.append([InlineKeyboardButton(f"📋 Next Mesej ({idx + 2}/{len(items)}) ▶", callback_data=f"scan_show_item_{idx + 1}")])
         keyboard.append([InlineKeyboardButton("« Back to Menu", callback_data="ub_menu")])
