@@ -4941,12 +4941,14 @@ class ChildBot:
                 media_file_id = data['document']
             
             # Save to database
+            target_type = context.user_data.get('broadcast_target_type', 'users')
             broadcast_id = self.db.save_scheduled_broadcast(
                 self.bot_id,
                 data.get('text', ''),
                 media_file_id,
                 media_type,
-                scheduled_time.strftime('%Y-%m-%d %H:%M:%S')
+                scheduled_time.strftime('%Y-%m-%d %H:%M:%S'),
+                target_type
             )
             
             # Schedule the job
@@ -5093,13 +5095,15 @@ class ChildBot:
             media_file_id = data['document']
         
         # Save to database
+        target_type = context.user_data.get('broadcast_target_type', 'users')
         broadcast_id = self.db.save_recurring_broadcast(
             self.bot_id,
             data.get('text', ''),
             media_file_id,
             media_type,
             interval_type,
-            interval_value
+            interval_value,
+            target_type
         )
         
         # Schedule recurring job
@@ -5172,29 +5176,37 @@ class ChildBot:
                 self.logger.warning(f"Recurring broadcast {broadcast_id} not found or inactive")
                 return
             
-            users = self.db.get_users(self.bot_id)
+            # Determine targets based on saved target_type
+            target_type = broadcast.get('target_type', 'users')
+            if target_type == 'groups':
+                targets = self.db.get_known_groups(self.bot_id)
+                target_ids = [t['group_id'] for t in targets]
+            else:
+                users = self.db.get_users(self.bot_id)
+                target_ids = [u['telegram_id'] for u in users]
+            
             sent = 0
             failed = 0
             
-            for user in users:
+            for tid in target_ids:
                 try:
                     if broadcast['media_type'] == 'photo' and broadcast['media_file_id']:
                         await self.app.bot.send_photo(
-                            chat_id=user['telegram_id'],
+                            chat_id=tid,
                             photo=broadcast['media_file_id'],
                             caption=broadcast['message'],
                             parse_mode='HTML'
                         )
                     elif broadcast['media_type'] == 'video' and broadcast['media_file_id']:
                         await self.app.bot.send_video(
-                            chat_id=user['telegram_id'],
+                            chat_id=tid,
                             video=broadcast['media_file_id'],
                             caption=broadcast['message'],
                             parse_mode='HTML'
                         )
                     else:
                         await self.app.bot.send_message(
-                            chat_id=user['telegram_id'],
+                            chat_id=tid,
                             text=broadcast['message'],
                             parse_mode='HTML'
                         )
@@ -5218,36 +5230,44 @@ class ChildBot:
                 self.logger.warning(f"Broadcast {broadcast_id} not found or already sent")
                 return
             
-            users = self.db.get_users(self.bot_id)
+            # Determine targets based on saved target_type
+            target_type = broadcast.get('target_type', 'users')
+            if target_type == 'groups':
+                targets = self.db.get_known_groups(self.bot_id)
+                target_ids = [t['group_id'] for t in targets]
+            else:
+                users = self.db.get_users(self.bot_id)
+                target_ids = [u['telegram_id'] for u in users]
+            
             sent = 0
             failed = 0
             
-            for u in users:
+            for tid in target_ids:
                 try:
                     if broadcast['media_type'] == 'photo' and broadcast['media_file_id']:
                         await self.app.bot.send_photo(
-                            chat_id=u['telegram_id'],
+                            chat_id=tid,
                             photo=broadcast['media_file_id'],
                             caption=broadcast['message'] or '',
                             parse_mode='HTML'
                         )
                     elif broadcast['media_type'] == 'video' and broadcast['media_file_id']:
                         await self.app.bot.send_video(
-                            chat_id=u['telegram_id'],
+                            chat_id=tid,
                             video=broadcast['media_file_id'],
                             caption=broadcast['message'] or '',
                             parse_mode='HTML'
                         )
                     elif broadcast['media_type'] == 'document' and broadcast['media_file_id']:
                         await self.app.bot.send_document(
-                            chat_id=u['telegram_id'],
+                            chat_id=tid,
                             document=broadcast['media_file_id'],
                             caption=broadcast['message'] or '',
                             parse_mode='HTML'
                         )
                     elif broadcast['message']:
                         await self.app.bot.send_message(
-                            chat_id=u['telegram_id'],
+                            chat_id=tid,
                             text=broadcast['message'],
                             parse_mode='HTML'
                         )
@@ -5262,9 +5282,10 @@ class ChildBot:
             bot_data = self.db.get_bot_by_token(self.token)
             if bot_data:
                 try:
+                    target_label = '👥 Groups' if target_type == 'groups' else '👤 Users'
                     await self.app.bot.send_message(
                         chat_id=bot_data['owner_id'],
-                        text=f"✅ **Scheduled Broadcast Complete!**\n\n📤 Sent: {sent}\n❌ Failed: {failed}",
+                        text=f"✅ **Scheduled Broadcast Complete!**\n\n🎯 Target: {target_label}\n📤 Sent: {sent}\n❌ Failed: {failed}",
                         parse_mode='Markdown'
                     )
                 except Exception as e:
