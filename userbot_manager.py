@@ -471,6 +471,31 @@ class UserbotInstance:
                 'caption': msg.message or '',
             }
 
+            # Strip custom/premium emoji entities — Bot API can't send them
+            if msg.entities and msg.message:
+                from telethon.tl.types import MessageEntityCustomEmoji
+                # Build list of custom emoji positions to remove
+                remove_positions = set()
+                text_bytes = msg.message.encode('utf-16-le')
+                for ent in msg.entities:
+                    if isinstance(ent, MessageEntityCustomEmoji):
+                        # Custom emoji uses a placeholder char at offset
+                        # Convert UTF-16 offset to string position
+                        start = len(text_bytes[:ent.offset * 2].decode('utf-16-le', errors='ignore'))
+                        for i in range(ent.length):
+                            remove_positions.add(start + i)
+                
+                if remove_positions:
+                    cleaned = ''.join(
+                        ch for i, ch in enumerate(msg.message) 
+                        if i not in remove_positions
+                    )
+                    # Clean up double spaces
+                    import re
+                    cleaned = re.sub(r'  +', ' ', cleaned).strip()
+                    result['text'] = cleaned
+                    result['caption'] = cleaned
+
             # Download media if present
             if msg.media:
                 import tempfile
