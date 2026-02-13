@@ -720,6 +720,26 @@ class ChildBot:
             
         await self.main_menu(update, context)
 
+        # AI Onboarding for new users
+        if is_new and self.db.is_ai_chat_enabled(self.bot_id):
+            try:
+                from ai_rewriter import ai_onboarding
+                companies = self.db.get_companies(self.bot_id)
+                custom_prompt = self.db.get_ai_prompt(self.bot_id) or None
+                user_name = user.first_name or "Bro"
+                
+                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+                onboard_msg = await ai_onboarding(user_name, companies, custom_prompt=custom_prompt)
+                
+                if onboard_msg:
+                    await update.effective_chat.send_message(
+                        f"🤖 {onboard_msg}",
+                        parse_mode='Markdown',
+                        disable_web_page_preview=True
+                    )
+            except Exception as e:
+                self.logger.error(f"AI onboarding error: {e}")
+
     async def main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_subscription(update): return
 

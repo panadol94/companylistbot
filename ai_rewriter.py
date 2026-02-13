@@ -268,3 +268,75 @@ async def ai_chat(user_message: str, companies: list, chat_history: list = None,
     except Exception as e:
         logger.error(f"Groq chat failed: {e}")
         return None
+
+
+ONBOARDING_PROMPT = """Kau baru je jumpa user baru yang pertama kali guna bot ni.
+
+TUGAS KAU:
+1. Sambutlah dia dengan mesra — guna nama dia kalau ada
+2. Terangkan RINGKAS apa bot ni boleh buat (max 4-5 baris)
+3. Bagi 1-2 suggestion apa dia boleh try dulu
+4. Guna bahasa santai campur BM/English, emoji sikit
+5. JANGAN list semua company — just mention ada berapa pilihan
+6. Akhiri dengan soalan simple supaya dia engage
+
+PENTING: Jawapan MESTI pendek dan friendly. Max 5-6 baris. Jangan tulis essay."""
+
+
+async def ai_onboarding(user_name: str, companies: list, custom_prompt: str = None) -> str:
+    """Generate AI onboarding message for new users.
+    
+    Args:
+        user_name: The new user's first name
+        companies: List of company dicts
+        custom_prompt: Optional custom system prompt
+    
+    Returns:
+        AI onboarding message or None
+    """
+    if not GROQ_API_KEY:
+        return None
+
+    # Use custom prompt + onboarding instruction, or default onboarding
+    if custom_prompt:
+        system = custom_prompt + "\n\n" + ONBOARDING_PROMPT
+    else:
+        system = ONBOARDING_PROMPT
+
+    # Add company context
+    company_names = [c.get('name', '') for c in companies[:10]]
+    company_list = ", ".join(company_names) if company_names else "(Tiada company)"
+    system += f"\n\nBot ni ada {len(companies)} company: {company_list}"
+
+    user_msg = f"Hi, nama saya {user_name}. Saya baru join bot ni. Apa boleh buat sini?"
+
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg}
+        ],
+        "temperature": 0.9,
+        "max_tokens": 200,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(GROQ_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    logger.error(f"Groq onboarding API error {resp.status}")
+                    return None
+
+                data = await resp.json()
+                response = data['choices'][0]['message']['content'].strip()
+                logger.info(f"AI onboarding response: {len(response)} chars")
+                return response
+
+    except Exception as e:
+        logger.error(f"Groq onboarding failed: {e}")
+        return None
