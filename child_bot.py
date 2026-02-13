@@ -8609,7 +8609,7 @@ class ChildBot:
                         f"🔔 <b>NEW POST DETECTED!</b>\n\n"
                         f"📢 Source: {source}\n"
                         f"❓ Company: <i>Belum dipilih</i>\n\n"
-                        f"📝 Text:\n{text[:800]}\n\n"
+                        f"📝 Text:\n{swapped[:800]}\n\n"
                         f"👇 Pilih company:"
                     )
                     companies = self.db.get_companies(self.bot_id)
