@@ -59,6 +59,7 @@ class MotherBot:
         self.app.add_handler(CommandHandler("addowner", self.add_owner))
         self.app.add_handler(CommandHandler("removeowner", self.remove_owner))
         self.app.add_handler(CommandHandler("owners", self.list_owners))
+        self.app.add_handler(CommandHandler("server", self.server_status))
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
@@ -624,6 +625,8 @@ class MotherBot:
             "/owners - List platform owners\n"
             "/addowner [id] - Add owner\n"
             "/removeowner [id] - Remove owner\n\n"
+            "**Server:**\n"
+            "/server - CPU/RAM/Disk usage\n\n"
             "**Config:**\n"
             "/setglobalad [text] - Set global ad",
             parse_mode='Markdown'
@@ -756,6 +759,65 @@ class MotherBot:
             return True
         # Check database
         return self.db.is_platform_owner(user_id, MASTER_ADMIN_ID)
+
+    async def server_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show server CPU, RAM, Disk usage (Admin only)"""
+        if not self.is_owner(update.effective_user.id):
+            return
+
+        try:
+            import psutil
+            import time
+
+            cpu = psutil.cpu_percent(interval=1)
+            mem = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+
+            # Uptime
+            uptime_sec = time.time() - psutil.boot_time()
+            days = int(uptime_sec // 86400)
+            hours = int((uptime_sec % 86400) // 3600)
+            mins = int((uptime_sec % 3600) // 60)
+
+            # Progress bars
+            def bar(percent):
+                filled = int(percent / 10)
+                return '█' * filled + '░' * (10 - filled)
+
+            # Warning indicators
+            cpu_warn = '⚠️' if cpu > 80 else '✅'
+            ram_warn = '⚠️' if mem.percent > 80 else '✅'
+            disk_warn = '⚠️' if disk.percent > 80 else '✅'
+
+            active_bots = len(self.manager.bots) if self.manager else 0
+
+            text = (
+                f"🖥 **SERVER STATUS**\n"
+                f"━━━━━━━━━━━━━━━━━\n\n"
+                f"{cpu_warn} **CPU:** {cpu}%\n"
+                f"`{bar(cpu)}` \n\n"
+                f"{ram_warn} **RAM:** {mem.used / (1024**3):.1f}/{mem.total / (1024**3):.1f} GB ({mem.percent}%)\n"
+                f"`{bar(mem.percent)}` \n\n"
+                f"{disk_warn} **Disk:** {disk.used / (1024**3):.1f}/{disk.total / (1024**3):.1f} GB ({disk.percent:.0f}%)\n"
+                f"`{bar(disk.percent)}` \n\n"
+                f"🕐 **Uptime:** {days}d {hours}h {mins}m\n"
+                f"🤖 **Active Bots:** {active_bots}\n"
+            )
+
+            # Overall health
+            if mem.percent > 85 or cpu > 90:
+                text += "\n🔴 **Status: CRITICAL** — High resource usage!"
+            elif mem.percent > 70 or cpu > 70:
+                text += "\n🟡 **Status: WARNING** — Monitor closely"
+            else:
+                text += "\n🟢 **Status: HEALTHY**"
+
+            await update.message.reply_text(text, parse_mode='Markdown')
+
+        except ImportError:
+            await update.message.reply_text("❌ `psutil` not installed on server.", parse_mode='Markdown')
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
     
     async def add_owner(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Add a platform owner /addowner [telegram_id]"""
