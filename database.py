@@ -76,6 +76,13 @@ class Database:
 
                 pass  # Silently handle exception  # Column already exists
 
+            # Migration: Add ai_chat_enabled column if missing
+            try:
+                cursor.execute("ALTER TABLE bots ADD COLUMN ai_chat_enabled BOOLEAN DEFAULT 0")
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
+
             # 2. Companies Table (Content for each bot)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS companies (
@@ -1020,6 +1027,24 @@ class Database:
         bot = conn.execute("SELECT livegram_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
         conn.close()
         return bool(bot['livegram_enabled']) if bot and 'livegram_enabled' in bot.keys() else True  # Default True
+
+    def toggle_ai_chat(self, bot_id):
+        """Toggle AI chatbot on/off for a bot"""
+        with self.lock:
+            conn = self.get_connection()
+            current = conn.execute("SELECT ai_chat_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+            new_state = 0 if current and current['ai_chat_enabled'] else 1
+            conn.execute("UPDATE bots SET ai_chat_enabled = ? WHERE id = ?", (new_state, bot_id))
+            conn.commit()
+            conn.close()
+            return new_state
+
+    def is_ai_chat_enabled(self, bot_id):
+        """Check if AI chatbot is enabled for a bot"""
+        conn = self.get_connection()
+        bot = conn.execute("SELECT ai_chat_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        return bool(bot['ai_chat_enabled']) if bot and 'ai_chat_enabled' in bot.keys() else False  # Default OFF
 
     def toggle_link_guard(self, bot_id):
         """Toggle link guard system on/off for a bot"""

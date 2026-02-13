@@ -1872,6 +1872,7 @@ class ChildBot:
         elif data == "admin_reset_ref_confirm": await self.confirm_reset_my_ref_handler(update)
         elif data == "toggle_livegram": await self.toggle_livegram_system(update)
         elif data == "toggle_link_guard": await self.toggle_link_guard_system(update)
+        elif data == "toggle_ai_chat": await self.toggle_ai_chat_system(update)
         # Group Management
         elif data == "group_mgmt": await self.show_group_management(update)
         elif data == "gm_toggle_link_guard": await self.gm_toggle_link_guard(update)
@@ -3193,6 +3194,10 @@ class ChildBot:
             forwarder_active = forwarder_config and forwarder_config.get('is_active')
             forwarder_btn_text = "🟢 Forwarder: ON" if forwarder_active else "🔴 Forwarder: OFF"
             
+            # Check AI chat status
+            ai_chat_enabled = self.db.is_ai_chat_enabled(self.bot_id)
+            ai_chat_btn_text = "🟢 AI Chat: ON" if ai_chat_enabled else "🔴 AI Chat: OFF"
+
             # Check pending schedules
             pending = self.db.get_pending_broadcasts(self.bot_id)
             schedule_text = f"🔄 Reset Schedule ({len(pending)})" if pending else "📅 No Schedules"
@@ -3212,7 +3217,7 @@ class ChildBot:
                 [InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram"), InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring")],
                 [InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu"), InlineKeyboardButton("📊 Analytics", callback_data="show_analytics")],
                 [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")],
-                [InlineKeyboardButton("🛡️ Group Management", callback_data="group_mgmt")],
+                [InlineKeyboardButton("🛡️ Group Management", callback_data="group_mgmt"), InlineKeyboardButton(ai_chat_btn_text, callback_data="toggle_ai_chat")],
                 [InlineKeyboardButton("🤖 Userbot", callback_data="userbot_hub")]
             ]
             
@@ -3369,6 +3374,14 @@ class ChildBot:
         status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
         
         await update.callback_query.answer(f"Livegram system is now {status_text}")
+        await self.show_admin_settings(update)
+
+    async def toggle_ai_chat_system(self, update: Update):
+        """Toggle AI chatbot on/off"""
+        new_state = self.db.toggle_ai_chat(self.bot_id)
+        status_text = "🟢 **ON**" if new_state else "🔴 **OFF**"
+        
+        await update.callback_query.answer(f"AI ChatBot is now {'ON' if new_state else 'OFF'}")
         await self.show_admin_settings(update)
 
     async def toggle_link_guard_system(self, update: Update):
@@ -6496,6 +6509,7 @@ class ChildBot:
         
         # AI Chatbot — respond to messages with company promotions
         # Private: all text messages from non-owner | Group: when @mentioned or replied to bot
+        ai_chat_on = self.db.is_ai_chat_enabled(self.bot_id)
         should_ai_respond = False
         user_text = update.message.text or ''
         
@@ -6510,9 +6524,9 @@ class ChildBot:
             context.bot_data[group_key] = context.bot_data[group_key][-20:]
         
         if user_text and not is_forwarded:
-            if chat.type == 'private' and user_id != owner_id:
+            if chat.type == 'private' and user_id != owner_id and ai_chat_on:
                 should_ai_respond = True
-            elif chat.type in ['group', 'supergroup']:
+            elif chat.type in ['group', 'supergroup'] and ai_chat_on:
                 # Respond to ALL messages in group (no mention needed)
                 should_ai_respond = True
                 # Strip bot mention from text if present
