@@ -131,17 +131,39 @@ class UserbotInstance:
             if not channels:
                 return
             
-            # Check if message is from a monitored channel
-            chat_id = str(event.chat_id)
-            monitored_ids = [ch['channel_id'] for ch in channels]
+            # Normalize channel ID — Telethon returns -100XXXX for channels
+            # but DB may store as XXXX (bare ID from chat.id)
+            raw_chat_id = event.chat_id
+            chat_id = str(raw_chat_id)
+            # Strip -100 prefix for comparison
+            bare_chat_id = chat_id.lstrip('-')
+            if bare_chat_id.startswith('100'):
+                bare_chat_id = bare_chat_id[3:]
             
-            if chat_id not in monitored_ids:
+            monitored_ids = [str(ch['channel_id']) for ch in channels]
+            # Also build bare versions of monitored IDs
+            bare_monitored = []
+            for mid in monitored_ids:
+                bare = mid.lstrip('-')
+                if bare.startswith('100'):
+                    bare = bare[3:]
+                bare_monitored.append(bare)
+            
+            # Match on any format
+            matched = (chat_id in monitored_ids or 
+                       bare_chat_id in monitored_ids or
+                       chat_id in bare_monitored or
+                       bare_chat_id in bare_monitored)
+            
+            if not matched:
                 return
             
             # Get message text
             text = event.message.message or ""
             if not text and not event.message.media:
                 return
+            
+            logger.info(f"[UB-{self.bot_id}] New msg from monitored channel {chat_id}: {text[:80]}...")
             
             # Strip custom/premium emoji entities
             if event.message.entities and text:
@@ -169,6 +191,7 @@ class UserbotInstance:
                     break
             
             if not matched_company:
+                logger.info(f"[UB-{self.bot_id}] No company match for msg from {chat_id}, skipping. Companies: {[c['name'] for c in companies]}")
                 return  # No company match, skip
             
             # Swap links
