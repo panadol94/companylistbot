@@ -8470,46 +8470,116 @@ class ChildBot:
             media_bytes = promo_data.get('media_bytes')
             media_type = promo_data.get('media_type')
 
+            # Helper: send message with optional media
+            async def send_with_media(chat_id, text, keyboard=None):
+                """Send text + media to a chat. Returns sent message for file_id capture."""
+                reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+                try:
+                    if media_bytes and media_type in ('photo', 'video', 'document'):
+                        from io import BytesIO
+                        buf = BytesIO(media_bytes)
+                        ext = {'photo': '.jpg', 'video': '.mp4', 'document': '.bin'}
+                        buf.name = f'promo{ext.get(media_type, ".bin")}'
+                        if media_type == 'photo':
+                            return await self.app.bot.send_photo(
+                                chat_id=chat_id, photo=buf,
+                                caption=text[:1024], parse_mode='HTML',
+                                reply_markup=reply_markup
+                            )
+                        elif media_type == 'video':
+                            return await self.app.bot.send_video(
+                                chat_id=chat_id, video=buf,
+                                caption=text[:1024], parse_mode='HTML',
+                                reply_markup=reply_markup
+                            )
+                        else:
+                            return await self.app.bot.send_document(
+                                chat_id=chat_id, document=buf,
+                                caption=text[:1024], parse_mode='HTML',
+                                reply_markup=reply_markup
+                            )
+                    else:
+                        return await self.app.bot.send_message(
+                            chat_id=chat_id, text=text,
+                            parse_mode='HTML', reply_markup=reply_markup
+                        )
+                except Exception as e:
+                    self.logger.error(f"Send promo failed to {chat_id}: {e}")
+                    return None
+
             if auto_mode:
-                # Auto-broadcast
-                caption = (
-                    f"📤 **AUTO-BROADCAST SENT**\n\n"
+                # === AUTO MODE: broadcast to groups + notify admin ===
+                
+                # First send to admin for record
+                admin_caption = (
+                    f"📤 <b>AUTO-BROADCAST SENT</b>\n\n"
                     f"📢 Source: {source}\n"
                     f"🏢 Company: {company}\n\n"
                     f"📝 Caption:\n{swapped[:800]}"
                 )
-                if media_bytes and media_type == 'photo':
-                    from io import BytesIO
-                    photo_file = BytesIO(media_bytes)
-                    photo_file.name = 'promo.jpg'
-                    await self.app.bot.send_photo(
-                        chat_id=owner_id,
-                        photo=photo_file,
-                        caption=caption[:1024],
-                        parse_mode='Markdown'
-                    )
-                elif media_bytes and media_type == 'video':
-                    from io import BytesIO
-                    video_file = BytesIO(media_bytes)
-                    video_file.name = 'promo.mp4'
-                    await self.app.bot.send_video(
-                        chat_id=owner_id,
-                        video=video_file,
-                        caption=caption[:1024],
-                        parse_mode='Markdown'
-                    )
-                else:
+                sent_msg = await send_with_media(owner_id, admin_caption)
+                
+                # Capture file_id from admin message for broadcast
+                file_id = None
+                if sent_msg:
+                    if sent_msg.photo:
+                        file_id = sent_msg.photo[-1].file_id
+                    elif sent_msg.video:
+                        file_id = sent_msg.video.file_id
+                    elif sent_msg.document:
+                        file_id = sent_msg.document.file_id
+                
+                # Update DB with file_id
+                if file_id and media_type:
+                    try:
+                        import json
+                        conn = self.db.get_connection()
+                        conn.execute(
+                            "UPDATE detected_promos SET media_file_ids = ?, media_types = ? WHERE id = ?",
+                            (json.dumps([file_id]), json.dumps([media_type]), promo_id)
+                        )
+                        conn.commit()
+                        conn.close()
+                    except Exception:
+                        pass
+                
+                # Broadcast to all groups
+                groups = self.db.get_known_groups(self.bot_id)
+                bc_count = 0
+                for g in groups:
+                    try:
+                        if file_id and media_type == 'photo':
+                            await self.app.bot.send_photo(
+                                chat_id=g['group_id'], photo=file_id,
+                                caption=swapped[:1024], parse_mode='HTML')
+                        elif file_id and media_type == 'video':
+                            await self.app.bot.send_video(
+                                chat_id=g['group_id'], video=file_id,
+                                caption=swapped[:1024], parse_mode='HTML')
+                        else:
+                            await self.app.bot.send_message(
+                                chat_id=g['group_id'], text=swapped,
+                                parse_mode='HTML')
+                        bc_count += 1
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.3)
+                
+                self.db.update_promo_status(promo_id, 'broadcast')
+                
+                # Notify admin of broadcast result
+                try:
                     await self.app.bot.send_message(
                         chat_id=owner_id,
-                        text=caption,
-                        parse_mode='Markdown'
+                        text=f"✅ Auto-broadcast ke {bc_count} group berjaya!"
                     )
-                # TODO: actual broadcast to groups/users
-                self.db.update_promo_status(promo_id, 'broadcast')
+                except Exception:
+                    pass
+                    
             else:
-                # Manual mode - notify admin
+                # === MANUAL MODE: notify admin with broadcast buttons ===
                 caption = (
-                    f"🔔 **PROMO DETECTED!**\n\n"
+                    f"🔔 <b>PROMO DETECTED!</b>\n\n"
                     f"📢 Source: {source}\n"
                     f"🏢 Match: {company}\n\n"
                     f"📝 Caption (link swapped ✅):\n"
@@ -8521,35 +8591,30 @@ class ChildBot:
                     [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
                 ]
 
-                if media_bytes and media_type == 'photo':
-                    from io import BytesIO
-                    photo_file = BytesIO(media_bytes)
-                    photo_file.name = 'promo.jpg'
-                    await self.app.bot.send_photo(
-                        chat_id=owner_id,
-                        photo=photo_file,
-                        caption=caption[:1024],
-                        parse_mode='Markdown',
-                        reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
-                elif media_bytes and media_type == 'video':
-                    from io import BytesIO
-                    video_file = BytesIO(media_bytes)
-                    video_file.name = 'promo.mp4'
-                    await self.app.bot.send_video(
-                        chat_id=owner_id,
-                        video=video_file,
-                        caption=caption[:1024],
-                        parse_mode='Markdown',
-                        reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
-                else:
-                    await self.app.bot.send_message(
-                        chat_id=owner_id,
-                        text=caption,
-                        parse_mode='Markdown',
-                        reply_markup=InlineKeyboardMarkup(keyboard)
-                    )
+                sent_msg = await send_with_media(owner_id, caption, keyboard)
+                
+                # Capture file_id and store in DB for later broadcast
+                if sent_msg:
+                    file_id = None
+                    if sent_msg.photo:
+                        file_id = sent_msg.photo[-1].file_id
+                    elif sent_msg.video:
+                        file_id = sent_msg.video.file_id
+                    elif sent_msg.document:
+                        file_id = sent_msg.document.file_id
+                    
+                    if file_id and media_type:
+                        try:
+                            import json
+                            conn = self.db.get_connection()
+                            conn.execute(
+                                "UPDATE detected_promos SET media_file_ids = ?, media_types = ? WHERE id = ?",
+                                (json.dumps([file_id]), json.dumps([media_type]), promo_id)
+                            )
+                            conn.commit()
+                            conn.close()
+                        except Exception:
+                            pass
 
         except Exception as e:
             self.logger.error(f"Promo notification error: {e}")

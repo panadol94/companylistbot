@@ -143,6 +143,22 @@ class UserbotInstance:
             if not text and not event.message.media:
                 return
             
+            # Strip custom/premium emoji entities
+            if event.message.entities and text:
+                from telethon.tl.types import MessageEntityCustomEmoji
+                remove_positions = set()
+                for ent in event.message.entities:
+                    if isinstance(ent, MessageEntityCustomEmoji):
+                        for i in range(ent.length):
+                            remove_positions.add(ent.offset + i)
+                if remove_positions:
+                    cleaned = ''.join(
+                        ch for i, ch in enumerate(text)
+                        if i not in remove_positions
+                    )
+                    import re
+                    text = re.sub(r'  +', ' ', cleaned).strip()
+            
             # Try to match a company
             companies = self.db.get_companies(self.bot_id)
             matched_company = None
@@ -174,21 +190,35 @@ class UserbotInstance:
             chat = await event.get_chat()
             source_name = getattr(chat, 'title', None) or getattr(chat, 'username', None) or str(chat_id)
             
-            # Capture media info
+            # Download media to bytes
+            media_bytes = None
+            media_type = None
             media_file_ids = []
             media_types = []
             
-            if event.message.photo:
-                media_types.append('photo')
-                media_file_ids.append('photo_pending')  # Will re-download via bot
-            elif event.message.video:
-                media_types.append('video')
-                media_file_ids.append('video_pending')
-            
-            # Check for grouped media (album)
-            if event.message.grouped_id:
-                # We'll handle albums - gather from this message only
-                pass
+            if event.message.media:
+                from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+                
+                if isinstance(event.message.media, MessageMediaPhoto):
+                    media_type = 'photo'
+                elif isinstance(event.message.media, MessageMediaDocument):
+                    doc = event.message.media.document
+                    mime = getattr(doc, 'mime_type', '') or ''
+                    if mime.startswith('video/'):
+                        media_type = 'video'
+                    else:
+                        media_type = 'document'
+                
+                if media_type:
+                    try:
+                        from io import BytesIO
+                        buffer = BytesIO()
+                        await self.client.download_media(event.message, file=buffer)
+                        media_bytes = buffer.getvalue()
+                        media_types.append(media_type)
+                        media_file_ids.append(f'{media_type}_pending')
+                    except Exception as e:
+                        logger.error(f"[UB-{self.bot_id}] Media download failed: {e}")
             
             # Save to DB
             session_data = self.db.get_userbot_session(self.bot_id)
@@ -205,7 +235,8 @@ class UserbotInstance:
                 'company_button_url': matched_company.get('button_url', ''),
                 'company_button_text': matched_company.get('button_text', matched_company['name']),
                 'auto_mode': auto_mode,
-                'message': event.message  # Keep reference for media download
+                'media_bytes': media_bytes,
+                'media_type': media_type,
             }
             
             # Save promo record
