@@ -7763,33 +7763,41 @@ class ChildBot:
                 msg_text = msg_content.get('text', '')
                 
                 try:
+                    sent_msg = None
                     if media_path and media_type:
                         with open(media_path, 'rb') as f:
                             if media_type == 'photo':
-                                await self.app.bot.send_photo(
+                                sent_msg = await self.app.bot.send_photo(
                                     chat_id=admin_id,
                                     photo=f,
                                     caption=msg_text[:1024] if msg_text else None,
                                 )
                             elif media_type == 'video':
-                                await self.app.bot.send_video(
+                                sent_msg = await self.app.bot.send_video(
                                     chat_id=admin_id,
                                     video=f,
                                     caption=msg_text[:1024] if msg_text else None,
                                 )
                             elif media_type == 'document':
-                                await self.app.bot.send_document(
+                                sent_msg = await self.app.bot.send_document(
                                     chat_id=admin_id,
                                     document=f,
                                     caption=msg_text[:1024] if msg_text else None,
                                 )
                             else:
-                                # sticker or unknown — send as document
-                                await self.app.bot.send_document(
+                                sent_msg = await self.app.bot.send_document(
                                     chat_id=admin_id,
                                     document=f,
                                     caption=msg_text[:1024] if msg_text else None,
                                 )
+                        # Capture file_id from response for broadcast later
+                        if sent_msg:
+                            if sent_msg.photo:
+                                item['media_file_id'] = sent_msg.photo[-1].file_id
+                            elif sent_msg.video:
+                                item['media_file_id'] = sent_msg.video.file_id
+                            elif sent_msg.document:
+                                item['media_file_id'] = sent_msg.document.file_id
                         # Cleanup temp file
                         import os
                         try:
@@ -8078,7 +8086,7 @@ class ChildBot:
             source_channel=source,
             original_text=text,
             swapped_text=swapped_text,
-            media_file_ids=[item.get('media_type', '')] if item.get('media_type') else [],
+            media_file_ids=[item.get('media_file_id', '')] if item.get('media_file_id') else [],
             media_types=[item.get('media_type', '')] if item.get('media_type') else [],
             matched_company=company['name']
         )
@@ -8549,7 +8557,7 @@ class ChildBot:
             self.logger.error(f"Promo notification error: {e}")
 
     async def _promo_broadcast_action(self, update: Update, promo_id, target):
-        """Handle promo broadcast button"""
+        """Handle promo broadcast button — sends text + media"""
         query = update.callback_query
         await query.answer("📤 Broadcasting...")
 
@@ -8566,34 +8574,80 @@ class ChildBot:
             promo = dict(row)
             text = promo.get('swapped_text', '')
 
+            # Check for media in context
+            context = None
+            if hasattr(update, 'callback_query') and update.callback_query:
+                # Try to get context from the handler
+                pass
+
+            # Get media info from promo DB (media_file_ids column)
+            media_file_ids = promo.get('media_file_ids', '')
+            media_types = promo.get('media_types', '')
+            
+            # Parse stored media info
+            media_file_id = None
+            media_type = None
+            if media_file_ids and media_types:
+                try:
+                    import json
+                    file_ids = json.loads(media_file_ids) if isinstance(media_file_ids, str) else media_file_ids
+                    m_types = json.loads(media_types) if isinstance(media_types, str) else media_types
+                    if file_ids and m_types:
+                        media_file_id = file_ids[0] if file_ids[0] else None
+                        media_type = m_types[0] if m_types[0] else None
+                except Exception:
+                    pass
+
+            async def send_to_chat(chat_id):
+                """Send promo to a single chat with media support"""
+                try:
+                    if media_file_id and media_type == 'photo':
+                        await self.app.bot.send_photo(
+                            chat_id=chat_id,
+                            photo=media_file_id,
+                            caption=text[:1024],
+                            parse_mode='HTML'
+                        )
+                    elif media_file_id and media_type == 'video':
+                        await self.app.bot.send_video(
+                            chat_id=chat_id,
+                            video=media_file_id,
+                            caption=text[:1024],
+                            parse_mode='HTML'
+                        )
+                    elif media_file_id and media_type == 'document':
+                        await self.app.bot.send_document(
+                            chat_id=chat_id,
+                            document=media_file_id,
+                            caption=text[:1024],
+                            parse_mode='HTML'
+                        )
+                    else:
+                        await self.app.bot.send_message(
+                            chat_id=chat_id,
+                            text=text,
+                            parse_mode='HTML'
+                        )
+                    return True
+                except Exception:
+                    return False
+
             if target == 'groups':
                 groups = self.db.get_known_groups(self.bot_id)
                 count = 0
                 for g in groups:
-                    try:
-                        await self.app.bot.send_message(
-                            chat_id=g['group_id'],
-                            text=text,
-                            parse_mode='HTML'
-                        )
+                    if await send_to_chat(g['group_id']):
                         count += 1
-                    except Exception:
-                        pass
+                    await asyncio.sleep(0.3)
                 self.db.update_promo_status(promo_id, 'broadcast')
                 await query.message.edit_text(f"✅ Broadcast ke {count} group berjaya!")
             else:
                 users = self.db.get_users(self.bot_id)
                 count = 0
                 for u in users:
-                    try:
-                        await self.app.bot.send_message(
-                            chat_id=u['telegram_id'],
-                            text=text,
-                            parse_mode='HTML'
-                        )
+                    if await send_to_chat(u['telegram_id']):
                         count += 1
-                    except Exception:
-                        pass
+                    await asyncio.sleep(0.3)
                 self.db.update_promo_status(promo_id, 'broadcast')
                 await query.message.edit_text(f"✅ Broadcast ke {count} users berjaya!")
 

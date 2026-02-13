@@ -23,7 +23,27 @@ Peraturan:
 - Pendek dan padat — max 500 aksara
 - Fokus pada urgency dan benefit
 - Jangan guna perkataan "saya" — guna "korang", "anda", "bro"
-- Output teks sahaja, tiada penjelasan tambahan"""
+- Output teks sahaja, tiada penjelasan tambahan
+
+FORMAT HTML (WAJIB):
+- Guna <b>bold</b> untuk highlight penting (nama company, bonus, etc)
+- Guna <i>italic</i> untuk penekanan ringan
+- Guna <u>underline</u> untuk CTA (call to action)
+- Guna newline untuk buat spacing cantik
+- JANGAN guna markdown (** atau __), HANYA HTML tags
+- JANGAN guna <a> tag untuk link — tulis URL terus
+
+Contoh output:
+🔥 <b>BONUS 150% DEPOSIT!</b>
+
+Bro jangan lepaskan peluang ni!
+<b>A9Play</b> bagi bonus <u>150% untuk deposit pertama</u> korang 💰
+
+⚡ Slot, Live Casino, Sports — semua ada!
+
+<i>Limited time je bro, cepat claim!</i>
+
+👉 <u>DAFTAR SEKARANG</u>: https://example.com"""
 
 
 async def rewrite_promo(original_text: str, company_name: str = '') -> str:
