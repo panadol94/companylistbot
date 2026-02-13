@@ -251,18 +251,13 @@ class UserbotInstance:
             return None
 
     async def scan_channel_history(self, channel_id, days=30):
-        """Scan last N days of messages in a channel for company matches.
-        Returns count of matches found.
+        """Scan last N days of messages in a channel.
+        Returns list of scraped items (text, media, etc).
         """
         if not self.client:
-            return 0
-
-        companies = self.db.get_companies(self.bot_id)
-        if not companies:
-            return 0
+            return []
 
         since_date = datetime.now(timezone.utc) - timedelta(days=days)
-        matches = 0
 
         # Resolve entity — try multiple approaches
         entity = None
@@ -333,8 +328,7 @@ class UserbotInstance:
 
         try:
             msg_count = 0
-            company_names = [c['name'].lower() for c in companies]
-            logger.info(f"[UB-{self.bot_id}] Scanning with {len(companies)} companies: {company_names[:10]}")
+            scraped = []
 
             async for msg in self.client.iter_messages(entity, limit=None):
                 # Stop when we reach messages older than our cutoff
@@ -343,41 +337,21 @@ class UserbotInstance:
 
                 msg_count += 1
                 text = msg.message or ""
-                if not text:
+
+                # Skip messages with no text AND no media
+                has_links = bool(URL_PATTERN.findall(text)) if text else False
+                has_media = bool(msg.photo or msg.video)
+                if not text and not has_media:
                     continue
 
-                # Log first few messages for debugging
-                if msg_count <= 3:
-                    logger.info(f"[UB-{self.bot_id}] Sample msg #{msg_count}: {text[:100]}")
+                # Get source name (only once)
+                if not scraped:
+                    chat = await msg.get_chat()
+                    source_name = getattr(chat, 'title', None) or str(channel_id)
+                else:
+                    source_name = scraped[0]['source_channel']
 
-                matched_company = None
-                for company in companies:
-                    if match_company_in_text(company['name'], text):
-                        matched_company = company
-                        break
-
-                if not matched_company:
-                    continue
-
-                # Swap links
-                swapped_text = text
-                if matched_company.get('button_url'):
-                    target_url = matched_company['button_url']
-                    if target_url.startswith('t.me/'):
-                        target_url = 'https://' + target_url
-
-                    urls_found = URL_PATTERN.findall(text)
-                    if urls_found:
-                        for url in urls_found:
-                            swapped_text = swapped_text.replace(url, target_url)
-                    else:
-                        swapped_text += f"\n\n🔗 {target_url}"
-
-                # Get source name
-                chat = await msg.get_chat()
-                source_name = getattr(chat, 'title', None) or str(channel_id)
-
-                # Download media from Telethon message
+                # Download media
                 media_bytes = None
                 media_type = None
                 if msg.photo:
@@ -393,48 +367,22 @@ class UserbotInstance:
                     except Exception as e:
                         logger.warning(f"[UB-{self.bot_id}] Failed to download video: {e}")
 
-                # Check auto mode
-                session_data = self.db.get_userbot_session(self.bot_id)
-                auto_mode = session_data.get('auto_mode', 0) if session_data else 0
-
-                promo_data = {
-                    'bot_id': self.bot_id,
+                scraped.append({
                     'source_channel': source_name,
                     'original_text': text,
-                    'swapped_text': swapped_text,
                     'media_bytes': media_bytes,
                     'media_type': media_type,
-                    'matched_company': matched_company['name'],
-                    'company_button_url': matched_company.get('button_url', ''),
-                    'company_button_text': matched_company.get('button_text', matched_company['name']),
-                    'auto_mode': auto_mode,
-                    'message': msg,
-                    'is_history': True
-                }
+                    'msg_date': msg.date.strftime('%Y-%m-%d %H:%M') if msg.date else '',
+                    'msg_id': msg.id,
+                })
 
-                # Save promo record
-                promo_id = self.db.save_detected_promo(
-                    bot_id=self.bot_id,
-                    source_channel=source_name,
-                    original_text=text,
-                    swapped_text=swapped_text,
-                    media_file_ids=[media_type] if media_type else [],
-                    media_types=[media_type] if media_type else [],
-                    matched_company=matched_company['name']
-                )
-                promo_data['promo_id'] = promo_id
-
-                if self.notify_callback:
-                    await self.notify_callback(self.bot_id, promo_data)
-
-                matches += 1
-                await asyncio.sleep(0.3)  # Rate limit
+                await asyncio.sleep(0.2)  # Rate limit
 
         except Exception as e:
             logger.error(f"[UB-{self.bot_id}] Error scanning history for {channel_id}: {e}")
 
-        logger.info(f"[UB-{self.bot_id}] Scanned {msg_count} messages in {channel_id}, found {matches} matches")
-        return matches
+        logger.info(f"[UB-{self.bot_id}] Scanned {msg_count} messages in {channel_id}, scraped {len(scraped)} items")
+        return scraped
 
 
 class UserbotManager:
@@ -618,33 +566,33 @@ class UserbotManager:
     async def scan_all_channels_history(self, bot_id, days=30, progress_callback=None):
         """Scan history of all monitored channels for a bot.
         
-        progress_callback: async func(current, total, channel_name, matches_found)
-        Returns total matches found.
+        progress_callback: async func(current, total, channel_name, scraped_count)
+        Returns list of all scraped items.
         """
         instance = self.instances.get(bot_id)
         if not instance or not instance.client:
-            return -1  # Not connected
+            return []  # Not connected
 
         channels = self.db.get_monitored_channels(bot_id)
         if not channels:
-            return 0
+            return []
 
-        total_matches = 0
+        all_scraped = []
         for i, ch in enumerate(channels):
             channel_id = ch['channel_id']
             channel_name = ch.get('channel_title', channel_id)
 
             try:
-                matches = await instance.scan_channel_history(channel_id, days=days)
-                total_matches += matches
+                scraped = await instance.scan_channel_history(channel_id, days=days)
+                all_scraped.extend(scraped)
 
                 if progress_callback:
-                    await progress_callback(i + 1, len(channels), channel_name, matches)
+                    await progress_callback(i + 1, len(channels), channel_name, len(scraped))
 
             except Exception as e:
                 logger.error(f"[UB-{bot_id}] Scan failed for {channel_name}: {e}")
                 if progress_callback:
                     await progress_callback(i + 1, len(channels), f"❌ {channel_name}", 0)
 
-        logger.info(f"[UB-{bot_id}] History scan complete: {total_matches} matches in {len(channels)} channels")
-        return total_matches
+        logger.info(f"[UB-{bot_id}] History scan complete: {len(all_scraped)} items from {len(channels)} channels")
+        return all_scraped

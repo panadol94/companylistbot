@@ -604,6 +604,13 @@ class Database:
         rows = conn.execute("SELECT * FROM companies WHERE bot_id = ? ORDER BY display_order ASC, id ASC", (bot_id,)).fetchall()
         conn.close()
         return [dict(row) for row in rows]
+
+    def get_company(self, bot_id, company_id):
+        """Get a single company by ID"""
+        conn = self.get_connection()
+        row = conn.execute("SELECT * FROM companies WHERE id = ? AND bot_id = ?", (company_id, bot_id)).fetchone()
+        conn.close()
+        return dict(row) if row else None
     
     def edit_company(self, company_id, field, value):
         """Update a specific field of a company"""

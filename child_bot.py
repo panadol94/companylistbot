@@ -7449,6 +7449,16 @@ class ChildBot:
         elif data == "ub_scan_history":
             return await self._scan_history_action(update, context)
 
+        elif data.startswith("scan_show_item_"):
+            return await self._show_scraped_item(update, context)
+
+        elif data.startswith("scan_pick_"):
+            return await self._scan_pick_company(update, context)
+
+        elif data == "noop":
+            await query.answer()
+            return UB_MENU
+
 
         return UB_MENU
 
@@ -7488,7 +7498,7 @@ class ChildBot:
         return UB_MENU
 
     async def _scan_history_action(self, update: Update, context=None):
-        """Scan last 30 days of all monitored channels/groups for company matches"""
+        """Scan last 30 days of all monitored channels — scrape all, admin picks company"""
         query = update.callback_query
 
         if not self.userbot_manager or not self.userbot_manager.is_running(self.bot_id):
@@ -7513,37 +7523,279 @@ class ChildBot:
         status_msg = await query.message.edit_text(
             f"🔍 **SCANNING HISTORY (30 HARI)**\n\n"
             f"📢 {len(channels)} channel/group\n"
-            f"⏳ Sedang scan...\n\n"
+            f"⏳ Sedang scrape semua mesej...\n\n"
             f"_Ini mungkin ambil masa beberapa minit._",
             parse_mode='Markdown'
         )
 
-        async def progress_cb(current, total, ch_name, match_count):
+        async def progress_cb(current, total, ch_name, scraped_count):
             try:
                 await status_msg.edit_text(
                     f"🔍 **SCANNING HISTORY (30 HARI)**\n\n"
                     f"📊 Progress: {current}/{total}\n"
                     f"📢 Current: {ch_name}\n"
-                    f"✅ Matches: {match_count}\n\n"
+                    f"📥 Scraped: {scraped_count} items\n\n"
                     f"_Sabar ya..._",
                     parse_mode='Markdown'
                 )
             except Exception:
                 pass
 
-        total_matches = await self.userbot_manager.scan_all_channels_history(
+        all_scraped = await self.userbot_manager.scan_all_channels_history(
             self.bot_id, days=30, progress_callback=progress_cb
         )
 
-        # Show results
+        if not all_scraped:
+            await status_msg.edit_text(
+                "📭 **Tiada mesej ditemui dalam 30 hari terakhir.**\n\n"
+                "Channel mungkin kosong atau tiada content.",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="ub_menu")]])
+            )
+            return UB_MENU
+
+        # Store scraped items in user_data
+        if context:
+            context.user_data['scraped_items'] = all_scraped
+            context.user_data['scraped_index'] = 0
+
+        # Show results summary, then first item
         await status_msg.edit_text(
             f"✅ **SCAN SELESAI!**\n\n"
-            f"📢 {len(channels)} channel/group discanned\n"
-            f"🎯 {total_matches} promo ditemui\n\n"
-            f"{'Semak notification untuk broadcast.' if total_matches > 0 else 'Tiada promo yang match dengan company list kau.'}",
+            f"📢 {len(channels)} channel discanned\n"
+            f"📥 {len(all_scraped)} mesej ditemui\n\n"
+            f"Pilih company untuk setiap mesej 👇",
             parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="ub_menu")]])
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Lihat Mesej ▶", callback_data="scan_show_item_0")],
+                [InlineKeyboardButton("« Back", callback_data="ub_menu")]
+            ])
         )
+        return UB_MENU
+
+    async def _show_scraped_item(self, update: Update, context=None):
+        """Show a scraped item with company picker"""
+        query = update.callback_query
+        await query.answer()
+
+        if not context or 'scraped_items' not in context.user_data:
+            await query.message.edit_text("❌ Data scan sudah expired. Scan semula.")
+            return UB_MENU
+
+        # Get index from callback data
+        idx = int(query.data.split('_')[-1])
+        items = context.user_data['scraped_items']
+
+        if idx >= len(items):
+            await query.message.edit_text(
+                "✅ **Semua mesej telah dilihat!**",
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="ub_menu")]])
+            )
+            return UB_MENU
+
+        item = items[idx]
+        text = item.get('original_text', '')
+        source = item.get('source_channel', 'Unknown')
+        msg_date = item.get('msg_date', '')
+        media_bytes = item.get('media_bytes')
+        media_type = item.get('media_type')
+
+        # Build caption
+        caption = (
+            f"📋 **Mesej {idx + 1}/{len(items)}**\n"
+            f"📢 Source: {source}\n"
+            f"📅 Tarikh: {msg_date}\n\n"
+            f"{text[:800] if text else '(media sahaja)'}\n\n"
+            f"👇 **Pilih company untuk swap link:**"
+        )
+
+        # Build company picker buttons (max 2 per row)
+        companies = self.db.get_companies(self.bot_id)
+        company_buttons = []
+        row = []
+        for i, c in enumerate(companies):
+            btn_text = c['name'][:20]  # Trim long names
+            row.append(InlineKeyboardButton(btn_text, callback_data=f"scan_pick_{idx}_{c['id']}"))
+            if len(row) == 2:
+                company_buttons.append(row)
+                row = []
+        if row:
+            company_buttons.append(row)
+
+        # Navigation buttons
+        nav_row = []
+        if idx > 0:
+            nav_row.append(InlineKeyboardButton("◀ Prev", callback_data=f"scan_show_item_{idx - 1}"))
+        nav_row.append(InlineKeyboardButton(f"{idx + 1}/{len(items)}", callback_data="noop"))
+        if idx < len(items) - 1:
+            nav_row.append(InlineKeyboardButton("Skip ▶", callback_data=f"scan_show_item_{idx + 1}"))
+        company_buttons.append(nav_row)
+        company_buttons.append([InlineKeyboardButton("❌ Tutup", callback_data="ub_menu")])
+
+        keyboard = InlineKeyboardMarkup(company_buttons)
+
+        # Send with media if available
+        try:
+            if media_bytes and media_type == 'photo':
+                from io import BytesIO
+                photo_file = BytesIO(media_bytes)
+                photo_file.name = 'scraped.jpg'
+                # Delete old message, send new photo
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await self.app.bot.send_photo(
+                    chat_id=query.from_user.id,
+                    photo=photo_file,
+                    caption=caption[:1024],
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            elif media_bytes and media_type == 'video':
+                from io import BytesIO
+                video_file = BytesIO(media_bytes)
+                video_file.name = 'scraped.mp4'
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await self.app.bot.send_video(
+                    chat_id=query.from_user.id,
+                    video=video_file,
+                    caption=caption[:1024],
+                    parse_mode='Markdown',
+                    reply_markup=keyboard
+                )
+            else:
+                try:
+                    await query.message.edit_text(
+                        caption,
+                        parse_mode='Markdown',
+                        reply_markup=keyboard
+                    )
+                except Exception:
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                    await self.app.bot.send_message(
+                        chat_id=query.from_user.id,
+                        text=caption,
+                        parse_mode='Markdown',
+                        reply_markup=keyboard
+                    )
+        except Exception as e:
+            self.logger.error(f"Error showing scraped item: {e}")
+            await self.app.bot.send_message(
+                chat_id=query.from_user.id,
+                text=caption[:4000],
+                parse_mode='Markdown',
+                reply_markup=keyboard
+            )
+
+        return UB_MENU
+
+    async def _scan_pick_company(self, update: Update, context=None):
+        """Admin picked a company for a scraped message — swap link and show broadcast options"""
+        query = update.callback_query
+        await query.answer("✅ Company dipilih!")
+
+        if not context or 'scraped_items' not in context.user_data:
+            await query.message.edit_text("❌ Data scan sudah expired. Scan semula.")
+            return UB_MENU
+
+        # Parse callback: scan_pick_{idx}_{company_id}
+        parts = query.data.split('_')
+        idx = int(parts[2])
+        company_id = int(parts[3])
+
+        items = context.user_data['scraped_items']
+        if idx >= len(items):
+            return UB_MENU
+
+        item = items[idx]
+        text = item.get('original_text', '')
+        source = item.get('source_channel', 'Unknown')
+
+        # Get company details
+        company = self.db.get_company(self.bot_id, company_id)
+        if not company:
+            await query.message.edit_text("❌ Company tidak ditemui.")
+            return UB_MENU
+
+        # Swap links
+        swapped_text = text
+        if company.get('button_url'):
+            target_url = company['button_url']
+            if target_url.startswith('t.me/'):
+                target_url = 'https://' + target_url
+
+            import re
+            urls_found = re.findall(r'https?://\S+|t\.me/\S+', text, re.IGNORECASE)
+            if urls_found:
+                for url in urls_found:
+                    swapped_text = swapped_text.replace(url, target_url)
+            else:
+                swapped_text += f"\n\n🔗 {target_url}"
+
+        # Save promo record
+        promo_id = self.db.save_detected_promo(
+            bot_id=self.bot_id,
+            source_channel=source,
+            original_text=text,
+            swapped_text=swapped_text,
+            media_file_ids=[item.get('media_type', '')] if item.get('media_type') else [],
+            media_types=[item.get('media_type', '')] if item.get('media_type') else [],
+            matched_company=company['name']
+        )
+
+        # Store for broadcast
+        context.user_data[f'promo_{promo_id}'] = {
+            'swapped_text': swapped_text,
+            'media_bytes': item.get('media_bytes'),
+            'media_type': item.get('media_type'),
+        }
+
+        # Show result with broadcast buttons
+        result_text = (
+            f"✅ **Link Swapped!**\n\n"
+            f"🏢 Company: {company['name']}\n"
+            f"📢 Source: {source}\n\n"
+            f"📝 Text:\n{swapped_text[:600]}\n\n"
+            f"Nak broadcast?"
+        )
+
+        keyboard = [
+            [InlineKeyboardButton("📤 Broadcast Groups", callback_data=f"promo_bc_groups_{promo_id}"),
+             InlineKeyboardButton("📤 Broadcast Users", callback_data=f"promo_bc_users_{promo_id}")],
+            [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
+        ]
+
+        # Next item button
+        if idx + 1 < len(items):
+            keyboard.append([InlineKeyboardButton(f"📋 Next Mesej ({idx + 2}/{len(items)}) ▶", callback_data=f"scan_show_item_{idx + 1}")])
+        keyboard.append([InlineKeyboardButton("« Back to Menu", callback_data="ub_menu")])
+
+        try:
+            await query.message.edit_text(
+                result_text,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        except Exception:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await self.app.bot.send_message(
+                chat_id=query.from_user.id,
+                text=result_text,
+                parse_mode='Markdown',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
         return UB_MENU
 
     # --- SETUP WIZARD ---
