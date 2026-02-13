@@ -269,7 +269,13 @@ class UserbotInstance:
                 logger.warning(f"[UB-{self.bot_id}] Failed to update channel_id: {e}")
 
         try:
-            async for msg in self.client.iter_messages(entity, offset_date=since_date, reverse=True):
+            msg_count = 0
+            async for msg in self.client.iter_messages(entity, limit=None):
+                # Stop when we reach messages older than our cutoff
+                if msg.date and msg.date.replace(tzinfo=timezone.utc) < since_date:
+                    break
+
+                msg_count += 1
                 text = msg.message or ""
                 if not text:
                     continue
@@ -352,6 +358,7 @@ class UserbotInstance:
         except Exception as e:
             logger.error(f"[UB-{self.bot_id}] Error scanning history for {channel_id}: {e}")
 
+        logger.info(f"[UB-{self.bot_id}] Scanned {msg_count} messages in {channel_id}, found {matches} matches")
         return matches
 
 
