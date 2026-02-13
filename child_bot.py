@@ -424,6 +424,9 @@ class ChildBot:
             states={
                 UB_MENU: [
                     CallbackQueryHandler(self.ub_handle_action, pattern=r'^ub_'),
+                    CallbackQueryHandler(self.ub_handle_action, pattern=r'^scan_'),
+                    CallbackQueryHandler(self.ub_handle_action, pattern=r'^noop$'),
+                    CallbackQueryHandler(self.ub_handle_action, pattern=r'^promo_'),
                 ],
                 UB_SETUP_API: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_save_api_id)],
                 UB_SETUP_HASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_save_api_hash)],
