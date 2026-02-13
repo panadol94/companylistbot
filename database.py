@@ -83,6 +83,13 @@ class Database:
 
                 pass  # Silently handle exception  # Column already exists
 
+            # Migration: Add ai_system_prompt column if missing
+            try:
+                cursor.execute("ALTER TABLE bots ADD COLUMN ai_system_prompt TEXT DEFAULT ''")
+            except Exception as e:
+
+                pass  # Silently handle exception  # Column already exists
+
             # 2. Companies Table (Content for each bot)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS companies (
@@ -1045,6 +1052,23 @@ class Database:
         bot = conn.execute("SELECT ai_chat_enabled FROM bots WHERE id = ?", (bot_id,)).fetchone()
         conn.close()
         return bool(bot['ai_chat_enabled']) if bot and 'ai_chat_enabled' in bot.keys() else False  # Default OFF
+
+    def get_ai_prompt(self, bot_id):
+        """Get custom AI system prompt for a bot"""
+        conn = self.get_connection()
+        bot = conn.execute("SELECT ai_system_prompt FROM bots WHERE id = ?", (bot_id,)).fetchone()
+        conn.close()
+        if bot and 'ai_system_prompt' in bot.keys():
+            return bot['ai_system_prompt'] or ''
+        return ''
+
+    def set_ai_prompt(self, bot_id, prompt):
+        """Set custom AI system prompt for a bot"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("UPDATE bots SET ai_system_prompt = ? WHERE id = ?", (prompt, bot_id))
+            conn.commit()
+            conn.close()
 
     def toggle_link_guard(self, bot_id):
         """Toggle link guard system on/off for a bot"""

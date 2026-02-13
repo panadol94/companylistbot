@@ -190,19 +190,23 @@ CONTOH JAWAPAN BURUK (JANGAN BUAT MACAM NI):
 ^ INI TERUK. Jangan list macam database."""
 
 
-async def ai_chat(user_message: str, companies: list, chat_history: list = None) -> str:
-    """AI chatbot that promotes companies based on user questions.
+async def ai_chat(user_message: str, companies: list, chat_history: list = None, custom_prompt: str = None) -> str:
+    """AI chatbot that responds based on user questions.
     
     Args:
         user_message: The user's message
         companies: List of company dicts with name, description, button_url
         chat_history: Optional list of previous messages for context
+        custom_prompt: Optional custom system prompt (overrides default)
     
     Returns:
         AI response text
     """
     if not GROQ_API_KEY:
         return None
+
+    # Use custom prompt if provided, otherwise default
+    base_prompt = custom_prompt if custom_prompt else CHAT_SYSTEM_PROMPT
 
     # Build company context
     company_info = []
@@ -225,7 +229,7 @@ async def ai_chat(user_message: str, companies: list, chat_history: list = None)
 
     company_context = "\n".join(company_info) if company_info else "(Tiada company)"
 
-    system = CHAT_SYSTEM_PROMPT + f"\n\n=== SENARAI COMPANY ===\n{company_context}\n=== END ==="
+    system = base_prompt + f"\n\n=== SENARAI COMPANY ===\n{company_context}\n=== END ==="
 
     messages = [{"role": "system", "content": system}]
 

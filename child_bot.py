@@ -1873,6 +1873,9 @@ class ChildBot:
         elif data == "toggle_livegram": await self.toggle_livegram_system(update)
         elif data == "toggle_link_guard": await self.toggle_link_guard_system(update)
         elif data == "toggle_ai_chat": await self.toggle_ai_chat_system(update)
+        elif data == "ai_settings": await self.show_ai_settings(update)
+        elif data == "ai_set_prompt": await self.ai_set_prompt_start(update, context)
+        elif data == "ai_reset_prompt": await self.ai_reset_prompt(update)
         # Group Management
         elif data == "group_mgmt": await self.show_group_management(update)
         elif data == "gm_toggle_link_guard": await self.gm_toggle_link_guard(update)
@@ -3218,7 +3221,7 @@ class ChildBot:
                 [InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu"), InlineKeyboardButton("📊 Analytics", callback_data="show_analytics")],
                 [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")],
                 [InlineKeyboardButton("🛡️ Group Management", callback_data="group_mgmt"), InlineKeyboardButton(ai_chat_btn_text, callback_data="toggle_ai_chat")],
-                [InlineKeyboardButton("🤖 Userbot", callback_data="userbot_hub")]
+                [InlineKeyboardButton("🤖 Userbot", callback_data="userbot_hub"), InlineKeyboardButton("🧠 AI Settings", callback_data="ai_settings")]
             ]
             
             # Only owner can manage admins
@@ -3392,6 +3395,89 @@ class ChildBot:
         await update.callback_query.answer(f"Link Guard is now {status_text}")
         await self.show_admin_settings(update)
     
+    # === AI CHATBOT SETTINGS ===
+    
+    async def show_ai_settings(self, update: Update):
+        """Show AI chatbot settings menu"""
+        ai_enabled = self.db.is_ai_chat_enabled(self.bot_id)
+        custom_prompt = self.db.get_ai_prompt(self.bot_id)
+        
+        status = "🟢 ON" if ai_enabled else "🔴 OFF"
+        prompt_preview = f"`{custom_prompt[:100]}...`" if len(custom_prompt) > 100 else (f"`{custom_prompt}`" if custom_prompt else "_(Default — Masuk10 AI)_")
+        
+        text = (
+            f"🤖 **AI CHATBOT SETTINGS**\n\n"
+            f"Status: {status}\n"
+            f"Personality:\n{prompt_preview}\n\n"
+            f"Pilih action:"
+        )
+        keyboard = [
+            [InlineKeyboardButton(f"{'🔴 OFF' if ai_enabled else '🟢 ON'}", callback_data="toggle_ai_chat"),
+             InlineKeyboardButton("✏️ Set Personality", callback_data="ai_set_prompt")],
+            [InlineKeyboardButton("🔄 Reset Default", callback_data="ai_reset_prompt")],
+            [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+        ]
+        
+        query = update.callback_query
+        if query:
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.effective_message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    async def ai_set_prompt_start(self, update: Update, context):
+        """Start AI prompt input"""
+        query = update.callback_query
+        await query.answer()
+        
+        text = (
+            "✏️ **SET AI PERSONALITY**\n\n"
+            "Taip system prompt untuk AI kau.\n\n"
+            "**Contoh:**\n"
+            "`Kau adalah customer service untuk [Nama Bisnes]. "
+            "Jawab soalan pelanggan dalam Bahasa Melayu dengan gaya santai. "
+            "Kau pakar dalam topik gaming dan e-wallet. "
+            "Jawab pendek dan padat — max 3-4 baris.`\n\n"
+            "**Tips:**\n"
+            "• Set nama AI kau\n"
+            "• Set topik/bidang kepakaran\n"
+            "• Set bahasa dan gaya cakap\n"
+            "• Set limit panjang jawapan\n\n"
+            "📝 **Taip prompt sekarang:**"
+        )
+        await query.message.edit_text(text, parse_mode='Markdown')
+        context.user_data['waiting_ai_prompt'] = True
+
+    async def ai_save_prompt(self, update: Update, context):
+        """Save custom AI prompt from user input"""
+        prompt = update.message.text.strip()
+        self.db.set_ai_prompt(self.bot_id, prompt)
+        context.user_data.pop('waiting_ai_prompt', None)
+        
+        await update.message.reply_text(
+            f"✅ **AI Personality saved!**\n\n"
+            f"Prompt:\n`{prompt[:200]}{'...' if len(prompt) > 200 else ''}`",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🤖 AI Settings", callback_data="ai_settings")],
+                [InlineKeyboardButton("« Admin Settings", callback_data="admin_settings")]
+            ])
+        )
+
+    async def ai_reset_prompt(self, update: Update):
+        """Reset AI prompt to default"""
+        query = update.callback_query
+        await query.answer()
+        self.db.set_ai_prompt(self.bot_id, '')
+        await query.message.edit_text(
+            "🔄 **AI Personality reset to default!**\n\n"
+            "AI akan guna personality Masuk10 AI (default).",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🤖 AI Settings", callback_data="ai_settings")],
+                [InlineKeyboardButton("« Admin Settings", callback_data="admin_settings")]
+            ])
+        )
+
     # === GROUP MANAGEMENT HUB ===
     
     async def show_group_management(self, update: Update):
@@ -6507,6 +6593,11 @@ class ChildBot:
                     await update.message.reply_text(f"❌ Failed: {str(e)}")
                 return
         
+        # Intercept: Admin setting AI prompt
+        if context.user_data.get('waiting_ai_prompt') and update.message.text and user_id == owner_id:
+            await self.ai_save_prompt(update, context)
+            return
+
         # AI Chatbot — respond to messages with company promotions
         # Private: all text messages from non-owner | Group: when @mentioned or replied to bot
         ai_chat_on = self.db.is_ai_chat_enabled(self.bot_id)
@@ -6570,7 +6661,9 @@ class ChildBot:
                     # Show typing indicator
                     await context.bot.send_chat_action(chat_id=chat.id, action='typing')
                     
-                    response = await ai_chat(user_text, companies, chat_history)
+                    # Get custom prompt if set
+                    custom_prompt = self.db.get_ai_prompt(self.bot_id) or None
+                    response = await ai_chat(user_text, companies, chat_history, custom_prompt=custom_prompt)
                     
                     if response:
                         if chat.type == 'private':
