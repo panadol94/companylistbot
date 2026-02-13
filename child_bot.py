@@ -5527,44 +5527,58 @@ class ChildBot:
             if not media_items:
                 return
             
-            # Build media group - caption on first item only
+            caption_text = broadcast.get('message', '') or ''
+            
+            # Parse buttons
+            buttons = []
+            if grid_buttons_json:
+                buttons = json.loads(grid_buttons_json) if isinstance(grid_buttons_json, str) else grid_buttons_json
+            
+            has_followup = bool(buttons) or bool(caption_text)
+            
+            # Build media group - only put caption on album if NO follow-up will be sent
             media_group = []
             for i, item in enumerate(media_items):
-                caption = broadcast.get('message', '') if i == 0 else None
-                parse_mode = 'HTML' if i == 0 and caption else None
+                if i == 0 and caption_text and not has_followup:
+                    cap = caption_text
+                    pm = 'HTML'
+                else:
+                    cap = None
+                    pm = None
                 if item['type'] == 'video':
                     media_group.append(InputMediaVideo(
                         media=item['file_id'],
-                        caption=caption,
-                        parse_mode=parse_mode
+                        caption=cap,
+                        parse_mode=pm
                     ))
                 else:
                     media_group.append(InputMediaPhoto(
                         media=item['file_id'],
-                        caption=caption,
-                        parse_mode=parse_mode
+                        caption=cap,
+                        parse_mode=pm
                     ))
             
             await bot.send_media_group(chat_id=chat_id, media=media_group)
             
-            # Send follow-up message with buttons if any
-            if grid_buttons_json:
-                buttons = json.loads(grid_buttons_json) if isinstance(grid_buttons_json, str) else grid_buttons_json
+            # Send follow-up message with caption + buttons
+            if has_followup:
+                keyboard = None
                 if buttons:
-                    keyboard = []
+                    keyboard_rows = []
                     for btn in buttons:
                         url = btn['url']
                         if url.startswith('t.me/'):
                             url = 'https://' + url
-                        keyboard.append([InlineKeyboardButton(btn['text'], url=url)])
-                    
-                    follow_text = broadcast.get('message', '') or '⬆️'
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=follow_text,
-                        reply_markup=InlineKeyboardMarkup(keyboard),
-                        parse_mode='HTML'
-                    )
+                        keyboard_rows.append([InlineKeyboardButton(btn['text'], url=url)])
+                    keyboard = InlineKeyboardMarkup(keyboard_rows)
+                
+                follow_text = caption_text or '⬆️'
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=follow_text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML'
+                )
         else:
             # Single media or text-only mode
             if broadcast.get('media_type') == 'photo' and broadcast.get('media_file_id'):
