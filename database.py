@@ -2656,6 +2656,31 @@ class Database:
             conn.commit()
             conn.close()
 
+    def update_monitored_channel_id(self, bot_id, old_channel_id, new_channel_id, title=None, username=None):
+        """Update channel_id after resolving real Telegram ID"""
+        with self.lock:
+            conn = self.get_connection()
+            if title and username:
+                conn.execute("""
+                    UPDATE monitored_channels
+                    SET channel_id = ?, channel_title = ?, channel_username = ?
+                    WHERE bot_id = ? AND channel_id = ?
+                """, (new_channel_id, title, username, bot_id, old_channel_id))
+            elif title:
+                conn.execute("""
+                    UPDATE monitored_channels
+                    SET channel_id = ?, channel_title = ?
+                    WHERE bot_id = ? AND channel_id = ?
+                """, (new_channel_id, title, bot_id, old_channel_id))
+            else:
+                conn.execute("""
+                    UPDATE monitored_channels
+                    SET channel_id = ?
+                    WHERE bot_id = ? AND channel_id = ?
+                """, (new_channel_id, bot_id, old_channel_id))
+            conn.commit()
+            conn.close()
+
     # === DETECTED PROMOS METHODS ===
 
     def save_detected_promo(self, bot_id, source_channel, original_text, swapped_text, media_file_ids, media_types, matched_company):

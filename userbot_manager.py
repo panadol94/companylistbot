@@ -222,14 +222,51 @@ class UserbotInstance:
         since_date = datetime.now(timezone.utc) - timedelta(days=days)
         matches = 0
 
+        # Resolve entity — channel_id might be a URL, username, or numeric ID
+        entity = None
+        resolved_id = channel_id
+
         try:
             entity = await self.client.get_entity(int(channel_id))
-        except ValueError:
+        except (ValueError, TypeError):
+            pass
+
+        if not entity:
+            # Extract username from URL or @username
+            username = channel_id
+            for prefix in ['https://t.me/', 'http://t.me/', 't.me/', '@']:
+                username = username.replace(prefix, '')
+            username = username.strip('/').split('/')[0]  # Handle trailing paths
+
+            if username.startswith('+'):
+                # Private invite — need to join first
+                try:
+                    from telethon.tl.functions.messages import ImportChatInviteRequest
+                    result = await self.client(ImportChatInviteRequest(username.lstrip('+')))
+                    entity = result.chats[0]
+                except Exception:
+                    try:
+                        entity = await self.client.get_entity(channel_id)
+                    except Exception as e:
+                        logger.error(f"[UB-{self.bot_id}] Cannot resolve entity {channel_id}: {e}")
+                        return 0
+            else:
+                try:
+                    entity = await self.client.get_entity(username)
+                except Exception as e:
+                    logger.error(f"[UB-{self.bot_id}] Cannot resolve entity {channel_id} -> {username}: {e}")
+                    return 0
+
+        # Update DB with real numeric channel ID if it changed
+        if entity and str(entity.id) != str(channel_id):
+            resolved_id = str(entity.id)
             try:
-                entity = await self.client.get_entity(channel_id)
+                self.db.update_monitored_channel_id(self.bot_id, channel_id, resolved_id,
+                                                     getattr(entity, 'title', None),
+                                                     getattr(entity, 'username', None))
+                logger.info(f"[UB-{self.bot_id}] Updated channel_id {channel_id} -> {resolved_id}")
             except Exception as e:
-                logger.error(f"[UB-{self.bot_id}] Cannot resolve entity {channel_id}: {e}")
-                return 0
+                logger.warning(f"[UB-{self.bot_id}] Failed to update channel_id: {e}")
 
         try:
             async for msg in self.client.iter_messages(entity, offset_date=since_date, reverse=True):
