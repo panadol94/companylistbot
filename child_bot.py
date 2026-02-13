@@ -5141,13 +5141,13 @@ class ChildBot:
             
             sent = 0
             failed = 0
+            last_error = None
             
             is_grid = data.get('grid_media') is not None
             
             for tid in target_ids:
                 try:
                     if is_grid:
-                        # Use helper for grid mode
                         await self._send_broadcast_to_target(self.app.bot, tid, {
                             'message': data.get('text', ''),
                             'grid_media': data.get('grid_media'),
@@ -5156,14 +5156,19 @@ class ChildBot:
                             'media_file_id': None
                         })
                     elif data.get('message'):
-                        # Single media - use copy for instant send
                         await data['message'].copy(chat_id=tid)
                     sent += 1
-                except Exception:
+                except Exception as e:
                     failed += 1
+                    last_error = str(e)
+                    self.logger.error(f"Broadcast send error to {tid}: {e}")
             
             grid_label = " 🖼️ Grid" if is_grid else ""
-            await update.callback_query.message.reply_text(f"✅ Broadcast{grid_label} selesai!\n\n📤 Sent: {sent}\n❌ Failed: {failed}")
+            error_msg = f"\n⚠️ Last error: `{last_error}`" if last_error else ""
+            await update.callback_query.message.reply_text(
+                f"✅ Broadcast{grid_label} selesai!\n\n📤 Sent: {sent}\n❌ Failed: {failed}{error_msg}",
+                parse_mode='Markdown'
+            )
             context.user_data.pop('broadcast_data', None)
             return ConversationHandler.END
         
@@ -5516,6 +5521,7 @@ class ChildBot:
     async def _send_broadcast_to_target(self, bot, chat_id, broadcast):
         """Send a single broadcast to one chat_id. Handles grid, single media, and text."""
         import json
+        import asyncio
         
         grid_media_json = broadcast.get('grid_media')
         grid_buttons_json = broadcast.get('grid_buttons')
@@ -5536,7 +5542,7 @@ class ChildBot:
             
             has_followup = bool(buttons) or bool(caption_text)
             
-            # Build media group - only put caption on album if NO follow-up will be sent
+            # Build media group - caption on album ONLY if no follow-up
             media_group = []
             for i, item in enumerate(media_items):
                 if i == 0 and caption_text and not has_followup:
@@ -5545,23 +5551,22 @@ class ChildBot:
                 else:
                     cap = None
                     pm = None
-                if item['type'] == 'video':
-                    media_group.append(InputMediaVideo(
-                        media=item['file_id'],
-                        caption=cap,
-                        parse_mode=pm
-                    ))
+                
+                file_id = item['file_id']
+                media_type = item.get('type', 'photo')
+                
+                if media_type == 'video':
+                    media_group.append(InputMediaVideo(media=file_id, caption=cap, parse_mode=pm))
                 else:
-                    media_group.append(InputMediaPhoto(
-                        media=item['file_id'],
-                        caption=cap,
-                        parse_mode=pm
-                    ))
+                    media_group.append(InputMediaPhoto(media=file_id, caption=cap, parse_mode=pm))
             
+            self.logger.info(f"Sending media group with {len(media_group)} items to {chat_id}")
             await bot.send_media_group(chat_id=chat_id, media=media_group)
             
-            # Send follow-up message with caption + buttons
+            # Small delay before follow-up to avoid rate limit
             if has_followup:
+                await asyncio.sleep(0.3)
+                
                 keyboard = None
                 if buttons:
                     keyboard_rows = []
