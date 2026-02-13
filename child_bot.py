@@ -140,6 +140,7 @@ GW_MENU, GW_TEXT, GW_MEDIA = range(90, 93)
 # States for Grid Broadcast
 BROADCAST_TYPE = 100
 GRID_MEDIA, GRID_CAPTION, GRID_BUTTONS = range(101, 104)
+SINGLE_BUTTONS = 105
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -247,6 +248,12 @@ class ChildBot:
                 BROADCAST_TARGET: [CallbackQueryHandler(self.broadcast_choose_target)],
                 BROADCAST_TYPE: [CallbackQueryHandler(self.broadcast_type_handler)],
                 BROADCAST_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, self.broadcast_content)],
+                SINGLE_BUTTONS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.single_btn_handler),
+                    CallbackQueryHandler(self.single_btn_company_pick, pattern="^sbtn_comp_"),
+                    CallbackQueryHandler(self.single_btn_manual, pattern="^sbtn_manual$"),
+                    CallbackQueryHandler(self.single_btn_skip, pattern="^sbtn_skip$")
+                ],
                 BROADCAST_CONFIRM: [CallbackQueryHandler(self.broadcast_confirm)],
                 SCHEDULE_TIME: [CallbackQueryHandler(self.broadcast_confirm)],
                 RECURRING_TYPE: [CallbackQueryHandler(self.recurring_type_handler)],
@@ -5138,18 +5145,124 @@ class ChildBot:
             'message': msg  # Keep original for instant send
         }
         
-        # Show Send Now vs Schedule vs Recurring options
+        # Show company picker for buttons
+        bot_id = context.user_data.get('bot_id') or context.bot_data.get('bot_id')
+        companies = self.db.get_companies(bot_id) if bot_id else []
+        
+        keyboard = []
+        for comp in companies:
+            if comp.get('button_url'):
+                keyboard.append([InlineKeyboardButton(f"🏢 {comp['name']}", callback_data=f"sbtn_comp_{comp['id']}")])
+        keyboard.append([InlineKeyboardButton("✍️ Manual (text|url)", callback_data="sbtn_manual")])
+        keyboard.append([InlineKeyboardButton("⏭️ Skip Buttons", callback_data="sbtn_skip")])
+        
+        await update.message.reply_text(
+            "✅ **Mesej diterima!**\n\n"
+            "🔘 Pilih company untuk button:\n"
+            "Atau Manual/Skip.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return SINGLE_BUTTONS
+    
+    async def single_btn_company_pick(self, update, context):
+        """Auto-generate button from selected company for single broadcast"""
+        await update.callback_query.answer()
+        comp_id = int(update.callback_query.data.replace("sbtn_comp_", ""))
+        
+        bot_id = context.user_data.get('bot_id') or context.bot_data.get('bot_id')
+        companies = self.db.get_companies(bot_id) if bot_id else []
+        company = next((c for c in companies if c['id'] == comp_id), None)
+        
+        if not company or not company.get('button_url'):
+            await update.callback_query.message.edit_text("❌ Company tak jumpa.")
+            return SINGLE_BUTTONS
+        
+        btn_text = company.get('button_text') or company['name']
+        btn_url = company['button_url']
+        if btn_url.startswith('t.me/'):
+            btn_url = 'https://' + btn_url
+        
+        context.user_data['single_buttons'] = [{'text': btn_text, 'url': btn_url}]
+        return await self._show_single_confirm(update, context)
+    
+    async def single_btn_manual(self, update, context):
+        """Switch to manual button input for single broadcast"""
+        await update.callback_query.answer()
+        keyboard = [[InlineKeyboardButton("⏭️ Skip", callback_data="sbtn_skip")]]
+        await update.callback_query.message.edit_text(
+            "✍️ **Manual Mode**\n\n"
+            "Format: `text|url` (satu button per baris)\n\n"
+            "Contoh: `Play Now|https://example.com`\n\n"
+            "Atau tekan Skip.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return SINGLE_BUTTONS
+    
+    async def single_btn_handler(self, update, context):
+        """Parse manual button input for single broadcast"""
+        text = update.message.text.strip()
+        buttons = []
+        for line in text.split('\n'):
+            line = line.strip()
+            if not line or '|' not in line:
+                continue
+            parts = line.split('|', 1)
+            btn_text = parts[0].strip()
+            btn_url = parts[1].strip()
+            if not btn_url.startswith(('http://', 'https://')):
+                if btn_url.startswith('t.me/'):
+                    btn_url = 'https://' + btn_url
+                else:
+                    continue
+            buttons.append({'text': btn_text, 'url': btn_url})
+        
+        if not buttons:
+            await update.message.reply_text("⚠️ Format salah. Cuba lagi: `text|url`", parse_mode='Markdown')
+            return SINGLE_BUTTONS
+        
+        context.user_data['single_buttons'] = buttons
+        return await self._show_single_confirm(update, context)
+    
+    async def single_btn_skip(self, update, context):
+        """Skip buttons for single broadcast"""
+        if update.callback_query:
+            await update.callback_query.answer()
+        context.user_data['single_buttons'] = []
+        return await self._show_single_confirm(update, context)
+    
+    async def _show_single_confirm(self, update, context):
+        """Show single broadcast confirm with buttons info"""
+        buttons = context.user_data.get('single_buttons', [])
+        data = context.user_data.get('broadcast_data', {})
+        target_type = context.user_data.get('broadcast_target_type', 'users')
+        target_display = "👤 All Users" if target_type == "users" else "👥 All Known Groups"
+        
+        has_media = bool(data.get('photo') or data.get('video') or data.get('document'))
+        media_type = "Photo" if data.get('photo') else "Video" if data.get('video') else "Document" if data.get('document') else "Text Only"
+        btn_info = f"{len(buttons)} buttons" if buttons else "None"
+        
+        summary = (
+            f"📋 **BROADCAST PREVIEW**\n\n"
+            f"🎯 Target: **{target_display}**\n"
+            f"📎 Media: **{media_type}**\n"
+            f"🔘 Buttons: **{btn_info}**\n\n"
+            "Pilih option:"
+        )
+        
         keyboard = [
             [InlineKeyboardButton("📤 Send Now", callback_data="broadcast_now")],
             [InlineKeyboardButton("⏰ Schedule", callback_data="broadcast_schedule")],
             [InlineKeyboardButton("🔁 Recurring", callback_data="broadcast_recurring")],
             [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
         ]
-        await update.message.reply_text(
-            "✅ **Mesej diterima!**\n\nPilih option:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        
+        msg_target = update.callback_query.message if update.callback_query else update.message
+        if update.callback_query:
+            await msg_target.edit_text(summary, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await msg_target.reply_text(summary, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return BROADCAST_CONFIRM
 
     async def broadcast_confirm(self, update, context):
@@ -5199,7 +5312,40 @@ class ChildBot:
                             'media_file_id': None
                         })
                     elif data.get('message'):
-                        await data['message'].copy(chat_id=tid)
+                        # Check for single_buttons
+                        single_btns = context.user_data.get('single_buttons', [])
+                        if single_btns:
+                            keyboard_rows = []
+                            for btn in single_btns:
+                                url = btn['url']
+                                if url.startswith('t.me/'):
+                                    url = 'https://' + url
+                                keyboard_rows.append([InlineKeyboardButton(btn['text'], url=url)])
+                            reply_markup = InlineKeyboardMarkup(keyboard_rows)
+                            
+                            # Send with buttons based on media type
+                            if data.get('photo'):
+                                await self.app.bot.send_photo(
+                                    chat_id=tid, photo=data['photo'],
+                                    caption=data.get('text') or None,
+                                    parse_mode='HTML' if data.get('text') else None,
+                                    reply_markup=reply_markup
+                                )
+                            elif data.get('video'):
+                                await self.app.bot.send_video(
+                                    chat_id=tid, video=data['video'],
+                                    caption=data.get('text') or None,
+                                    parse_mode='HTML' if data.get('text') else None,
+                                    reply_markup=reply_markup
+                                )
+                            elif data.get('text'):
+                                await self.app.bot.send_message(
+                                    chat_id=tid, text=data['text'],
+                                    parse_mode='HTML',
+                                    reply_markup=reply_markup
+                                )
+                        else:
+                            await data['message'].copy(chat_id=tid)
                     sent += 1
                 except Exception as e:
                     failed += 1
