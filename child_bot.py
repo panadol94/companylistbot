@@ -92,6 +92,9 @@ def message_to_html(message) -> str:
             parts.append(f'<a href="tg://user?id={user_id}">{escaped_content}</a>')
         elif entity.type == "spoiler":
             parts.append(f"<tg-spoiler>{escaped_content}</tg-spoiler>")
+        elif entity.type == "custom_emoji":
+            emoji_id = entity.custom_emoji_id or ""
+            parts.append(f'<tg-emoji emoji-id="{emoji_id}">{escaped_content}</tg-emoji>')
         else:
             parts.append(escaped_content)
         
