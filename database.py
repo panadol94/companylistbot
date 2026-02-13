@@ -186,6 +186,14 @@ class Database:
                 cursor.execute("ALTER TABLE broadcasts ADD COLUMN target_type TEXT DEFAULT 'users'")
             except Exception:
                 pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE broadcasts ADD COLUMN grid_media TEXT")
+            except Exception:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE broadcasts ADD COLUMN grid_buttons TEXT")
+            except Exception:
+                pass  # Column already exists
 
             # 6. Forwarder Config Table
             cursor.execute('''
@@ -1256,13 +1264,13 @@ class Database:
             return new_group
 
     # --- Scheduled Broadcasts ---
-    def save_scheduled_broadcast(self, bot_id, message, media_file_id, media_type, scheduled_time, target_type='users'):
+    def save_scheduled_broadcast(self, bot_id, message, media_file_id, media_type, scheduled_time, target_type='users', grid_media=None, grid_buttons=None):
         """Save a scheduled broadcast"""
         with self.lock:
             conn = self.get_connection()
             conn.execute(
-                "INSERT INTO broadcasts (bot_id, message, media_file_id, media_type, status, scheduled_time, target_type) VALUES (?, ?, ?, ?, 'PENDING', ?, ?)",
-                (bot_id, message, media_file_id, media_type, scheduled_time, target_type)
+                "INSERT INTO broadcasts (bot_id, message, media_file_id, media_type, status, scheduled_time, target_type, grid_media, grid_buttons) VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)",
+                (bot_id, message, media_file_id, media_type, scheduled_time, target_type, grid_media, grid_buttons)
             )
             conn.commit()
             broadcast_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -1319,15 +1327,15 @@ class Database:
             return deleted
 
     # --- Recurring Broadcasts ---
-    def save_recurring_broadcast(self, bot_id, message, media_file_id, media_type, interval_type, interval_value, target_type='users'):
+    def save_recurring_broadcast(self, bot_id, message, media_file_id, media_type, interval_type, interval_value, target_type='users', grid_media=None, grid_buttons=None):
         """Save a recurring broadcast configuration"""
         with self.lock:
             conn = self.get_connection()
             cursor = conn.execute(
                 """INSERT INTO broadcasts 
-                   (bot_id, message, media_file_id, media_type, status, is_recurring, interval_type, interval_value, is_active, target_type) 
-                   VALUES (?, ?, ?, ?, 'RECURRING', 1, ?, ?, 1, ?)""",
-                (bot_id, message, media_file_id, media_type, interval_type, interval_value, target_type)
+                   (bot_id, message, media_file_id, media_type, status, is_recurring, interval_type, interval_value, is_active, target_type, grid_media, grid_buttons) 
+                   VALUES (?, ?, ?, ?, 'RECURRING', 1, ?, ?, 1, ?, ?, ?)""",
+                (bot_id, message, media_file_id, media_type, interval_type, interval_value, target_type, grid_media, grid_buttons)
             )
             broadcast_id = cursor.lastrowid
             conn.commit()

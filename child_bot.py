@@ -134,6 +134,9 @@ WD_AMOUNT, WD_METHOD, WD_ACCOUNT, WD_CONFIRM = range(70, 74)
 RS_SET_REWARD, RS_SET_MIN_WD = range(80, 82)
 # States for Group Welcome Setup
 GW_MENU, GW_TEXT, GW_MEDIA = range(90, 93)
+# States for Grid Broadcast
+BROADCAST_TYPE = 100
+GRID_MEDIA, GRID_CAPTION, GRID_BUTTONS = range(101, 104)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -239,10 +242,24 @@ class ChildBot:
             entry_points=[CallbackQueryHandler(self.broadcast_start, pattern="^admin_broadcast$")],
             states={
                 BROADCAST_TARGET: [CallbackQueryHandler(self.broadcast_choose_target)],
+                BROADCAST_TYPE: [CallbackQueryHandler(self.broadcast_type_handler)],
                 BROADCAST_CONTENT: [MessageHandler(filters.ALL & ~filters.COMMAND, self.broadcast_content)],
                 BROADCAST_CONFIRM: [CallbackQueryHandler(self.broadcast_confirm)],
                 SCHEDULE_TIME: [CallbackQueryHandler(self.broadcast_confirm)],
-                RECURRING_TYPE: [CallbackQueryHandler(self.recurring_type_handler)]
+                RECURRING_TYPE: [CallbackQueryHandler(self.recurring_type_handler)],
+                GRID_MEDIA: [
+                    MessageHandler(filters.PHOTO | filters.VIDEO, self.grid_media_handler),
+                    CallbackQueryHandler(self.grid_media_done, pattern="^grid_done$")
+                ],
+                GRID_CAPTION: [
+                    MessageHandler(filters.ALL & ~filters.COMMAND, self.grid_caption_handler),
+                    CallbackQueryHandler(self.grid_caption_skip, pattern="^grid_skip_caption$")
+                ],
+                GRID_BUTTONS: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.grid_buttons_handler),
+                    CallbackQueryHandler(self.grid_buttons_done, pattern="^grid_buttons_done$"),
+                    CallbackQueryHandler(self.grid_buttons_skip, pattern="^grid_skip_buttons$")
+                ]
             },
             fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.handle_callback)],
             allow_reentry=True,
@@ -4813,7 +4830,7 @@ class ChildBot:
         return BROADCAST_TARGET
 
     async def broadcast_choose_target(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle target selection"""
+        """Handle target selection - then show broadcast type picker"""
         query = update.callback_query
         await query.answer()
         data = query.data
@@ -4827,12 +4844,245 @@ class ChildBot:
         
         target_display = "👤 All Users" if target_type == "users" else "👥 All Known Groups"
         
-        await query.message.reply_text(
+        keyboard = [
+            [InlineKeyboardButton("📷 Single Media", callback_data="btype_single")],
+            [InlineKeyboardButton("🖼️ Grid/Album (2-10)", callback_data="btype_grid")],
+            [InlineKeyboardButton("📝 Text Only", callback_data="btype_text")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
+        ]
+        await query.message.edit_text(
             f"🎯 Target: **{target_display}**\n\n"
-            "Sila hantar mesej (Text/Gambar/Video) yang nak disebarkan:",
+            "Pilih jenis broadcast:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
+        return BROADCAST_TYPE
+    
+    async def broadcast_type_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle broadcast type selection"""
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        
+        if data == "broadcast_cancel":
+            await query.message.edit_text("❌ Broadcast dibatalkan.")
+            return ConversationHandler.END
+        
+        if data == "btype_grid":
+            context.user_data['grid_media'] = []
+            await query.message.edit_text(
+                "🖼️ **GRID/ALBUM MODE**\n\n"
+                "Hantar gambar atau video satu persatu.\n"
+                "Minimum 2, maximum 10 media.\n\n"
+                "📸 0/10 ditambah\n\n"
+                "_Hantar media pertama sekarang..._",
+                parse_mode='Markdown'
+            )
+            return GRID_MEDIA
+        
+        # Single or Text mode
+        context.user_data.pop('grid_media', None)
+        mode_text = "📷 Single Media" if data == "btype_single" else "📝 Text Only"
+        if data == "btype_text":
+            await query.message.edit_text(
+                f"✅ Mode: **{mode_text}**\n\n"
+                "Sila taip mesej text yang nak disebarkan:",
+                parse_mode='Markdown'
+            )
+        else:
+            await query.message.edit_text(
+                f"✅ Mode: **{mode_text}**\n\n"
+                "Sila hantar mesej (Text/Gambar/Video) yang nak disebarkan:",
+                parse_mode='Markdown'
+            )
         return BROADCAST_CONTENT
+    
+    async def grid_media_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Collect media items for grid broadcast"""
+        msg = update.message
+        grid = context.user_data.get('grid_media', [])
+        
+        if len(grid) >= 10:
+            await msg.reply_text("⚠️ Maximum 10 media! Tekan ✅ Done.")
+            return GRID_MEDIA
+        
+        if msg.photo:
+            grid.append({'type': 'photo', 'file_id': msg.photo[-1].file_id})
+        elif msg.video:
+            grid.append({'type': 'video', 'file_id': msg.video.file_id})
+        
+        context.user_data['grid_media'] = grid
+        count = len(grid)
+        
+        keyboard = []
+        if count >= 2:
+            keyboard.append([InlineKeyboardButton("✅ Done", callback_data="grid_done")])
+        
+        await msg.reply_text(
+            f"📸 **{count}/10** media ditambah\n\n"
+            f"{'✅ Boleh tekan Done atau tambah lagi.' if count >= 2 else '⏳ Tambah lagi media...'}",
+            reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None,
+            parse_mode='Markdown'
+        )
+        return GRID_MEDIA
+    
+    async def grid_media_done(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Done collecting grid media - ask for caption"""
+        await update.callback_query.answer()
+        grid = context.user_data.get('grid_media', [])
+        
+        if len(grid) < 2:
+            await update.callback_query.message.edit_text("⚠️ Minimum 2 media diperlukan!")
+            return GRID_MEDIA
+        
+        keyboard = [
+            [InlineKeyboardButton("⏭️ Skip Caption", callback_data="grid_skip_caption")]
+        ]
+        await update.callback_query.message.edit_text(
+            f"✅ **{len(grid)} media** disimpan!\n\n"
+            "📝 Sekarang taip **caption text** untuk follow-up message.\n"
+            "Atau tekan Skip jika tak perlu.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return GRID_CAPTION
+    
+    async def grid_caption_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Receive caption text for grid broadcast"""
+        caption = message_to_html(update.message)
+        context.user_data['grid_caption'] = caption
+        
+        keyboard = [
+            [InlineKeyboardButton("⏭️ Skip Buttons", callback_data="grid_skip_buttons")]
+        ]
+        await update.message.reply_text(
+            "✅ Caption disimpan!\n\n"
+            "🔘 Sekarang tambah **inline buttons**.\n"
+            "Format: `text|url` (satu button per baris)\n\n"
+            "Contoh:\n"
+            "`Register|https://t.me/bot`\n"
+            "`Website|https://example.com`\n\n"
+            "Atau tekan Skip jika tak perlu buttons.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return GRID_BUTTONS
+    
+    async def grid_caption_skip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Skip caption - go to buttons"""
+        await update.callback_query.answer()
+        context.user_data['grid_caption'] = None
+        
+        keyboard = [
+            [InlineKeyboardButton("⏭️ Skip Buttons", callback_data="grid_skip_buttons")]
+        ]
+        await update.callback_query.message.edit_text(
+            "⏭️ Caption diskip.\n\n"
+            "🔘 Nak tambah **inline buttons**?\n"
+            "Format: `text|url` (satu button per baris)\n\n"
+            "Contoh:\n"
+            "`Register|https://t.me/bot`\n\n"
+            "Atau tekan Skip.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return GRID_BUTTONS
+    
+    async def grid_buttons_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Parse button text in text|url format"""
+        text = update.message.text.strip()
+        buttons = []
+        errors = []
+        
+        for line in text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if '|' not in line:
+                errors.append(f"❌ `{line}` - tiada | separator")
+                continue
+            parts = line.split('|', 1)
+            btn_text = parts[0].strip()
+            btn_url = parts[1].strip()
+            if not btn_url.startswith(('http://', 'https://', 't.me/')):
+                if btn_url.startswith('t.me/'):
+                    btn_url = 'https://' + btn_url
+                else:
+                    errors.append(f"❌ `{btn_text}` - URL tak valid")
+                    continue
+            buttons.append({'text': btn_text, 'url': btn_url})
+        
+        if errors:
+            keyboard = [
+                [InlineKeyboardButton("⏭️ Skip Buttons", callback_data="grid_skip_buttons")]
+            ]
+            await update.message.reply_text(
+                "⚠️ Ada error:\n" + '\n'.join(errors) + "\n\nCuba lagi atau Skip.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return GRID_BUTTONS
+        
+        if not buttons:
+            return await self.grid_buttons_skip(update, context)
+        
+        context.user_data['grid_buttons'] = buttons
+        return await self._grid_show_confirm(update, context)
+    
+    async def grid_buttons_done(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Done adding buttons"""
+        await update.callback_query.answer()
+        return await self._grid_show_confirm(update, context)
+    
+    async def grid_buttons_skip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Skip buttons"""
+        if update.callback_query:
+            await update.callback_query.answer()
+        context.user_data['grid_buttons'] = []
+        return await self._grid_show_confirm(update, context)
+    
+    async def _grid_show_confirm(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show grid broadcast confirmation"""
+        grid = context.user_data.get('grid_media', [])
+        caption = context.user_data.get('grid_caption')
+        buttons = context.user_data.get('grid_buttons', [])
+        target_type = context.user_data.get('broadcast_target_type', 'users')
+        target_display = "👤 All Users" if target_type == "users" else "👥 All Known Groups"
+        
+        summary = (
+            f"📋 **GRID BROADCAST PREVIEW**\n\n"
+            f"🎯 Target: **{target_display}**\n"
+            f"🖼️ Media: **{len(grid)} items**\n"
+            f"📝 Caption: **{'Yes' if caption else 'None'}**\n"
+            f"🔘 Buttons: **{len(buttons)} buttons**\n\n"
+            "Pilih option:"
+        )
+        
+        # Package broadcast_data for the confirm handler
+        import json
+        context.user_data['broadcast_data'] = {
+            'text': caption or '',
+            'photo': None,
+            'video': None,
+            'document': None,
+            'message': None,
+            'grid_media': json.dumps(grid),
+            'grid_buttons': json.dumps(buttons) if buttons else None
+        }
+        
+        keyboard = [
+            [InlineKeyboardButton("📤 Send Now", callback_data="broadcast_now")],
+            [InlineKeyboardButton("⏰ Schedule", callback_data="broadcast_schedule")],
+            [InlineKeyboardButton("🔁 Recurring", callback_data="broadcast_recurring")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
+        ]
+        
+        msg_target = update.callback_query.message if update.callback_query else update.message
+        if update.callback_query:
+            await msg_target.edit_text(summary, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await msg_target.reply_text(summary, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return BROADCAST_CONFIRM
     
     async def broadcast_content(self, update, context):
         # Save msg details for later use
@@ -4871,11 +5121,9 @@ class ChildBot:
         if action == "broadcast_now":
             # Instant send
             data = context.user_data.get('broadcast_data')
-            if not data or not data.get('message'):
+            if not data:
                 await update.callback_query.message.reply_text("❌ No message to broadcast.")
                 return ConversationHandler.END
-            
-            msg = data['message']
             
             # Determine targets
             target_type = context.user_data.get('broadcast_target_type', 'users')
@@ -4893,14 +5141,29 @@ class ChildBot:
             
             sent = 0
             failed = 0
+            
+            is_grid = data.get('grid_media') is not None
+            
             for tid in target_ids:
                 try:
-                    await msg.copy(chat_id=tid)
+                    if is_grid:
+                        # Use helper for grid mode
+                        await self._send_broadcast_to_target(self.app.bot, tid, {
+                            'message': data.get('text', ''),
+                            'grid_media': data.get('grid_media'),
+                            'grid_buttons': data.get('grid_buttons'),
+                            'media_type': None,
+                            'media_file_id': None
+                        })
+                    elif data.get('message'):
+                        # Single media - use copy for instant send
+                        await data['message'].copy(chat_id=tid)
                     sent += 1
                 except Exception:
                     failed += 1
             
-            await update.callback_query.message.reply_text(f"✅ Broadcast selesai!\n\n📤 Sent: {sent}\n❌ Failed: {failed}")
+            grid_label = " 🖼️ Grid" if is_grid else ""
+            await update.callback_query.message.reply_text(f"✅ Broadcast{grid_label} selesai!\n\n📤 Sent: {sent}\n❌ Failed: {failed}")
             context.user_data.pop('broadcast_data', None)
             return ConversationHandler.END
         
@@ -4948,7 +5211,9 @@ class ChildBot:
                 media_file_id,
                 media_type,
                 scheduled_time.strftime('%Y-%m-%d %H:%M:%S'),
-                target_type
+                target_type,
+                data.get('grid_media'),
+                data.get('grid_buttons')
             )
             
             # Schedule the job
@@ -5103,7 +5368,9 @@ class ChildBot:
             media_type,
             interval_type,
             interval_value,
-            target_type
+            target_type,
+            data.get('grid_media'),
+            data.get('grid_buttons')
         )
         
         # Schedule recurring job
@@ -5168,7 +5435,6 @@ class ChildBot:
     async def execute_recurring_broadcast(self, broadcast_id):
         """Execute a recurring broadcast"""
         try:
-            # Get broadcast details
             broadcasts = self.db.get_recurring_broadcasts(self.bot_id)
             broadcast = next((b for b in broadcasts if b['id'] == broadcast_id), None)
             
@@ -5176,7 +5442,6 @@ class ChildBot:
                 self.logger.warning(f"Recurring broadcast {broadcast_id} not found or inactive")
                 return
             
-            # Determine targets based on saved target_type
             target_type = broadcast.get('target_type', 'users')
             if target_type == 'groups':
                 targets = self.db.get_known_groups(self.bot_id)
@@ -5190,26 +5455,7 @@ class ChildBot:
             
             for tid in target_ids:
                 try:
-                    if broadcast['media_type'] == 'photo' and broadcast['media_file_id']:
-                        await self.app.bot.send_photo(
-                            chat_id=tid,
-                            photo=broadcast['media_file_id'],
-                            caption=broadcast['message'],
-                            parse_mode='HTML'
-                        )
-                    elif broadcast['media_type'] == 'video' and broadcast['media_file_id']:
-                        await self.app.bot.send_video(
-                            chat_id=tid,
-                            video=broadcast['media_file_id'],
-                            caption=broadcast['message'],
-                            parse_mode='HTML'
-                        )
-                    else:
-                        await self.app.bot.send_message(
-                            chat_id=tid,
-                            text=broadcast['message'],
-                            parse_mode='HTML'
-                        )
+                    await self._send_broadcast_to_target(self.app.bot, tid, broadcast)
                     sent += 1
                 except Exception as e:
                     failed += 1
@@ -5222,7 +5468,6 @@ class ChildBot:
     async def execute_scheduled_broadcast(self, broadcast_id):
         """Execute a scheduled broadcast"""
         try:
-            # Get broadcast details
             broadcasts = self.db.get_pending_broadcasts(self.bot_id)
             broadcast = next((b for b in broadcasts if b['id'] == broadcast_id), None)
             
@@ -5230,7 +5475,6 @@ class ChildBot:
                 self.logger.warning(f"Broadcast {broadcast_id} not found or already sent")
                 return
             
-            # Determine targets based on saved target_type
             target_type = broadcast.get('target_type', 'users')
             if target_type == 'groups':
                 targets = self.db.get_known_groups(self.bot_id)
@@ -5244,57 +5488,112 @@ class ChildBot:
             
             for tid in target_ids:
                 try:
-                    if broadcast['media_type'] == 'photo' and broadcast['media_file_id']:
-                        await self.app.bot.send_photo(
-                            chat_id=tid,
-                            photo=broadcast['media_file_id'],
-                            caption=broadcast['message'] or '',
-                            parse_mode='HTML'
-                        )
-                    elif broadcast['media_type'] == 'video' and broadcast['media_file_id']:
-                        await self.app.bot.send_video(
-                            chat_id=tid,
-                            video=broadcast['media_file_id'],
-                            caption=broadcast['message'] or '',
-                            parse_mode='HTML'
-                        )
-                    elif broadcast['media_type'] == 'document' and broadcast['media_file_id']:
-                        await self.app.bot.send_document(
-                            chat_id=tid,
-                            document=broadcast['media_file_id'],
-                            caption=broadcast['message'] or '',
-                            parse_mode='HTML'
-                        )
-                    elif broadcast['message']:
-                        await self.app.bot.send_message(
-                            chat_id=tid,
-                            text=broadcast['message'],
-                            parse_mode='HTML'
-                        )
+                    await self._send_broadcast_to_target(self.app.bot, tid, broadcast)
                     sent += 1
                 except Exception as e:
                     failed += 1
             
-            # Mark as sent
             self.db.mark_broadcast_sent(broadcast_id)
             
-            # Notify owner
             bot_data = self.db.get_bot_by_token(self.token)
             if bot_data:
                 try:
                     target_label = '👥 Groups' if target_type == 'groups' else '👤 Users'
+                    is_grid = bool(broadcast.get('grid_media'))
+                    grid_label = ' 🖼️ Grid' if is_grid else ''
                     await self.app.bot.send_message(
                         chat_id=bot_data['owner_id'],
-                        text=f"✅ **Scheduled Broadcast Complete!**\n\n🎯 Target: {target_label}\n📤 Sent: {sent}\n❌ Failed: {failed}",
+                        text=f"✅ **Scheduled{grid_label} Broadcast Complete!**\n\n🎯 Target: {target_label}\n📤 Sent: {sent}\n❌ Failed: {failed}",
                         parse_mode='Markdown'
                     )
                 except Exception as e:
-
-                    pass  # Silently handle exception
+                    pass
             
             self.logger.info(f"Scheduled broadcast {broadcast_id} completed: {sent} sent, {failed} failed")
         except Exception as e:
             self.logger.error(f"Error executing scheduled broadcast {broadcast_id}: {e}")
+
+    async def _send_broadcast_to_target(self, bot, chat_id, broadcast):
+        """Send a single broadcast to one chat_id. Handles grid, single media, and text."""
+        import json
+        
+        grid_media_json = broadcast.get('grid_media')
+        grid_buttons_json = broadcast.get('grid_buttons')
+        
+        if grid_media_json:
+            # Grid/Album mode
+            media_items = json.loads(grid_media_json) if isinstance(grid_media_json, str) else grid_media_json
+            
+            if not media_items:
+                return
+            
+            # Build media group - caption on first item only
+            media_group = []
+            for i, item in enumerate(media_items):
+                caption = broadcast.get('message', '') if i == 0 else None
+                parse_mode = 'HTML' if i == 0 and caption else None
+                if item['type'] == 'video':
+                    media_group.append(InputMediaVideo(
+                        media=item['file_id'],
+                        caption=caption,
+                        parse_mode=parse_mode
+                    ))
+                else:
+                    media_group.append(InputMediaPhoto(
+                        media=item['file_id'],
+                        caption=caption,
+                        parse_mode=parse_mode
+                    ))
+            
+            await bot.send_media_group(chat_id=chat_id, media=media_group)
+            
+            # Send follow-up message with buttons if any
+            if grid_buttons_json:
+                buttons = json.loads(grid_buttons_json) if isinstance(grid_buttons_json, str) else grid_buttons_json
+                if buttons:
+                    keyboard = []
+                    for btn in buttons:
+                        url = btn['url']
+                        if url.startswith('t.me/'):
+                            url = 'https://' + url
+                        keyboard.append([InlineKeyboardButton(btn['text'], url=url)])
+                    
+                    follow_text = broadcast.get('message', '') or '⬆️'
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=follow_text,
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode='HTML'
+                    )
+        else:
+            # Single media or text-only mode
+            if broadcast.get('media_type') == 'photo' and broadcast.get('media_file_id'):
+                await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=broadcast['media_file_id'],
+                    caption=broadcast.get('message') or '',
+                    parse_mode='HTML'
+                )
+            elif broadcast.get('media_type') == 'video' and broadcast.get('media_file_id'):
+                await bot.send_video(
+                    chat_id=chat_id,
+                    video=broadcast['media_file_id'],
+                    caption=broadcast.get('message') or '',
+                    parse_mode='HTML'
+                )
+            elif broadcast.get('media_type') == 'document' and broadcast.get('media_file_id'):
+                await bot.send_document(
+                    chat_id=chat_id,
+                    document=broadcast['media_file_id'],
+                    caption=broadcast.get('message') or '',
+                    parse_mode='HTML'
+                )
+            elif broadcast.get('message'):
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=broadcast['message'],
+                    parse_mode='HTML'
+                )
 
 
     async def show_leaderboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
