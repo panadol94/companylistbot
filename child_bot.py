@@ -5518,16 +5518,177 @@ class ChildBot:
         except Exception as e:
             self.logger.error(f"Error executing scheduled broadcast {broadcast_id}: {e}")
 
+    async def _create_grid_image(self, bot, media_items, tmp_dir):
+        """Create a single grid image from multiple photos using Pillow."""
+        from PIL import Image
+        import math
+        
+        # Download all photos
+        paths = []
+        for item in media_items:
+            tg_file = await bot.get_file(item['file_id'])
+            path = os.path.join(tmp_dir, f"img_{len(paths)}.jpg")
+            await tg_file.download_to_drive(path)
+            paths.append(path)
+        
+        # Determine grid layout
+        n = len(paths)
+        cols = 2 if n <= 4 else 3
+        rows = math.ceil(n / cols)
+        
+        # Cell size
+        cell_w, cell_h = 640, 640
+        
+        # Create canvas
+        canvas = Image.new('RGB', (cols * cell_w, rows * cell_h), (0, 0, 0))
+        
+        for idx, path in enumerate(paths):
+            img = Image.open(path)
+            # Resize to fill cell (cover mode)
+            img_ratio = img.width / img.height
+            cell_ratio = cell_w / cell_h
+            if img_ratio > cell_ratio:
+                new_h = cell_h
+                new_w = int(cell_h * img_ratio)
+            else:
+                new_w = cell_w
+                new_h = int(cell_w / img_ratio)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            # Center crop
+            left = (new_w - cell_w) // 2
+            top = (new_h - cell_h) // 2
+            img = img.crop((left, top, left + cell_w, top + cell_h))
+            
+            row = idx // cols
+            col = idx % cols
+            canvas.paste(img, (col * cell_w, row * cell_h))
+        
+        output_path = os.path.join(tmp_dir, "grid_output.jpg")
+        canvas.save(output_path, "JPEG", quality=92)
+        return output_path
+    
+    async def _create_grid_video(self, bot, media_items, tmp_dir):
+        """Create a single grid video from mixed photos+videos using FFmpeg."""
+        import subprocess
+        import math
+        
+        # Download all media
+        paths = []
+        for i, item in enumerate(media_items):
+            tg_file = await bot.get_file(item['file_id'])
+            ext = '.mp4' if item.get('type') == 'video' else '.jpg'
+            path = os.path.join(tmp_dir, f"media_{i}{ext}")
+            await tg_file.download_to_drive(path)
+            paths.append({'path': path, 'type': item.get('type', 'photo')})
+        
+        n = len(paths)
+        cols = 2 if n <= 4 else 3
+        rows = math.ceil(n / cols)
+        cell_w, cell_h = 480, 480
+        total_w = cols * cell_w
+        total_h = rows * cell_h
+        
+        # Find longest video duration (default 5s for photos-only, shouldn't happen but just in case)
+        max_duration = 5
+        for p in paths:
+            if p['type'] == 'video':
+                try:
+                    probe = subprocess.run(
+                        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                         '-of', 'default=noprint_wrappers=1:nokey=1', p['path']],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    dur = float(probe.stdout.strip())
+                    if dur > max_duration:
+                        max_duration = dur
+                except Exception:
+                    pass
+        
+        # Build FFmpeg command
+        inputs = []
+        filter_parts = []
+        
+        for i, p in enumerate(paths):
+            if p['type'] == 'video':
+                inputs.extend(['-i', p['path']])
+            else:
+                # Photo as video: loop for max_duration
+                inputs.extend(['-loop', '1', '-t', str(max_duration), '-i', p['path']])
+            
+            # Scale + pad each input to cell size
+            filter_parts.append(
+                f"[{i}:v]scale={cell_w}:{cell_h}:force_original_aspect_ratio=decrease,"
+                f"pad={cell_w}:{cell_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+                f"setsar=1[v{i}]"
+            )
+        
+        # Build xstack layout
+        # xstack layout format: "x0_y0|x1_y1|..."
+        layout_parts = []
+        stack_inputs = []
+        for i in range(n):
+            row = i // cols
+            col = i % cols
+            x = col * cell_w
+            y = row * cell_h
+            layout_parts.append(f"{x}_{y}")
+            stack_inputs.append(f"[v{i}]")
+        
+        # Pad to fill grid if needed (add black cells)
+        total_cells = rows * cols
+        if n < total_cells:
+            # Create black placeholder for empty cells
+            black_idx = len(paths)
+            inputs.extend(['-f', 'lavfi', '-t', str(max_duration), 
+                          '-i', f'color=c=black:s={cell_w}x{cell_h}:r=25'])
+            filter_parts.append(f"[{black_idx}:v]setsar=1[v{black_idx}]")
+            for j in range(n, total_cells):
+                row = j // cols
+                col = j % cols
+                x = col * cell_w
+                y = row * cell_h
+                layout_parts.append(f"{x}_{y}")
+                stack_inputs.append(f"[v{black_idx}]")
+        
+        layout_str = "|".join(layout_parts)
+        filter_complex = ";".join(filter_parts)
+        filter_complex += f";{''.join(stack_inputs)}xstack=inputs={total_cells}:layout={layout_str}[out]"
+        
+        output_path = os.path.join(tmp_dir, "grid_output.mp4")
+        
+        cmd = [
+            'ffmpeg', '-y',
+            *inputs,
+            '-filter_complex', filter_complex,
+            '-map', '[out]',
+            '-t', str(min(max_duration, 60)),  # cap at 60s
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+            '-pix_fmt', 'yuv420p',
+            '-an',  # no audio (simpler)
+            output_path
+        ]
+        
+        self.logger.info(f"FFmpeg grid: {n} items, {cols}x{rows}, duration={max_duration:.1f}s")
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        
+        if proc.returncode != 0:
+            self.logger.error(f"FFmpeg error: {proc.stderr[-500:]}")
+            raise RuntimeError(f"FFmpeg failed: {proc.stderr[-200:]}")
+        
+        return output_path
+
     async def _send_broadcast_to_target(self, bot, chat_id, broadcast):
         """Send a single broadcast to one chat_id. Handles grid, single media, and text."""
         import json
         import asyncio
+        import tempfile
+        import os
         
         grid_media_json = broadcast.get('grid_media')
         grid_buttons_json = broadcast.get('grid_buttons')
         
         if grid_media_json:
-            # Grid/Album mode
+            # Grid/Collage mode
             media_items = json.loads(grid_media_json) if isinstance(grid_media_json, str) else grid_media_json
             
             if not media_items:
@@ -5540,43 +5701,56 @@ class ChildBot:
             if grid_buttons_json:
                 buttons = json.loads(grid_buttons_json) if isinstance(grid_buttons_json, str) else grid_buttons_json
             
-            # Build media group - caption ALWAYS on first item
-            media_group = []
-            for i, item in enumerate(media_items):
-                if i == 0 and caption_text:
-                    cap = caption_text
-                    pm = 'HTML'
-                else:
-                    cap = None
-                    pm = None
-                
-                file_id = item['file_id']
-                media_type = item.get('type', 'photo')
-                
-                if media_type == 'video':
-                    media_group.append(InputMediaVideo(media=file_id, caption=cap, parse_mode=pm))
-                else:
-                    media_group.append(InputMediaPhoto(media=file_id, caption=cap, parse_mode=pm))
+            # Check if any video exists
+            has_video = any(item.get('type') == 'video' for item in media_items)
             
-            self.logger.info(f"Sending media group with {len(media_group)} items to {chat_id}")
-            await bot.send_media_group(chat_id=chat_id, media=media_group)
+            tmp_dir = tempfile.mkdtemp(prefix='grid_')
             
-            # Send follow-up ONLY for buttons (caption already on album)
-            if buttons:
-                await asyncio.sleep(0.3)
+            try:
+                if has_video:
+                    # Mixed: create video collage via FFmpeg
+                    output_path = await self._create_grid_video(bot, media_items, tmp_dir)
+                    with open(output_path, 'rb') as f:
+                        await bot.send_video(
+                            chat_id=chat_id,
+                            video=f,
+                            caption=caption_text or None,
+                            parse_mode='HTML' if caption_text else None,
+                            supports_streaming=True
+                        )
+                else:
+                    # Photos only: create image grid via Pillow
+                    output_path = await self._create_grid_image(bot, media_items, tmp_dir)
+                    with open(output_path, 'rb') as f:
+                        await bot.send_photo(
+                            chat_id=chat_id,
+                            photo=f,
+                            caption=caption_text or None,
+                            parse_mode='HTML' if caption_text else None
+                        )
                 
-                keyboard_rows = []
-                for btn in buttons:
-                    url = btn['url']
-                    if url.startswith('t.me/'):
-                        url = 'https://' + url
-                    keyboard_rows.append([InlineKeyboardButton(btn['text'], url=url)])
-                
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text='⬆️',
-                    reply_markup=InlineKeyboardMarkup(keyboard_rows)
-                )
+                # Send follow-up ONLY for buttons
+                if buttons:
+                    await asyncio.sleep(0.3)
+                    keyboard_rows = []
+                    for btn in buttons:
+                        url = btn['url']
+                        if url.startswith('t.me/'):
+                            url = 'https://' + url
+                        keyboard_rows.append([InlineKeyboardButton(btn['text'], url=url)])
+                    
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text='⬆️',
+                        reply_markup=InlineKeyboardMarkup(keyboard_rows)
+                    )
+            finally:
+                # Cleanup temp files
+                import shutil
+                try:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                except Exception:
+                    pass
         else:
             # Single media or text-only mode
             if broadcast.get('media_type') == 'photo' and broadcast.get('media_file_id'):

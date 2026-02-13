@@ -8,3 +8,4 @@ aiohttp
 beautifulsoup4
 playwright
 lxml
+Pillow
