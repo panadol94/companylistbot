@@ -628,6 +628,9 @@ class UserbotInstance:
         cloned = 0
         scanned = 0
         errors = 0
+        skipped_large = 0
+        MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB limit per file
+        MAX_CLONE_BATCH = 500  # Max files per clone job
 
         def _apply_caption(original):
             """Apply caption modification"""
@@ -649,6 +652,10 @@ class UserbotInstance:
         try:
             # Collect messages first (oldest first for chronological order)
             messages = []
+            from telethon.tl.types import (
+                MessageMediaPhoto, MessageMediaDocument,
+                MessageMediaWebPage
+            )
             async for msg in self.client.iter_messages(source_entity, limit=limit):
                 scanned += 1
                 
@@ -657,22 +664,32 @@ class UserbotInstance:
                     if not msg.media:
                         continue
                     # Skip service messages, stickers, etc
-                    from telethon.tl.types import (
-                        MessageMediaPhoto, MessageMediaDocument,
-                        MessageMediaWebPage
-                    )
                     if isinstance(msg.media, MessageMediaWebPage):
                         continue
                     if not isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)):
                         continue
+                    
+                    # Skip oversized files (>20MB) to prevent server overload
+                    if isinstance(msg.media, MessageMediaDocument):
+                        doc = msg.media.document
+                        file_size = getattr(doc, 'size', 0) or 0
+                        if file_size > MAX_FILE_SIZE:
+                            skipped_large += 1
+                            logger.info(f"[UB-{self.bot_id}] Clone: skipping msg {msg.id} ({file_size // (1024*1024)}MB > 20MB limit)")
+                            continue
                 
                 messages.append(msg)
+                
+                # Enforce batch limit
+                if len(messages) >= MAX_CLONE_BATCH:
+                    logger.info(f"[UB-{self.bot_id}] Clone: reached batch limit of {MAX_CLONE_BATCH}")
+                    break
 
             # Reverse to send in chronological order (oldest first)
             messages.reverse()
             total = len(messages)
 
-            logger.info(f"[UB-{self.bot_id}] Clone: scanned {scanned}, found {total} media messages")
+            logger.info(f"[UB-{self.bot_id}] Clone: scanned {scanned}, found {total} media messages, skipped {skipped_large} oversized")
 
             # Send progress: starting
             if progress_callback:
@@ -682,6 +699,18 @@ class UserbotInstance:
                 try:
                     # Apply caption modification
                     caption = _apply_caption(msg.message or '')
+
+                    # Memory safety check — abort if RAM > 85%
+                    try:
+                        import psutil
+                        mem = psutil.virtual_memory()
+                        if mem.percent > 85:
+                            logger.warning(f"[UB-{self.bot_id}] Clone ABORTED: RAM usage {mem.percent}% > 85% safety limit")
+                            if progress_callback:
+                                await progress_callback(cloned, total)
+                            return cloned, f"Dihentikan: RAM usage {mem.percent}% (limit 85%)"
+                    except ImportError:
+                        pass  # psutil not installed, skip check
 
                     if msg.media:
                         # Try direct media reference first (fast, no download)
@@ -767,7 +796,7 @@ class UserbotInstance:
             logger.error(f"[UB-{self.bot_id}] Clone operation error: {e}")
             return cloned, str(e)
 
-        logger.info(f"[UB-{self.bot_id}] Clone complete: {cloned}/{total} cloned, {errors} errors")
+        logger.info(f"[UB-{self.bot_id}] Clone complete: {cloned}/{total} cloned, {errors} errors, {skipped_large} skipped (too large)")
         return cloned, None
 
     async def _resolve_entity(self, chat_id):

@@ -371,6 +371,55 @@ async def telegram_webhook(token: str, request: Request):
 async def health_check():
     return {"status": "healthy", "bots_active": len(bot_manager.bots) if bot_manager else 0}
 
+@app.get("/server")
+async def server_status():
+    """Server resource monitoring endpoint"""
+    try:
+        import psutil
+        import platform
+        
+        cpu_percent = psutil.cpu_percent(interval=1)
+        mem = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+        
+        # Get uptime
+        import time
+        uptime_seconds = time.time() - psutil.boot_time()
+        days = int(uptime_seconds // 86400)
+        hours = int((uptime_seconds % 86400) // 3600)
+        
+        # Get top processes by memory
+        top_procs = []
+        for proc in sorted(psutil.process_iter(['pid', 'name', 'memory_percent']), 
+                          key=lambda p: p.info.get('memory_percent', 0) or 0, reverse=True)[:5]:
+            top_procs.append({
+                "pid": proc.info['pid'],
+                "name": proc.info['name'],
+                "memory_percent": round(proc.info.get('memory_percent', 0) or 0, 1)
+            })
+        
+        return {
+            "status": "healthy" if mem.percent < 85 else "warning",
+            "cpu_percent": cpu_percent,
+            "ram": {
+                "used_gb": round(mem.used / (1024**3), 2),
+                "total_gb": round(mem.total / (1024**3), 2),
+                "percent": mem.percent
+            },
+            "disk": {
+                "used_gb": round(disk.used / (1024**3), 2),
+                "total_gb": round(disk.total / (1024**3), 2),
+                "percent": round(disk.percent, 1)
+            },
+            "uptime": f"{days}d {hours}h",
+            "bots_active": len(bot_manager.bots) if bot_manager else 0,
+            "top_processes": top_procs
+        }
+    except ImportError:
+        return {"error": "psutil not installed"}
+    except Exception as e:
+        return {"error": str(e)}
+
 if __name__ == "__main__":
     if not MOTHER_TOKEN:
         logger.critical("❌ MOTHER_TOKEN not found! Exiting.")
