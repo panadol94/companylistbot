@@ -7326,12 +7326,20 @@ class ChildBot:
         else:
             text = (
                 "🤖 **AUTO PROMO MONITOR**\n\n"
-                "Monitor channel/group untuk detect promo syarikat, "
-                "auto-swap link dengan link kau, dan broadcast terus!\n\n"
-                "⚡ Belum setup. Tekan Setup untuk mula."
+                "Fungsi ni akan monitor channel/group Telegram "
+                "secara automatik untuk detect promo syarikat.\n\n"
+                "✅ Apa yang boleh buat:\n"
+                "• Detect nama company dari channel lain\n"
+                "• Auto-tukar link kepada link affiliate kau\n"
+                "• Broadcast terus ke users/groups kau\n\n"
+                "📌 Untuk mula, kau perlu:\n"
+                "1. Buat API credentials di Telegram\n"
+                "2. Connect akaun Telegram kau\n"
+                "3. Tambah channel untuk monitor\n\n"
+                "Tekan **Setup** untuk mula! 👇"
             )
             keyboard = [
-                [InlineKeyboardButton("⚙️ Setup Userbot", callback_data="ub_setup")],
+                [InlineKeyboardButton("⚙️ Setup Sekarang", callback_data="ub_setup")],
                 [InlineKeyboardButton("« Back", callback_data="admin_settings")]
             ]
 
@@ -7384,11 +7392,25 @@ class ChildBot:
 
         elif data == "ub_setup":
             text = (
-                "⚙️ **SETUP USERBOT**\n\n"
-                "1️⃣ Pergi ke https://my.telegram.org\n"
-                "2️⃣ Login dan buat App\n"
-                "3️⃣ Copy API ID\n\n"
-                "📝 Masukkan **API ID** (nombor sahaja):"
+                "⚙️ **SETUP USERBOT — STEP 1/4**\n\n"
+                "Pertama, kau perlu buat API credentials:\n\n"
+                "📋 **Cara buat:**\n"
+                "1. Buka browser → pergi ke:\n"
+                "   https://my.telegram.org\n"
+                "2. Masukkan nombor telefon Telegram kau\n"
+                "3. Telegram akan hantar kod → masukkan\n"
+                "4. Klik **API development tools**\n"
+                "5. Isi form:\n"
+                "   • App title: apa-apa nama\n"
+                "   • Short name: apa-apa\n"
+                "   • URL: kosongkan atau letak example.com\n"
+                "   • Platform: Desktop\n"
+                "6. Klik **Create application**\n\n"
+                "Kau akan nampak **App api\\_id** (nombor)\n"
+                "dan **App api\\_hash** (huruf+nombor panjang)\n\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "📝 Sekarang **copy nombor API ID** dan \n"
+                "paste/taip di sini:"
             )
             await query.message.edit_text(text, parse_mode='Markdown')
             return UB_SETUP_API
@@ -7454,7 +7476,10 @@ class ChildBot:
         """Step 1: Save API ID"""
         api_id = update.message.text.strip()
         if not api_id.isdigit():
-            await update.message.reply_text("❌ API ID mesti nombor sahaja. Cuba lagi:")
+            await update.message.reply_text(
+                "❌ API ID mesti nombor sahaja (contoh: 12345678).\n"
+                "Cuba copy semula dari my.telegram.org"
+            )
             return UB_SETUP_API
 
         if not context or not context.user_data:
@@ -7463,7 +7488,12 @@ class ChildBot:
 
         await update.message.reply_text(
             "✅ API ID saved!\n\n"
-            "📝 Sekarang masukkan **API Hash**:",
+            "⚙️ **STEP 2/4 — API HASH**\n\n"
+            "Sekarang copy **App api\\_hash** dari \n"
+            "page yang sama di my.telegram.org\n\n"
+            "Ia nampak macam ni:\n"
+            "`a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6`\n\n"
+            "📝 Paste API Hash di sini:",
             parse_mode='Markdown'
         )
         return UB_SETUP_HASH
@@ -7472,14 +7502,22 @@ class ChildBot:
         """Step 2: Save API Hash"""
         api_hash = update.message.text.strip()
         if len(api_hash) < 10:
-            await update.message.reply_text("❌ API Hash tidak valid. Cuba lagi:")
+            await update.message.reply_text(
+                "❌ API Hash tak valid. Ia patut 32 karakter.\n"
+                "Cuba copy semula dari my.telegram.org"
+            )
             return UB_SETUP_HASH
 
         context.user_data.setdefault('ub_setup', {})['api_hash'] = api_hash
 
         await update.message.reply_text(
             "✅ API Hash saved!\n\n"
-            "📱 Masukkan **nombor telefon** (format: +60123456789):",
+            "⚙️ **STEP 3/4 — NOMBOR TELEFON**\n\n"
+            "Masukkan nombor telefon akaun Telegram \n"
+            "yang kau nak guna untuk monitor.\n\n"
+            "📱 Format: `+60123456789`\n\n"
+            "⚠️ Guna nombor telefon Telegram kau \n"
+            "sendiri (bukan bot token)",
             parse_mode='Markdown'
         )
         return UB_SETUP_PHONE
@@ -7500,16 +7538,26 @@ class ChildBot:
 
         context.user_data['ub_setup']['phone'] = phone
 
-        await update.message.reply_text("📤 Menghantar kod OTP...")
+        await update.message.reply_text("📤 Menghantar kod OTP ke Telegram kau...")
 
         if self.userbot_manager:
             success = await self.userbot_manager.begin_auth(self.bot_id, api_id, api_hash, phone)
             if success:
                 await update.message.reply_text(
-                    "✅ Kod OTP dihantar ke Telegram/SMS kau!\n\n"
-                    "⚠️ **PENTING:** Masukkan kod dengan **jarak/dash** \n"
-                    "supaya Telegram tak block!\n\n"
-                    "📝 Contoh: `3 8 9 6 9` atau `3-8-9-6-9`",
+                    "✅ **STEP 4/4 — KOD PENGESAHAN**\n\n"
+                    "Kod OTP telah dihantar ke akaun \n"
+                    "Telegram kau (atau SMS)!\n\n"
+                    "🚨 **PENTING — BACA DULU:**\n"
+                    "Jangan taip kod terus macam `38969`.\n"
+                    "Telegram akan BLOCK kalau kau \n"
+                    "hantar kod login dalam chat!\n\n"
+                    "✅ **Cara betul:**\n"
+                    "Letak jarak atau dash antara nombor:\n"
+                    "• `3 8 9 6 9`\n"
+                    "• `3-8-9-6-9`\n"
+                    "• `3.8.9.6.9`\n\n"
+                    "Bot akan auto-detect nombor tu.\n\n"
+                    "📝 Taip kod kau sekarang:",
                     parse_mode='Markdown'
                 )
                 return UB_SETUP_OTP
