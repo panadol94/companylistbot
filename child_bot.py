@@ -117,6 +117,7 @@ SCHEDULE_TIME = 30
 WELCOME_PHOTO, WELCOME_TEXT = range(11, 13)
 # States for Edit Company
 EDIT_FIELD, EDIT_NAME, EDIT_DESC, EDIT_MEDIA, EDIT_BTN_TEXT, EDIT_BTN_URL = range(15, 21)
+EDIT_KEYWORDS = 29  # Separate to avoid collision with SEARCH=22
 
 # State for Search
 SEARCH = 22
@@ -339,6 +340,7 @@ class ChildBot:
                 EDIT_MEDIA: [MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, self.edit_company_save_media)],
                 EDIT_BTN_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_text)],
                 EDIT_BTN_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_btn_url)],
+                EDIT_KEYWORDS: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.edit_company_save_keywords)],
 
             },
             fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.cancel_op, pattern=r'^cancel$'), CallbackQueryHandler(self.handle_callback)],
@@ -1963,7 +1965,7 @@ class ChildBot:
             [InlineKeyboardButton("🔗 Button Text", callback_data="ef_btn_text")],
             [InlineKeyboardButton("🌐 Button URL", callback_data="ef_btn_url")],
             [InlineKeyboardButton("🔘 Manage Buttons", callback_data="ef_manage_btns")],
-
+            [InlineKeyboardButton("🔑 Keywords", callback_data="ef_keywords")],
             [cancel_btn]
         ]
         
@@ -2000,6 +2002,19 @@ class ChildBot:
         elif data == "ef_btn_url":
             await update.callback_query.message.reply_text("🌐 Masukkan **BUTTON URL BARU**:", parse_mode='Markdown')
             return EDIT_BTN_URL
+        elif data == "ef_keywords":
+            company_id = context.user_data.get('edit_company_id')
+            company = self.db.get_company(company_id)
+            current = company.get('keywords', '') if company else ''
+            await update.callback_query.message.reply_text(
+                f"🔑 **KEYWORDS / ALIAS**\n\n"
+                f"Current: `{current or '(tiada)'}`\n\n"
+                f"Masukkan keywords baru, pisahkan dengan koma.\n"
+                f"Contoh: `a9, a-9, a9play`\n\n"
+                f"_Keywords ini digunakan untuk auto-detect company dari channel._",
+                parse_mode='Markdown'
+            )
+            return EDIT_KEYWORDS
 
         elif data == "cancel":
             await update.callback_query.message.reply_text("❌ Edit cancelled.")
@@ -2092,6 +2107,20 @@ class ChildBot:
         )
         return ConversationHandler.END
     
+    async def edit_company_save_keywords(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        company_id = context.user_data.get('edit_company_id')
+        keywords = update.message.text.strip()
+        self.db.edit_company(company_id, 'keywords', keywords)
+        
+        keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
+        await update.message.reply_text(
+            f"✅ Keywords berjaya dikemaskini!\n\n"
+            f"🔑 Keywords: `{keywords}`\n\n"
+            f"_Bot akan guna keywords ini untuk auto-detect company dari channel._",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return ConversationHandler.END
 
     
     # --- 4D Analyzer Module ---

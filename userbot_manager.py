@@ -20,25 +20,31 @@ logger = logging.getLogger(__name__)
 URL_PATTERN = re.compile(r'https?://\S+|t\.me/\S+', re.IGNORECASE)
 
 
-def match_company_in_text(company_name, text):
+def match_company_in_text(company_name, text, keywords=''):
     """Smart company name matching with multiple strategies.
     
     Handles variations like:
     - DB: "🚀CM8 Platform" → matches "CM8" in text
     - DB: "🎮BossBet8" → matches "bossbet8" in text
-    - DB: "Mega888" → matches "mega888" in text
+    - Keywords: "a9, a-9" → matches "a9" in text
     
     Returns True if company matches, False otherwise.
     """
+    text_lower = text.lower()
+
+    # 0) Check keywords/aliases first (most reliable)
+    if keywords:
+        for kw in keywords.split(','):
+            kw = kw.strip().lower()
+            if kw and len(kw) >= 2 and kw in text_lower:
+                return True
+
     # Strip emoji and special unicode chars from company name
-    # Keep only alphanumeric, spaces, hyphens, underscores
     cleaned_name = re.sub(r'[^\w\s\-]', '', company_name, flags=re.UNICODE)
-    # Also remove non-ASCII that aren't word chars (catches remaining emoji)
     cleaned_name = ''.join(c for c in cleaned_name if ord(c) < 0x10000 or c.isalnum())
     cleaned_name = cleaned_name.strip()
     
     name_lower = cleaned_name.lower()
-    text_lower = text.lower()
 
     if not name_lower:
         return False
@@ -351,7 +357,8 @@ class UserbotInstance:
                 matched_company = None
                 if text and companies:
                     for company in companies:
-                        if match_company_in_text(company['name'], text):
+                        kw = company.get('keywords', '') or ''
+                        if match_company_in_text(company['name'], text, keywords=kw):
                             matched_company = company
                             break
 

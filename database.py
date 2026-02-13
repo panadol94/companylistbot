@@ -104,6 +104,12 @@ class Database:
             except Exception:
                 pass  # Column already exists
 
+            # Migration: Add keywords column to companies (for auto-matching aliases)
+            try:
+                cursor.execute("ALTER TABLE companies ADD COLUMN keywords TEXT DEFAULT ''")
+            except Exception:
+                pass  # Column already exists
+
             # 3. Users Table (End users of child bots)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
@@ -614,7 +620,7 @@ class Database:
     
     def edit_company(self, company_id, field, value):
         """Update a specific field of a company"""
-        allowed_fields = ['name', 'description', 'media_file_id', 'media_type', 'button_text', 'button_url', 'emoji']
+        allowed_fields = ['name', 'description', 'media_file_id', 'media_type', 'button_text', 'button_url', 'emoji', 'keywords']
         if field not in allowed_fields:
             return False
         with self.lock:
