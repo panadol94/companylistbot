@@ -260,6 +260,8 @@ class ChildBot:
                 ],
                 GRID_BUTTONS: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.grid_buttons_handler),
+                    CallbackQueryHandler(self.grid_company_pick, pattern="^grid_comp_"),
+                    CallbackQueryHandler(self.grid_manual_btn, pattern="^grid_manual_btn$"),
                     CallbackQueryHandler(self.grid_buttons_done, pattern="^grid_buttons_done$"),
                     CallbackQueryHandler(self.grid_buttons_skip, pattern="^grid_skip_buttons$")
                 ]
@@ -4950,41 +4952,79 @@ class ChildBot:
         )
         return GRID_CAPTION
     
+    async def _show_button_picker(self, message_or_query, context):
+        """Show company picker + manual option for broadcast buttons"""
+        bot_id = context.user_data.get('bot_id') or context.bot_data.get('bot_id')
+        companies = self.db.get_companies(bot_id) if bot_id else []
+        
+        keyboard = []
+        # Show companies that have button_url
+        for comp in companies:
+            if comp.get('button_url'):
+                btn_label = f"🏢 {comp['name']}"
+                keyboard.append([InlineKeyboardButton(btn_label, callback_data=f"grid_comp_{comp['id']}")])
+        
+        keyboard.append([InlineKeyboardButton("✍️ Manual (text|url)", callback_data="grid_manual_btn")])
+        keyboard.append([InlineKeyboardButton("⏭️ Skip Buttons", callback_data="grid_skip_buttons")])
+        
+        text = (
+            "🔘 **Pilih company** untuk auto-button:\n\n"
+            "Atau pilih Manual untuk taip sendiri."
+        )
+        
+        if hasattr(message_or_query, 'edit_text'):
+            await message_or_query.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await message_or_query.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
     async def grid_caption_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Receive caption text for grid broadcast"""
         caption = message_to_html(update.message)
         context.user_data['grid_caption'] = caption
-        
-        keyboard = [
-            [InlineKeyboardButton("⏭️ Skip Buttons", callback_data="grid_skip_buttons")]
-        ]
-        await update.message.reply_text(
-            "✅ Caption disimpan!\n\n"
-            "🔘 Sekarang tambah **inline buttons**.\n"
-            "Format: `text|url` (satu button per baris)\n\n"
-            "Contoh:\n"
-            "`Register|https://t.me/bot`\n"
-            "`Website|https://example.com`\n\n"
-            "Atau tekan Skip jika tak perlu buttons.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
+        await self._show_button_picker(update.message, context)
         return GRID_BUTTONS
     
     async def grid_caption_skip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Skip caption - go to buttons"""
         await update.callback_query.answer()
         context.user_data['grid_caption'] = None
+        await self._show_button_picker(update.callback_query.message, context)
+        return GRID_BUTTONS
+    
+    async def grid_company_pick(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Auto-generate button from selected company"""
+        await update.callback_query.answer()
+        data = update.callback_query.data  # grid_comp_<id>
+        comp_id = int(data.replace("grid_comp_", ""))
         
+        bot_id = context.user_data.get('bot_id') or context.bot_data.get('bot_id')
+        companies = self.db.get_companies(bot_id) if bot_id else []
+        company = next((c for c in companies if c['id'] == comp_id), None)
+        
+        if not company or not company.get('button_url'):
+            await update.callback_query.message.edit_text("❌ Company tak jumpa atau tiada URL.")
+            return GRID_BUTTONS
+        
+        btn_text = company.get('button_text') or company['name']
+        btn_url = company['button_url']
+        if btn_url.startswith('t.me/'):
+            btn_url = 'https://' + btn_url
+        
+        context.user_data['grid_buttons'] = [{'text': btn_text, 'url': btn_url}]
+        return await self._grid_show_confirm(update, context)
+    
+    async def grid_manual_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Switch to manual button input"""
+        await update.callback_query.answer()
         keyboard = [
             [InlineKeyboardButton("⏭️ Skip Buttons", callback_data="grid_skip_buttons")]
         ]
         await update.callback_query.message.edit_text(
-            "⏭️ Caption diskip.\n\n"
-            "🔘 Nak tambah **inline buttons**?\n"
+            "✍️ **Manual Mode**\n\n"
             "Format: `text|url` (satu button per baris)\n\n"
             "Contoh:\n"
-            "`Register|https://t.me/bot`\n\n"
+            "`Register|https://t.me/bot`\n"
+            "`Website|https://example.com`\n\n"
             "Atau tekan Skip.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
