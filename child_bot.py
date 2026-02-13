@@ -5385,8 +5385,11 @@ class ChildBot:
         
         keyboard = []
         for comp in companies:
-            if comp.get('button_url'):
-                keyboard.append([InlineKeyboardButton(f"🏢 {comp['name']}", callback_data=f"sbtn_comp_{comp['id']}")])
+            # Check company_buttons table too
+            buttons = self.db.get_company_buttons(comp['id'])
+            has_url = comp.get('button_url') or (buttons and any(b.get('url') for b in buttons))
+            label = f"🏢 {comp['name']}" if has_url else f"🏢 {comp['name']} (no url)"
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"sbtn_comp_{comp['id']}")])
         keyboard.append([InlineKeyboardButton("✍️ Manual (text|url)", callback_data="sbtn_manual")])
         keyboard.append([InlineKeyboardButton("⏭️ Skip Buttons", callback_data="sbtn_skip")])
         
@@ -5408,12 +5411,25 @@ class ChildBot:
         companies = self.db.get_companies(bot_id) if bot_id else []
         company = next((c for c in companies if c['id'] == comp_id), None)
         
-        if not company or not company.get('button_url'):
+        if not company:
             await update.callback_query.message.edit_text("❌ Company tak jumpa.")
             return SINGLE_BUTTONS
         
+        # Get URL from button_url or company_buttons table
         btn_text = company.get('button_text') or company['name']
-        btn_url = company['button_url']
+        btn_url = company.get('button_url', '')
+        
+        if not btn_url:
+            # Try company_buttons table
+            comp_buttons = self.db.get_company_buttons(comp_id)
+            if comp_buttons:
+                btn_url = comp_buttons[0].get('url', '')
+                btn_text = comp_buttons[0].get('text', '') or btn_text
+        
+        if not btn_url:
+            await update.callback_query.message.edit_text("❌ Company ni takde URL.")
+            return SINGLE_BUTTONS
+        
         if btn_url.startswith('t.me/'):
             btn_url = 'https://' + btn_url
         
