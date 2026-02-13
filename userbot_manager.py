@@ -222,49 +222,70 @@ class UserbotInstance:
         since_date = datetime.now(timezone.utc) - timedelta(days=days)
         matches = 0
 
-        # Resolve entity — channel_id might be a URL, username, or numeric ID
+        # Resolve entity — try multiple approaches
         entity = None
-        resolved_id = channel_id
 
+        # 1) Try numeric ID directly
         try:
             entity = await self.client.get_entity(int(channel_id))
-        except (ValueError, TypeError):
+        except Exception:
             pass
 
+        # 2) Try with -100 prefix (Telethon channel format)
         if not entity:
-            # Extract username from URL or @username
-            username = channel_id
+            try:
+                peer_id = int(f"-100{channel_id}")
+                entity = await self.client.get_entity(peer_id)
+            except Exception:
+                pass
+
+        # 3) Try stored username from DB
+        if not entity:
+            ch_data = self.db.get_monitored_channels(self.bot_id)
+            stored_username = None
+            for ch in ch_data:
+                if str(ch.get('channel_id')) == str(channel_id):
+                    stored_username = ch.get('channel_username')
+                    break
+            if stored_username:
+                try:
+                    entity = await self.client.get_entity(stored_username)
+                    logger.info(f"[UB-{self.bot_id}] Resolved via username: {stored_username}")
+                except Exception:
+                    pass
+
+        # 4) Try as URL/username string
+        if not entity:
+            username = str(channel_id)
             for prefix in ['https://t.me/', 'http://t.me/', 't.me/', '@']:
                 username = username.replace(prefix, '')
-            username = username.strip('/').split('/')[0]  # Handle trailing paths
+            username = username.strip('/').split('/')[0]
 
             if username.startswith('+'):
-                # Private invite — need to join first
                 try:
                     from telethon.tl.functions.messages import ImportChatInviteRequest
                     result = await self.client(ImportChatInviteRequest(username.lstrip('+')))
                     entity = result.chats[0]
                 except Exception:
-                    try:
-                        entity = await self.client.get_entity(channel_id)
-                    except Exception as e:
-                        logger.error(f"[UB-{self.bot_id}] Cannot resolve entity {channel_id}: {e}")
-                        return 0
-            else:
+                    pass
+            elif username and not username.isdigit():
                 try:
                     entity = await self.client.get_entity(username)
-                except Exception as e:
-                    logger.error(f"[UB-{self.bot_id}] Cannot resolve entity {channel_id} -> {username}: {e}")
-                    return 0
+                except Exception:
+                    pass
 
-        # Update DB with real numeric channel ID if it changed
-        if entity and str(entity.id) != str(channel_id):
-            resolved_id = str(entity.id)
+        if not entity:
+            logger.error(f"[UB-{self.bot_id}] Cannot resolve entity: {channel_id}")
+            return 0
+
+        # Update DB with real channel ID if needed
+        real_id = str(entity.id)
+        if real_id != str(channel_id):
             try:
-                self.db.update_monitored_channel_id(self.bot_id, channel_id, resolved_id,
+                self.db.update_monitored_channel_id(self.bot_id, channel_id, real_id,
                                                      getattr(entity, 'title', None),
                                                      getattr(entity, 'username', None))
-                logger.info(f"[UB-{self.bot_id}] Updated channel_id {channel_id} -> {resolved_id}")
+                logger.info(f"[UB-{self.bot_id}] Updated channel_id {channel_id} -> {real_id}")
             except Exception as e:
                 logger.warning(f"[UB-{self.bot_id}] Failed to update channel_id: {e}")
 
