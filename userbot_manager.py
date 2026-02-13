@@ -596,7 +596,7 @@ class UserbotInstance:
             logger.error(f"[UB-{self.bot_id}] get_message_content failed: {e}")
             return None
 
-    async def clone_media_to_target(self, source_id, target_id, progress_callback=None, media_only=True, limit=None):
+    async def clone_media_to_target(self, source_id, target_id, progress_callback=None, media_only=True, limit=None, caption_modifier=None):
         """Clone media messages from source channel/group to target channel/group.
         
         Args:
@@ -605,6 +605,10 @@ class UserbotInstance:
             progress_callback: async func(cloned, total_scanned) for progress updates
             media_only: If True, only clone messages with media (photo/video/doc/GIF)
             limit: Max number of messages to scan (None = all)
+            caption_modifier: dict with keys:
+                mode: 'keep'|'append'|'replace'|'find_replace'
+                text: text to append/replace with
+                find: text to find (for find_replace mode)
         
         Returns: (cloned_count, error_message or None)
         """
@@ -624,6 +628,23 @@ class UserbotInstance:
         cloned = 0
         scanned = 0
         errors = 0
+
+        def _apply_caption(original):
+            """Apply caption modification"""
+            if not caption_modifier or caption_modifier.get('mode') == 'keep':
+                return original
+            mode = caption_modifier.get('mode', 'keep')
+            text = caption_modifier.get('text', '')
+            if mode == 'append':
+                return f"{original}\n\n{text}" if original else text
+            elif mode == 'replace':
+                return text
+            elif mode == 'find_replace':
+                find = caption_modifier.get('find', '')
+                if find and original:
+                    return original.replace(find, text)
+                return original
+            return original
 
         try:
             # Collect messages first (oldest first for chronological order)
@@ -659,18 +680,21 @@ class UserbotInstance:
 
             for i, msg in enumerate(messages):
                 try:
+                    # Apply caption modification
+                    caption = _apply_caption(msg.message or '')
+
                     # Always copy content (no "Forwarded from" label)
                     if msg.media:
                         await self.client.send_message(
                             target_entity,
-                            message=msg.message or '',
+                            message=caption,
                             file=msg.media,
-                            formatting_entities=msg.entities
+                            formatting_entities=msg.entities if caption_modifier and caption_modifier.get('mode') != 'keep' and caption_modifier.get('mode') != 'replace' else msg.entities
                         )
-                    elif msg.message:
+                    elif caption:
                         await self.client.send_message(
                             target_entity,
-                            message=msg.message,
+                            message=caption,
                             formatting_entities=msg.entities
                         )
                     else:
@@ -950,10 +974,10 @@ class UserbotManager:
         logger.info(f"[UB-{bot_id}] History scan complete: {len(all_scraped)} items from {len(channels)} channels")
         return all_scraped
 
-    async def clone_media(self, bot_id, source_id, target_id, progress_callback=None, media_only=True, limit=None):
+    async def clone_media(self, bot_id, source_id, target_id, progress_callback=None, media_only=True, limit=None, caption_modifier=None):
         """Clone media from source to target using bot's userbot instance"""
         instance = self.instances.get(bot_id)
         if not instance or not instance.client:
             return 0, "Userbot not connected"
-        return await instance.clone_media_to_target(source_id, target_id, progress_callback, media_only, limit)
+        return await instance.clone_media_to_target(source_id, target_id, progress_callback, media_only, limit, caption_modifier)
 

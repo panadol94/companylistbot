@@ -147,6 +147,7 @@ UB_MENU, UB_SETUP_API, UB_SETUP_HASH, UB_SETUP_PHONE, UB_SETUP_OTP, UB_SETUP_2FA
 # States for Userbot Hub & Clone Media
 UB_HUB = 118
 CLONE_SOURCE, CLONE_TARGET, CLONE_CONFIRM = range(120, 123)
+CLONE_CAPTION_MODE, CLONE_CAPTION_TEXT = range(123, 125)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -450,6 +451,12 @@ class ChildBot:
                 UB_ADD_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_add_channel_link)],
                 CLONE_SOURCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.clone_save_source)],
                 CLONE_TARGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.clone_save_target)],
+                CLONE_CAPTION_MODE: [
+                    CallbackQueryHandler(self.clone_caption_mode_select, pattern=r'^cap_'),
+                ],
+                CLONE_CAPTION_TEXT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.clone_caption_text_input),
+                ],
                 CLONE_CONFIRM: [
                     CallbackQueryHandler(self.clone_confirm, pattern=r'^clone_confirm$'),
                     CallbackQueryHandler(self.clone_media_menu, pattern=r'^clone_cancel$'),
@@ -7644,17 +7651,119 @@ class ChildBot:
         return CLONE_TARGET
 
     async def clone_save_target(self, update: Update, context=None):
-        """Save target and show confirmation"""
+        """Save target and show caption mode selection"""
         target = update.message.text.strip()
         source = context.user_data.get('clone_source', '?')
         context.user_data['clone_target'] = target
 
         text = (
-            "📋 **CLONE MEDIA — Step 3/3**\n\n"
-            "**Confirm clone operation:**\n\n"
+            "📋 **CLONE MEDIA — Step 3/4**\n\n"
+            f"📤 Source: `{source}`\n"
+            f"📥 Target: `{target}`\n\n"
+            "✏️ **Caption Mode:**\n"
+            "Pilih apa nak buat dengan caption media:"
+        )
+        keyboard = [
+            [InlineKeyboardButton("📝 Keep Original", callback_data="cap_keep")],
+            [InlineKeyboardButton("➕ Append Text", callback_data="cap_append")],
+            [InlineKeyboardButton("🔄 Replace All", callback_data="cap_replace")],
+            [InlineKeyboardButton("🔍 Find & Replace", callback_data="cap_find_replace")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="clone_cancel")]
+        ]
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return CLONE_CAPTION_MODE
+
+    async def clone_caption_mode_select(self, update: Update, context=None):
+        """Handle caption mode selection"""
+        query = update.callback_query
+        await query.answer()
+        mode = query.data.replace("cap_", "")  # keep, append, replace, find_replace
+        context.user_data['caption_mode'] = mode
+
+        if mode == "keep":
+            context.user_data['caption_text'] = ''
+            context.user_data['caption_find'] = ''
+            return await self._show_clone_confirm(update, context)
+        elif mode == "append":
+            text = (
+                "✏️ **Caption — Append Mode**\n\n"
+                "Taip text yang nak ditambah di **bawah** caption asal.\n\n"
+                "Contoh:\n"
+                "`\n\n👉 Join: t.me/channelkau`"
+            )
+            await query.message.edit_text(text, parse_mode='Markdown')
+            return CLONE_CAPTION_TEXT
+        elif mode == "replace":
+            text = (
+                "✏️ **Caption — Replace Mode**\n\n"
+                "Taip caption **baru** yang akan gantikan semua caption asal.\n\n"
+                "Contoh:\n"
+                "`Promo terbaik! Join t.me/channelkau`"
+            )
+            await query.message.edit_text(text, parse_mode='Markdown')
+            return CLONE_CAPTION_TEXT
+        elif mode == "find_replace":
+            text = (
+                "✏️ **Caption — Find & Replace**\n\n"
+                "Taip dalam format:\n"
+                "`FIND | REPLACE`\n\n"
+                "Contoh:\n"
+                "`t.me/channellain | t.me/channelkau`\n\n"
+                "Gunakan `|` sebagai separator."
+            )
+            await query.message.edit_text(text, parse_mode='Markdown')
+            return CLONE_CAPTION_TEXT
+        return CLONE_CAPTION_MODE
+
+    async def clone_caption_text_input(self, update: Update, context=None):
+        """Handle caption text input"""
+        text_input = update.message.text.strip()
+        mode = context.user_data.get('caption_mode', 'keep')
+
+        if mode == "find_replace":
+            if '|' not in text_input:
+                await update.message.reply_text(
+                    "❌ Format salah. Guna format:\n`FIND | REPLACE`\n\nCuba lagi:",
+                    parse_mode='Markdown'
+                )
+                return CLONE_CAPTION_TEXT
+            parts = text_input.split('|', 1)
+            context.user_data['caption_find'] = parts[0].strip()
+            context.user_data['caption_text'] = parts[1].strip()
+        else:
+            context.user_data['caption_text'] = text_input
+            context.user_data['caption_find'] = ''
+
+        return await self._show_clone_confirm(update, context)
+
+    async def _show_clone_confirm(self, update: Update, context=None):
+        """Show final confirmation with all settings"""
+        source = context.user_data.get('clone_source', '?')
+        target = context.user_data.get('clone_target', '?')
+        mode = context.user_data.get('caption_mode', 'keep')
+        caption_text = context.user_data.get('caption_text', '')
+        caption_find = context.user_data.get('caption_find', '')
+
+        mode_labels = {
+            'keep': '📝 Keep Original',
+            'append': '➕ Append',
+            'replace': '🔄 Replace All',
+            'find_replace': '🔍 Find & Replace'
+        }
+        caption_info = f"✏️ Caption: {mode_labels.get(mode, mode)}"
+        if mode == 'append':
+            caption_info += f"\n   Text: `{caption_text[:50]}{'...' if len(caption_text) > 50 else ''}`"
+        elif mode == 'replace':
+            caption_info += f"\n   New: `{caption_text[:50]}{'...' if len(caption_text) > 50 else ''}`"
+        elif mode == 'find_replace':
+            caption_info += f"\n   Find: `{caption_find[:30]}`\n   Replace: `{caption_text[:30]}`"
+
+        text = (
+            "📋 **CLONE MEDIA — Confirm**\n\n"
             f"📤 Source: `{source}`\n"
             f"📥 Target: `{target}`\n"
             f"📎 Type: All media (photo/video/doc/GIF)\n"
+            f"{caption_info}\n"
             f"⏱️ Rate: ~2 saat per media\n\n"
             f"⚠️ Pastikan userbot sudah join kedua-dua chat!"
         )
@@ -7662,7 +7771,11 @@ class ChildBot:
             [InlineKeyboardButton("✅ Confirm Clone", callback_data="clone_confirm")],
             [InlineKeyboardButton("❌ Cancel", callback_data="clone_cancel")]
         ]
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        query = update.callback_query
+        if query:
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
         return CLONE_CONFIRM
 
     async def clone_confirm(self, update: Update, context=None):
@@ -7672,12 +7785,20 @@ class ChildBot:
 
         source = context.user_data.get('clone_source')
         target = context.user_data.get('clone_target')
+        caption_mode = context.user_data.get('caption_mode', 'keep')
+        caption_text = context.user_data.get('caption_text', '')
+        caption_find = context.user_data.get('caption_find', '')
 
         if not source or not target:
             await query.message.edit_text("❌ Data hilang. Sila cuba lagi.", reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("« Back", callback_data="clone_menu")]]
             ))
             return UB_HUB
+
+        # Build caption modifier
+        caption_modifier = None
+        if caption_mode != 'keep':
+            caption_modifier = {'mode': caption_mode, 'text': caption_text, 'find': caption_find}
 
         # Save clone job to DB
         clone_id = self.db.save_clone_job(self.bot_id, source, source, target, target)
@@ -7715,7 +7836,8 @@ class ChildBot:
                             pass
 
                 count, error = await self.userbot_manager.clone_media(
-                    self.bot_id, source, target, progress_callback=progress
+                    self.bot_id, source, target, progress_callback=progress,
+                    caption_modifier=caption_modifier
                 )
 
                 self.db.update_clone_job(clone_id, media_count=count, status='done' if not error else 'error')
