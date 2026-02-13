@@ -8736,7 +8736,7 @@ class ChildBot:
                         count += 1
                     await asyncio.sleep(0.3)
                 self.db.update_promo_status(promo_id, 'broadcast')
-                await query.message.edit_text(f"✅ Broadcast ke {count} group berjaya!")
+                result_text = f"✅ Broadcast ke {count} group berjaya!"
             else:
                 users = self.db.get_users(self.bot_id)
                 count = 0
@@ -8745,24 +8745,83 @@ class ChildBot:
                         count += 1
                     await asyncio.sleep(0.3)
                 self.db.update_promo_status(promo_id, 'broadcast')
-                await query.message.edit_text(f"✅ Broadcast ke {count} users berjaya!")
+                result_text = f"✅ Broadcast ke {count} users berjaya!"
+
+            # Edit caption for media, edit text for text messages
+            is_media = bool(query.message.photo or query.message.video or query.message.document)
+            try:
+                if is_media:
+                    await query.message.edit_caption(caption=result_text, parse_mode='HTML')
+                else:
+                    await query.message.edit_text(result_text)
+            except Exception:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await self.app.bot.send_message(chat_id=query.from_user.id, text=result_text)
 
         except Exception as e:
             self.logger.error(f"Promo broadcast error: {e}")
-            await query.message.edit_text(f"❌ Error: {e}")
+            try:
+                is_media = bool(query.message.photo or query.message.video or query.message.document)
+                if is_media:
+                    await query.message.edit_caption(caption=f"❌ Error: {e}")
+                else:
+                    await query.message.edit_text(f"❌ Error: {e}")
+            except Exception:
+                pass
 
     async def _promo_skip_action(self, update: Update, promo_id):
         """Handle promo skip button"""
         query = update.callback_query
         await query.answer()
         self.db.update_promo_status(promo_id, 'skipped')
-        await query.message.edit_text("⏭️ Promo skipped.")
+        is_media = bool(query.message.photo or query.message.video or query.message.document)
+        try:
+            if is_media:
+                await query.message.edit_caption(caption="⏭️ Promo skipped.")
+            else:
+                await query.message.edit_text("⏭️ Promo skipped.")
+        except Exception:
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await self.app.bot.send_message(chat_id=query.from_user.id, text="⏭️ Promo skipped.")
 
     async def _rt_pick_company(self, update: Update, promo_id, company_id):
         """Handle real-time company pick — admin picks which company for detected post"""
         query = update.callback_query
         await query.answer("🏢 Company dipilih...")
-        
+
+        # Detect if message is media (photo/video/document) or text-only
+        is_media = bool(query.message.photo or query.message.video or query.message.document)
+
+        async def _edit_or_send(text, reply_markup=None):
+            """Edit caption for media messages, edit text for text messages, fallback to delete+send"""
+            try:
+                if is_media:
+                    await query.message.edit_caption(
+                        caption=text[:1024], parse_mode='HTML',
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await query.message.edit_text(
+                        text, parse_mode='HTML',
+                        reply_markup=reply_markup
+                    )
+            except Exception:
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await self.app.bot.send_message(
+                    chat_id=query.from_user.id,
+                    text=text, parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
+
         try:
             # Get company info
             companies = self.db.get_companies(self.bot_id)
@@ -8773,7 +8832,7 @@ class ChildBot:
                     break
             
             if not company:
-                await query.message.edit_text("❌ Company tidak ditemui.")
+                await _edit_or_send("❌ Company tidak ditemui.")
                 return
             
             # Get promo from DB
@@ -8782,7 +8841,7 @@ class ChildBot:
             conn.close()
             
             if not row:
-                await query.message.edit_text("❌ Promo tidak ditemui.")
+                await _edit_or_send("❌ Promo tidak ditemui.")
                 return
             
             promo = dict(row)
@@ -8831,14 +8890,11 @@ class ChildBot:
                 [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
             ]
             
-            await query.message.edit_text(
-                caption, parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            await _edit_or_send(caption, InlineKeyboardMarkup(keyboard))
             
         except Exception as e:
             self.logger.error(f"RT pick company error: {e}")
             try:
-                await query.message.edit_text(f"❌ Error: {e}")
+                await _edit_or_send(f"❌ Error: {e}")
             except Exception:
                 pass
