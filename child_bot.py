@@ -7507,7 +7507,9 @@ class ChildBot:
             if success:
                 await update.message.reply_text(
                     "✅ Kod OTP dihantar ke Telegram/SMS kau!\n\n"
-                    "📝 Masukkan **kod OTP** (contoh: 12345):",
+                    "⚠️ **PENTING:** Masukkan kod dengan **jarak/dash** \n"
+                    "supaya Telegram tak block!\n\n"
+                    "📝 Contoh: `3 8 9 6 9` atau `3-8-9-6-9`",
                     parse_mode='Markdown'
                 )
                 return UB_SETUP_OTP
@@ -7523,7 +7525,12 @@ class ChildBot:
 
     async def ub_verify_otp(self, update: Update, context=None):
         """Step 4: Verify OTP"""
-        code = update.message.text.strip()
+        import re
+        raw = update.message.text.strip()
+        code = re.sub(r'[^0-9]', '', raw)  # Strip non-digits
+        if not code:
+            await update.message.reply_text("❌ Masukkan kod nombor. Contoh: `3 8 9 6 9`", parse_mode='Markdown')
+            return UB_SETUP_OTP
 
         if self.userbot_manager:
             success, needs_2fa = await self.userbot_manager.verify_code(self.bot_id, code)
