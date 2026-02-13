@@ -2727,3 +2727,60 @@ class Database:
             conn.execute("UPDATE detected_promos SET status = ? WHERE id = ?", (status, promo_id))
             conn.commit()
             conn.close()
+
+    # --- Clone Media ---
+    def _ensure_clone_history_table(self):
+        """Create clone_history table if not exists"""
+        conn = self.get_connection()
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS clone_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER NOT NULL,
+                source_id TEXT,
+                source_name TEXT,
+                target_id TEXT,
+                target_name TEXT,
+                media_count INTEGER DEFAULT 0,
+                status TEXT DEFAULT 'running',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    def save_clone_job(self, bot_id, source_id, source_name, target_id, target_name):
+        """Save a new clone job and return its ID"""
+        self._ensure_clone_history_table()
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "INSERT INTO clone_history (bot_id, source_id, source_name, target_id, target_name) VALUES (?, ?, ?, ?, ?)",
+                (bot_id, source_id, source_name, target_id, target_name)
+            )
+            conn.commit()
+            clone_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            conn.close()
+            return clone_id
+
+    def update_clone_job(self, clone_id, media_count=None, status=None):
+        """Update clone job progress"""
+        with self.lock:
+            conn = self.get_connection()
+            if media_count is not None:
+                conn.execute("UPDATE clone_history SET media_count = ? WHERE id = ?", (media_count, clone_id))
+            if status is not None:
+                conn.execute("UPDATE clone_history SET status = ? WHERE id = ?", (status, clone_id))
+            conn.commit()
+            conn.close()
+
+    def get_clone_history(self, bot_id, limit=10):
+        """Get recent clone jobs for a bot"""
+        self._ensure_clone_history_table()
+        conn = self.get_connection()
+        rows = conn.execute(
+            "SELECT * FROM clone_history WHERE bot_id = ? ORDER BY created_at DESC LIMIT ?",
+            (bot_id, limit)
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]

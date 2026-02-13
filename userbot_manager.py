@@ -596,6 +596,151 @@ class UserbotInstance:
             logger.error(f"[UB-{self.bot_id}] get_message_content failed: {e}")
             return None
 
+    async def clone_media_to_target(self, source_id, target_id, progress_callback=None, media_only=True, limit=None):
+        """Clone media messages from source channel/group to target channel/group.
+        
+        Args:
+            source_id: Source channel/group ID or username
+            target_id: Target channel/group ID or username
+            progress_callback: async func(cloned, total_scanned) for progress updates
+            media_only: If True, only clone messages with media (photo/video/doc/GIF)
+            limit: Max number of messages to scan (None = all)
+        
+        Returns: (cloned_count, error_message or None)
+        """
+        if not self.client or not self.client.is_connected():
+            return 0, "Client not connected"
+
+        # Resolve source entity
+        source_entity = await self._resolve_entity(source_id)
+        if not source_entity:
+            return 0, f"Cannot resolve source: {source_id}"
+
+        # Resolve target entity
+        target_entity = await self._resolve_entity(target_id)
+        if not target_entity:
+            return 0, f"Cannot resolve target: {target_id}"
+
+        cloned = 0
+        scanned = 0
+        errors = 0
+
+        try:
+            # Collect messages first (oldest first for chronological order)
+            messages = []
+            async for msg in self.client.iter_messages(source_entity, limit=limit):
+                scanned += 1
+                
+                if media_only:
+                    # Only include messages with media
+                    if not msg.media:
+                        continue
+                    # Skip service messages, stickers, etc
+                    from telethon.tl.types import (
+                        MessageMediaPhoto, MessageMediaDocument,
+                        MessageMediaWebPage
+                    )
+                    if isinstance(msg.media, MessageMediaWebPage):
+                        continue
+                    if not isinstance(msg.media, (MessageMediaPhoto, MessageMediaDocument)):
+                        continue
+                
+                messages.append(msg)
+
+            # Reverse to send in chronological order (oldest first)
+            messages.reverse()
+            total = len(messages)
+
+            logger.info(f"[UB-{self.bot_id}] Clone: scanned {scanned}, found {total} media messages")
+
+            # Send progress: starting
+            if progress_callback:
+                await progress_callback(0, total)
+
+            for i, msg in enumerate(messages):
+                try:
+                    # Try forward first
+                    try:
+                        await self.client.forward_messages(target_entity, msg, source_entity)
+                    except Exception:
+                        # Fallback: copy content (for restricted forward channels)
+                        if msg.media:
+                            await self.client.send_message(
+                                target_entity,
+                                message=msg.message or '',
+                                file=msg.media,
+                                formatting_entities=msg.entities
+                            )
+                        elif msg.message:
+                            await self.client.send_message(
+                                target_entity,
+                                message=msg.message,
+                                formatting_entities=msg.entities
+                            )
+                        else:
+                            errors += 1
+                            continue
+
+                    cloned += 1
+
+                    # Progress update every 10 items
+                    if progress_callback and (cloned % 10 == 0 or cloned == total):
+                        await progress_callback(cloned, total)
+
+                    # Rate limit — 2 seconds between messages to avoid flood ban
+                    await asyncio.sleep(2)
+
+                except Exception as e:
+                    errors += 1
+                    logger.warning(f"[UB-{self.bot_id}] Clone msg {msg.id} failed: {e}")
+                    await asyncio.sleep(3)  # Extra delay on error
+
+        except Exception as e:
+            logger.error(f"[UB-{self.bot_id}] Clone operation error: {e}")
+            return cloned, str(e)
+
+        logger.info(f"[UB-{self.bot_id}] Clone complete: {cloned}/{total} cloned, {errors} errors")
+        return cloned, None
+
+    async def _resolve_entity(self, chat_id):
+        """Resolve a chat entity from ID, username, or link"""
+        if not self.client:
+            return None
+
+        # 1) Try numeric ID directly
+        try:
+            return await self.client.get_entity(int(chat_id))
+        except Exception:
+            pass
+
+        # 2) Try with -100 prefix (channel format)
+        try:
+            peer_id = int(f"-100{chat_id}")
+            return await self.client.get_entity(peer_id)
+        except Exception:
+            pass
+
+        # 3) Try as username/link
+        username = str(chat_id)
+        for prefix in ['https://t.me/', 'http://t.me/', 't.me/', '@']:
+            username = username.replace(prefix, '')
+        username = username.strip('/').split('/')[0]
+
+        if username.startswith('+'):
+            try:
+                from telethon.tl.functions.messages import ImportChatInviteRequest
+                result = await self.client(ImportChatInviteRequest(username.lstrip('+')))
+                return result.chats[0]
+            except Exception:
+                pass
+        elif username and not username.isdigit():
+            try:
+                return await self.client.get_entity(username)
+            except Exception:
+                pass
+
+        return None
+
 
 class UserbotManager:
     """Manages all userbot instances across the platform"""
@@ -808,3 +953,11 @@ class UserbotManager:
 
         logger.info(f"[UB-{bot_id}] History scan complete: {len(all_scraped)} items from {len(channels)} channels")
         return all_scraped
+
+    async def clone_media(self, bot_id, source_id, target_id, progress_callback=None, media_only=True, limit=None):
+        """Clone media from source to target using bot's userbot instance"""
+        instance = self.instances.get(bot_id)
+        if not instance or not instance.client:
+            return 0, "Userbot not connected"
+        return await instance.clone_media_to_target(source_id, target_id, progress_callback, media_only, limit)
+

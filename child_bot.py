@@ -144,6 +144,9 @@ GRID_MEDIA, GRID_CAPTION, GRID_BUTTONS = range(101, 104)
 SINGLE_BUTTONS = 105
 # States for Userbot Setup
 UB_MENU, UB_SETUP_API, UB_SETUP_HASH, UB_SETUP_PHONE, UB_SETUP_OTP, UB_SETUP_2FA, UB_ADD_CHANNEL = range(110, 117)
+# States for Userbot Hub & Clone Media
+UB_HUB = 118
+CLONE_SOURCE, CLONE_TARGET, CLONE_CONFIRM = range(120, 123)
 
 class ChildBot:
     def __init__(self, token, bot_id, db: Database, scheduler):
@@ -420,10 +423,19 @@ class ChildBot:
         )
         self.app.add_handler(gw_conv)
 
-        # Userbot Setup Wizard (Admin)
+        # Userbot Hub + Promo Monitor + Clone Media Wizard (Admin)
         ub_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(self.ub_menu, pattern=r'^ub_menu$')],
+            entry_points=[
+                CallbackQueryHandler(self.userbot_hub_menu, pattern=r'^userbot_hub$'),
+                CallbackQueryHandler(self.ub_menu, pattern=r'^ub_menu$'),
+            ],
             states={
+                UB_HUB: [
+                    CallbackQueryHandler(self.ub_hub_handle_action, pattern=r'^ubhub_'),
+                    CallbackQueryHandler(self.ub_menu, pattern=r'^ub_menu$'),
+                    CallbackQueryHandler(self.clone_media_menu, pattern=r'^clone_menu$'),
+                    CallbackQueryHandler(self._clone_start_flow, pattern=r'^clone_start_flow$'),
+                ],
                 UB_MENU: [
                     CallbackQueryHandler(self.ub_handle_action, pattern=r'^ub_'),
                     CallbackQueryHandler(self.ub_handle_action, pattern=r'^scan_'),
@@ -436,12 +448,20 @@ class ChildBot:
                 UB_SETUP_OTP: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_verify_otp)],
                 UB_SETUP_2FA: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_verify_2fa)],
                 UB_ADD_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ub_add_channel_link)],
+                CLONE_SOURCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.clone_save_source)],
+                CLONE_TARGET: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.clone_save_target)],
+                CLONE_CONFIRM: [
+                    CallbackQueryHandler(self.clone_confirm, pattern=r'^clone_confirm$'),
+                    CallbackQueryHandler(self.clone_media_menu, pattern=r'^clone_cancel$'),
+                ],
             },
             fallbacks=[
+                CallbackQueryHandler(self.userbot_hub_menu, pattern=r'^userbot_hub$'),
                 CallbackQueryHandler(self.ub_menu, pattern=r'^ub_menu$'),
                 CallbackQueryHandler(self.ub_handle_action, pattern=r'^ub_'),
                 CallbackQueryHandler(self.ub_handle_action, pattern=r'^scan_'),
                 CallbackQueryHandler(self.ub_handle_action, pattern=r'^promo_'),
+                CallbackQueryHandler(self.clone_media_menu, pattern=r'^clone_menu$'),
                 CommandHandler("cancel", self.cancel_op),
                 CallbackQueryHandler(self.handle_callback),
             ],
@@ -3186,7 +3206,7 @@ class ChildBot:
                 [InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu"), InlineKeyboardButton("📊 Analytics", callback_data="show_analytics")],
                 [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")],
                 [InlineKeyboardButton("🛡️ Group Management", callback_data="group_mgmt")],
-                [InlineKeyboardButton("🤖 Auto Promo Monitor", callback_data="ub_menu")]
+                [InlineKeyboardButton("🤖 Userbot", callback_data="userbot_hub")]
             ]
             
             # Only owner can manage admins
@@ -7427,6 +7447,310 @@ class ChildBot:
 
     # === USERBOT AUTO PROMO MONITOR ===
 
+    # ==================== USERBOT HUB ====================
+    async def userbot_hub_menu(self, update: Update, context=None):
+        """Show the parent Userbot hub menu"""
+        query = update.callback_query
+        if query:
+            await query.answer()
+
+        user_id = update.effective_user.id
+        bot_data = self.db.get_bot_by_token(self.token)
+        owner_id = int(bot_data.get('owner_id', 0)) if bot_data else 0
+        is_owner = user_id == owner_id
+        is_admin = self.db.is_bot_admin(self.bot_id, user_id)
+        if not (is_owner or is_admin):
+            return ConversationHandler.END
+
+        session = self.db.get_userbot_session(self.bot_id)
+
+        if session and session.get('session_string'):
+            is_active = session.get('is_active', 0)
+            phone = session.get('phone', '***')
+            status_text = "🟢 Connected" if is_active else "🔴 Disconnected"
+
+            text = (
+                f"🤖 **USERBOT HUB**\n\n"
+                f"📱 Phone: `{phone}`\n"
+                f"📡 Status: {status_text}\n\n"
+                f"Pilih tool yang anda mahu guna:"
+            )
+            keyboard = [
+                [InlineKeyboardButton("📡 Auto Promo Monitor", callback_data="ub_menu")],
+                [InlineKeyboardButton("📋 Clone Media", callback_data="clone_menu")],
+                [InlineKeyboardButton("🔄 Reconnect", callback_data="ubhub_reconnect")],
+                [InlineKeyboardButton("🗑️ Disconnect", callback_data="ubhub_disconnect")],
+                [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+            ]
+        else:
+            text = (
+                "🤖 **USERBOT HUB**\n\n"
+                "Userbot belum di-setup. Anda perlu connect akaun "
+                "Telegram untuk guna Auto Promo Monitor atau Clone Media.\n\n"
+                "Tekan **Setup** untuk mula! 👇"
+            )
+            keyboard = [
+                [InlineKeyboardButton("⚙️ Setup Sekarang", callback_data="ubhub_setup")],
+                [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+            ]
+
+        if query:
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+        return UB_HUB
+
+    async def ub_hub_handle_action(self, update: Update, context=None):
+        """Handle actions from the userbot hub menu"""
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+
+        if data == "ubhub_setup":
+            # Show the setup flow directly (same as ub_setup)
+            text = (
+                "⚙️ **SETUP USERBOT — STEP 1/4**\n\n"
+                "Pertama, kau perlu buat API credentials:\n\n"
+                "📋 **Cara buat:**\n"
+                "1. Pergi ke https://my.telegram.org\n"
+                "2. Log masuk dengan phone number kau\n"
+                "3. Klik **API Development Tools**\n"
+                "4. Klik **Create New Application**\n"
+                "5. Isi form:\n"
+                "   • App title: apa-apa nama\n"
+                "   • Short name: apa-apa\n"
+                "   • URL: kosongkan atau letak example.com\n"
+                "   • Platform: Desktop\n"
+                "6. Klik **Create application**\n\n"
+                "Kau akan nampak **App api\\_id** (nombor)\n"
+                "dan **App api\\_hash** (huruf+nombor panjang)\n\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "📝 Sekarang **copy nombor API ID** dan \n"
+                "paste/taip di sini:"
+            )
+            await query.message.edit_text(text, parse_mode='Markdown')
+            return UB_SETUP_API
+
+        elif data == "ubhub_reconnect":
+            session = self.db.get_userbot_session(self.bot_id)
+            if not session or not session.get('session_string'):
+                await query.message.edit_text("❌ Sila setup userbot dulu.", reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("« Back", callback_data="userbot_hub")]]
+                ))
+                return UB_HUB
+            if self.userbot_manager:
+                await self.userbot_manager.stop_instance(self.bot_id)
+                success = await self.userbot_manager.start_instance(self.bot_id)
+                if success:
+                    self.db.toggle_userbot(self.bot_id, True)
+                    await query.message.edit_text("✅ Userbot reconnected!", reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("« Back", callback_data="userbot_hub")]]
+                    ))
+                else:
+                    await query.message.edit_text("❌ Reconnect gagal.", reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("« Back", callback_data="userbot_hub")]]
+                    ))
+            return UB_HUB
+
+        elif data == "ubhub_disconnect":
+            if self.userbot_manager:
+                await self.userbot_manager.stop_instance(self.bot_id)
+            self.db.toggle_userbot(self.bot_id, False)
+            self.db.delete_userbot_session(self.bot_id)
+            await query.message.edit_text("✅ Userbot disconnected & session cleared.", reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("« Back", callback_data="userbot_hub")]]
+            ))
+            return UB_HUB
+
+        return UB_HUB
+
+    # ==================== CLONE MEDIA ====================
+    async def clone_media_menu(self, update: Update, context=None):
+        """Show clone media menu"""
+        query = update.callback_query
+        if query:
+            await query.answer()
+
+        session = self.db.get_userbot_session(self.bot_id)
+        if not session or not session.get('session_string'):
+            text = "❌ Userbot belum di-setup. Sila setup dulu di Userbot Hub."
+            keyboard = [[InlineKeyboardButton("« Back", callback_data="userbot_hub")]]
+            if query:
+                await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+            return UB_HUB
+
+        # Get clone history
+        history = self.db.get_clone_history(self.bot_id, limit=5)
+        history_text = ""
+        if history:
+            history_text = "\n\n📜 **Recent Clone Jobs:**\n"
+            for h in history:
+                status_icon = "✅" if h['status'] == 'done' else "❌" if h['status'] == 'error' else "⏳"
+                history_text += f"{status_icon} {h['source_name'] or 'Unknown'} → {h['target_name'] or 'Unknown'} ({h['media_count']} media)\n"
+
+        text = (
+            f"📋 **CLONE MEDIA**\n\n"
+            f"Clone media (foto, video, dokumen, GIF) dari satu "
+            f"channel/group ke channel/group lain.\n\n"
+            f"⚠️ Rate limit: ~2 saat per media untuk elak flood ban."
+            f"{history_text}"
+        )
+        keyboard = [
+            [InlineKeyboardButton("🚀 Start Clone", callback_data="clone_start_flow")],
+            [InlineKeyboardButton("« Back", callback_data="userbot_hub")]
+        ]
+
+        if query:
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+        # Wait for "clone_start_flow" — but this goes into CLONE_SOURCE state
+        # We handle it via the text below
+        return UB_HUB
+
+    async def _clone_start_flow(self, update: Update, context=None):
+        """Begin the clone flow: ask for source"""
+        query = update.callback_query
+        if query:
+            await query.answer()
+
+        text = (
+            "📋 **CLONE MEDIA — Step 1/3**\n\n"
+            "Hantar link **source** channel/group:\n\n"
+            "Contoh:\n"
+            "• `https://t.me/channelname`\n"
+            "• `@channelname`\n"
+            "• Channel ID"
+        )
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="clone_menu")]]
+        if query:
+            await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return CLONE_SOURCE
+
+    async def clone_save_source(self, update: Update, context=None):
+        """Save source and ask for target"""
+        source = update.message.text.strip()
+        context.user_data['clone_source'] = source
+
+        text = (
+            "📋 **CLONE MEDIA — Step 2/3**\n\n"
+            f"✅ Source: `{source}`\n\n"
+            "Sekarang hantar link **target** channel/group:"
+        )
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="clone_menu")]]
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return CLONE_TARGET
+
+    async def clone_save_target(self, update: Update, context=None):
+        """Save target and show confirmation"""
+        target = update.message.text.strip()
+        source = context.user_data.get('clone_source', '?')
+        context.user_data['clone_target'] = target
+
+        text = (
+            "📋 **CLONE MEDIA — Step 3/3**\n\n"
+            "**Confirm clone operation:**\n\n"
+            f"📤 Source: `{source}`\n"
+            f"📥 Target: `{target}`\n"
+            f"📎 Type: All media (photo/video/doc/GIF)\n"
+            f"⏱️ Rate: ~2 saat per media\n\n"
+            f"⚠️ Pastikan userbot sudah join kedua-dua chat!"
+        )
+        keyboard = [
+            [InlineKeyboardButton("✅ Confirm Clone", callback_data="clone_confirm")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="clone_cancel")]
+        ]
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return CLONE_CONFIRM
+
+    async def clone_confirm(self, update: Update, context=None):
+        """Execute the clone operation"""
+        query = update.callback_query
+        await query.answer()
+
+        source = context.user_data.get('clone_source')
+        target = context.user_data.get('clone_target')
+
+        if not source or not target:
+            await query.message.edit_text("❌ Data hilang. Sila cuba lagi.", reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("« Back", callback_data="clone_menu")]]
+            ))
+            return UB_HUB
+
+        # Save clone job to DB
+        clone_id = self.db.save_clone_job(self.bot_id, source, source, target, target)
+
+        await query.message.edit_text(
+            f"⏳ **Cloning in progress...**\n\n"
+            f"📤 Source: `{source}`\n"
+            f"📥 Target: `{target}`\n\n"
+            f"Scanning messages... Please wait.",
+            parse_mode='Markdown'
+        )
+
+        # Run clone in background
+        async def do_clone():
+            try:
+                cloned_count = 0
+                last_update_count = 0
+
+                async def progress(cloned, total):
+                    nonlocal cloned_count, last_update_count
+                    cloned_count = cloned
+                    # Only edit message every 10 items to avoid flood
+                    if cloned - last_update_count >= 10 or cloned == total:
+                        last_update_count = cloned
+                        try:
+                            await query.message.edit_text(
+                                f"⏳ **Cloning in progress...**\n\n"
+                                f"📤 Source: `{source}`\n"
+                                f"📥 Target: `{target}`\n\n"
+                                f"📊 Progress: {cloned}/{total} media\n"
+                                f"{'█' * int((cloned/max(total,1))*20)}{'░' * (20-int((cloned/max(total,1))*20))} {int((cloned/max(total,1))*100)}%",
+                                parse_mode='Markdown'
+                            )
+                        except Exception:
+                            pass
+
+                count, error = await self.userbot_manager.clone_media(
+                    self.bot_id, source, target, progress_callback=progress
+                )
+
+                self.db.update_clone_job(clone_id, media_count=count, status='done' if not error else 'error')
+
+                if error:
+                    await query.message.edit_text(
+                        f"❌ **Clone Error**\n\n"
+                        f"Cloned {count} media before error:\n`{error}`",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="clone_menu")]]),
+                        parse_mode='Markdown'
+                    )
+                else:
+                    await query.message.edit_text(
+                        f"✅ **Clone Complete!**\n\n"
+                        f"📤 Source: `{source}`\n"
+                        f"📥 Target: `{target}`\n"
+                        f"📊 Total cloned: **{count}** media",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="clone_menu")]]),
+                        parse_mode='Markdown'
+                    )
+            except Exception as e:
+                self.db.update_clone_job(clone_id, status='error')
+                self.logger.error(f"Clone error: {e}")
+                try:
+                    await query.message.edit_text(
+                        f"❌ **Clone Failed**\n\n`{str(e)}`",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="clone_menu")]]),
+                        parse_mode='Markdown'
+                    )
+                except Exception:
+                    pass
+
+        asyncio.create_task(do_clone())
+        return UB_HUB
+
     async def ub_menu(self, update: Update, context=None):
         """Show userbot promo monitor menu"""
         query = update.callback_query
@@ -7452,24 +7776,24 @@ class ChildBot:
             phone = session.get('phone', '***')
 
             text = (
-                f"🤖 **AUTO PROMO MONITOR**\n\n"
+                f"📡 **AUTO PROMO MONITOR**\n\n"
                 f"📱 Phone: `{phone}`\n"
                 f"📡 Status: {status_text}\n"
                 f"⚙️ Mode: {mode_text}\n"
                 f"📢 Channels/Groups: {len(channels)} monitored"
             )
             keyboard = [
-                [InlineKeyboardButton(f"{'🔴 Turn OFF' if is_active else '🟢 Turn ON'}", callback_data="ub_toggle")],
-                [InlineKeyboardButton(f"🔄 Mode: {'Auto → Manual' if auto_mode else 'Manual → Auto'}", callback_data="ub_mode")],
+                [
+                    InlineKeyboardButton(f"{'🔴 OFF' if is_active else '🟢 ON'}", callback_data="ub_toggle"),
+                    InlineKeyboardButton(f"⚙️ {'Auto' if auto_mode else 'Manual'}", callback_data="ub_mode")
+                ],
                 [InlineKeyboardButton("📢 Manage Channels/Groups", callback_data="ub_channels")],
                 [InlineKeyboardButton("📥 Scan 1 Bulan", callback_data="ub_scan_history")],
-                [InlineKeyboardButton("🔄 Reconnect", callback_data="ub_setup")],
-                [InlineKeyboardButton("🗑️ Disconnect", callback_data="ub_disconnect")],
-                [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+                [InlineKeyboardButton("« Back", callback_data="userbot_hub")]
             ]
         else:
             text = (
-                "🤖 **AUTO PROMO MONITOR**\n\n"
+                "📡 **AUTO PROMO MONITOR**\n\n"
                 "Fungsi ni akan monitor channel/group Telegram "
                 "secara automatik untuk detect promo syarikat.\n\n"
                 "✅ Apa yang boleh buat:\n"
@@ -7484,7 +7808,7 @@ class ChildBot:
             )
             keyboard = [
                 [InlineKeyboardButton("⚙️ Setup Sekarang", callback_data="ub_setup")],
-                [InlineKeyboardButton("« Back", callback_data="admin_settings")]
+                [InlineKeyboardButton("« Back", callback_data="userbot_hub")]
             ]
 
         if query:
