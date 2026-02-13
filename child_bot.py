@@ -7629,20 +7629,18 @@ class ChildBot:
         channels = self.db.get_monitored_channels(self.bot_id)
 
         if channels:
-            text = "📢 **MONITORED CHANNELS / GROUPS**\n\n"
+            text = "📢 <b>MONITORED CHANNELS / GROUPS</b>\n\n"
             keyboard = []
             for ch in channels:
                 title = ch.get('channel_title', 'Unknown')
                 username = ch.get('channel_username', '')
                 display = f"@{username}" if username else title
-                # Escape Markdown special chars in display name
-                safe_display = display.replace('_', '\\_').replace('*', '\\*').replace('[', '\\[').replace('`', '\\`')
-                text += f"• {safe_display}\n"
+                text += f"• {display}\n"
                 keyboard.append([InlineKeyboardButton(f"❌ Remove {display}", callback_data=f"ub_rmch_{ch['id']}")])
             keyboard.append([InlineKeyboardButton("➕ Add Channel/Group", callback_data="ub_add_ch")])
             keyboard.append([InlineKeyboardButton("« Back", callback_data="ub_menu")])
         else:
-            text = "📢 **MONITORED CHANNELS / GROUPS**\n\nBelum ada. Tekan Add untuk mula."
+            text = "📢 <b>MONITORED CHANNELS / GROUPS</b>\n\nBelum ada. Tekan Add untuk mula."
             keyboard = [
                 [InlineKeyboardButton("➕ Add Channel/Group", callback_data="ub_add_ch")],
                 [InlineKeyboardButton("« Back", callback_data="ub_menu")]
@@ -7651,12 +7649,12 @@ class ChildBot:
         reply_markup = InlineKeyboardMarkup(keyboard)
         try:
             if query:
-                await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+                await query.message.edit_text(text, reply_markup=reply_markup, parse_mode='HTML')
             else:
-                await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+                await update.effective_message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
         except Exception as e:
             self.logger.error(f"Show channels menu error: {e}")
-            # Fallback: send without Markdown if parse fails
+            # Fallback: send without parse_mode if HTML fails
             if query:
                 await query.message.reply_text(text, reply_markup=reply_markup)
         return UB_MENU
