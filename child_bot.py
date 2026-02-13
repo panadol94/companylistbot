@@ -439,12 +439,15 @@ class ChildBot:
             },
             fallbacks=[
                 CallbackQueryHandler(self.ub_menu, pattern=r'^ub_menu$'),
+                CallbackQueryHandler(self.ub_handle_action, pattern=r'^ub_'),
+                CallbackQueryHandler(self.ub_handle_action, pattern=r'^scan_'),
+                CallbackQueryHandler(self.ub_handle_action, pattern=r'^promo_'),
                 CommandHandler("cancel", self.cancel_op),
                 CallbackQueryHandler(self.handle_callback),
             ],
             per_message=False,
             allow_reentry=True,
-            conversation_timeout=300
+            conversation_timeout=600
         )
         self.app.add_handler(ub_conv)
 
