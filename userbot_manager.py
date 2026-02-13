@@ -659,27 +659,23 @@ class UserbotInstance:
 
             for i, msg in enumerate(messages):
                 try:
-                    # Try forward first
-                    try:
-                        await self.client.forward_messages(target_entity, msg, source_entity)
-                    except Exception:
-                        # Fallback: copy content (for restricted forward channels)
-                        if msg.media:
-                            await self.client.send_message(
-                                target_entity,
-                                message=msg.message or '',
-                                file=msg.media,
-                                formatting_entities=msg.entities
-                            )
-                        elif msg.message:
-                            await self.client.send_message(
-                                target_entity,
-                                message=msg.message,
-                                formatting_entities=msg.entities
-                            )
-                        else:
-                            errors += 1
-                            continue
+                    # Always copy content (no "Forwarded from" label)
+                    if msg.media:
+                        await self.client.send_message(
+                            target_entity,
+                            message=msg.message or '',
+                            file=msg.media,
+                            formatting_entities=msg.entities
+                        )
+                    elif msg.message:
+                        await self.client.send_message(
+                            target_entity,
+                            message=msg.message,
+                            formatting_entities=msg.entities
+                        )
+                    else:
+                        errors += 1
+                        continue
 
                     cloned += 1
 
