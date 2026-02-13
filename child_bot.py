@@ -7704,20 +7704,94 @@ class ChildBot:
 
         auto_count = sum(1 for s in all_scraped if s.get('matched_company'))
         manual_count = len(all_scraped) - auto_count
+        admin_id = update.effective_user.id
 
-        # Show results summary, then first item
         await status_msg.edit_text(
             f"✅ **SCAN SELESAI!**\n\n"
             f"📢 {len(channels)} channel discanned\n"
             f"📥 {len(all_scraped)} mesej ditemui\n"
             f"🤖 {auto_count} auto-detected\n"
             f"❓ {manual_count} perlu pilih manual\n\n"
-            f"Tekan untuk review 👇",
+            f"⏳ _Forwarding semua mesej ke kau..._",
+            parse_mode='Markdown'
+        )
+
+        # Forward ALL messages to admin immediately
+        forwarded_count = 0
+        for idx, item in enumerate(all_scraped):
+            channel_id = item.get('channel_id')
+            msg_id = item.get('msg_id')
+            text = item.get('original_text', '')
+            source = item.get('source_channel', 'Unknown')
+            matched = item.get('matched_company')
+
+            # Forward original message via userbot
+            fwd_ok = False
+            if channel_id and msg_id and self.userbot_manager:
+                instance = self.userbot_manager.instances.get(self.bot_id)
+                if instance:
+                    try:
+                        fwd_ok = await instance.forward_message(channel_id, msg_id, admin_id)
+                    except Exception as e:
+                        self.logger.error(f"Batch forward failed for item {idx}: {e}")
+
+            # Build caption with company info
+            if matched:
+                caption = (
+                    f"📋 **Mesej {idx + 1}/{len(all_scraped)}**\n"
+                    f"📢 {source}\n"
+                    f"🤖 Auto: **{matched['name']}** ✅"
+                )
+            else:
+                caption = (
+                    f"📋 **Mesej {idx + 1}/{len(all_scraped)}**\n"
+                    f"📢 {source}\n"
+                    f"❓ Company: **Tak dikesan** — pilih 👇"
+                )
+
+            if not fwd_ok:
+                caption += f"\n\n{text[:500] if text else '(media sahaja)'}"
+
+            # Company buttons
+            buttons = []
+            if matched:
+                buttons.append([InlineKeyboardButton(f"✅ Guna {matched['name'][:25]}", callback_data=f"scan_pick_{idx}_{matched['id']}")])
+                buttons.append([InlineKeyboardButton("🔄 Tukar Company", callback_data=f"scan_picker_{idx}")])
+            else:
+                companies = self.db.get_companies(self.bot_id)
+                row = []
+                for c in companies:
+                    row.append(InlineKeyboardButton(c['name'][:20], callback_data=f"scan_pick_{idx}_{c['id']}"))
+                    if len(row) == 2:
+                        buttons.append(row)
+                        row = []
+                if row:
+                    buttons.append(row)
+
+            buttons.append([InlineKeyboardButton("⏭ Skip", callback_data=f"scan_show_item_{idx + 1}")])
+
+            try:
+                await self.app.bot.send_message(
+                    chat_id=admin_id,
+                    text=caption,
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup(buttons)
+                )
+                forwarded_count += 1
+            except Exception as e:
+                self.logger.error(f"Error sending buttons for item {idx}: {e}")
+
+            await asyncio.sleep(0.5)  # Rate limit
+
+        # Final summary
+        await self.app.bot.send_message(
+            chat_id=admin_id,
+            text=(
+                f"✅ **Semua {forwarded_count} mesej telah diforward!**\n\n"
+                f"Pilih company untuk setiap mesej di atas 👆"
+            ),
             parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📋 Lihat Mesej ▶", callback_data="scan_show_item_0")],
-                [InlineKeyboardButton("« Back", callback_data="ub_menu")]
-            ])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="ub_menu")]])
         )
         return UB_MENU
 
