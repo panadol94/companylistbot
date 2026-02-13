@@ -6480,15 +6480,12 @@ class ChildBot:
             if chat.type == 'private' and user_id != owner_id:
                 should_ai_respond = True
             elif chat.type in ['group', 'supergroup']:
+                # Respond to ALL messages in group (no mention needed)
+                should_ai_respond = True
+                # Strip bot mention from text if present
                 bot_username = (await context.bot.get_me()).username
-                # Check if bot is @mentioned
                 if bot_username and f'@{bot_username}'.lower() in user_text.lower():
                     user_text = user_text.lower().replace(f'@{bot_username}'.lower(), '').strip()
-                    should_ai_respond = True
-                # Check if replying to bot's message
-                elif update.message.reply_to_message and update.message.reply_to_message.from_user:
-                    if update.message.reply_to_message.from_user.id == context.bot.id:
-                        should_ai_respond = True
 
         if should_ai_respond:
             try:
