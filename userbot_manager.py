@@ -20,6 +20,39 @@ logger = logging.getLogger(__name__)
 URL_PATTERN = re.compile(r'https?://\S+|t\.me/\S+', re.IGNORECASE)
 
 
+def match_company_in_text(company_name, text):
+    """Smart company name matching with multiple strategies.
+    
+    Handles variations like:
+    - DB: "CM8 Platform" → matches "CM8" in text
+    - DB: "BossBet8" → matches "boss bet 8" in text
+    - DB: "Mega888" → matches "mega888" in text
+    
+    Returns True if company matches, False otherwise.
+    """
+    name_lower = company_name.lower().strip()
+    text_lower = text.lower()
+
+    # 1) Exact substring match
+    if name_lower in text_lower:
+        return True
+
+    # 2) Individual word match — any word (≥3 chars) from company name in text
+    words = re.split(r'[\s\-_.,]+', name_lower)
+    significant_words = [w for w in words if len(w) >= 3]
+    for word in significant_words:
+        if word in text_lower:
+            return True
+
+    # 3) Stripped match — remove spaces/special chars and compare
+    name_stripped = re.sub(r'[^a-z0-9]', '', name_lower)
+    text_stripped = re.sub(r'[^a-z0-9]', '', text_lower)
+    if len(name_stripped) >= 3 and name_stripped in text_stripped:
+        return True
+
+    return False
+
+
 class UserbotInstance:
     """Single userbot instance for one bot owner"""
     
@@ -99,8 +132,7 @@ class UserbotInstance:
             matched_company = None
             
             for company in companies:
-                company_name = company['name'].lower()
-                if company_name in text.lower():
+                if match_company_in_text(company['name'], text):
                     matched_company = company
                     break
             
@@ -310,8 +342,7 @@ class UserbotInstance:
 
                 matched_company = None
                 for company in companies:
-                    company_name = company['name'].lower()
-                    if company_name in text.lower():
+                    if match_company_in_text(company['name'], text):
                         matched_company = company
                         break
 
