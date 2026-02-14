@@ -130,9 +130,13 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
         ])
         
         # Add each media as input
-        for inp in inputs:
+        first_video_input = None  # FFmpeg input index of first video (for audio)
+        for i, inp in enumerate(inputs):
             if inp['type'] != 'video':
                 cmd.extend(['-loop', '1', '-t', str(max_duration)])
+            else:
+                if first_video_input is None:
+                    first_video_input = i + 1  # +1 because input 0 is background
             cmd.extend(['-i', inp['path']])
         
         # Build filter_complex
@@ -181,6 +185,12 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
         cmd.extend([
             '-filter_complex', filter_str,
             '-map', final_label,
+        ])
+        # Map audio from first video if available
+        if first_video_input is not None:
+            cmd.extend(['-map', f'{first_video_input}:a?'])
+            cmd.extend(['-c:a', 'aac', '-b:a', '128k'])
+        cmd.extend([
             '-c:v', 'libx264',
             '-preset', 'fast',
             '-crf', '23',
