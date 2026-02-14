@@ -1,6 +1,7 @@
 import sqlite3
 import datetime
 from threading import Lock
+from contextlib import contextmanager
 
 class Database:
     def __init__(self, db_file):
@@ -12,6 +13,15 @@ class Database:
         conn = sqlite3.connect(self.db_file, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
+
+    @contextmanager
+    def _conn(self):
+        """Context manager for safe auto-closing DB connections."""
+        conn = self.get_connection()
+        try:
+            yield conn
+        finally:
+            conn.close()
     
     def execute_query(self, query, params=None):
         """Execute a SQL query and return results. Use params for safe parameterized queries."""
@@ -912,23 +922,27 @@ class Database:
         """Request withdrawal with method and account details"""
         with self.lock:
             conn = self.get_connection()
-            user = conn.execute("SELECT balance FROM users WHERE bot_id = ? AND telegram_id = ?", (bot_id, user_id)).fetchone()
-            if not user or user['balance'] < amount:
+            try:
+                user = conn.execute("SELECT balance FROM users WHERE bot_id = ? AND telegram_id = ?", (bot_id, user_id)).fetchone()
+                if not user or user['balance'] < amount:
+                    return False, "Insufficient balance."
+                
+                # Deduct balance immediately
+                conn.execute("UPDATE users SET balance = balance - ? WHERE bot_id = ? AND telegram_id = ?", (amount, bot_id, user_id))
+                
+                # Create withdrawal record
+                conn.execute(
+                    "INSERT INTO withdrawals (bot_id, user_id, amount, method, account, status) VALUES (?, ?, ?, ?, ?, 'PENDING')",
+                    (bot_id, user_id, amount, method, account_details)
+                )
+                conn.commit()
+                withdrawal_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                return True, f"Withdrawal requested. ID: {withdrawal_id}"
+            except Exception as e:
+                conn.rollback()
+                return False, str(e)
+            finally:
                 conn.close()
-                return False, "Insufficient balance."
-            
-            # Deduct balance immediately
-            conn.execute("UPDATE users SET balance = balance - ? WHERE bot_id = ? AND telegram_id = ?", (amount, bot_id, user_id))
-            
-            # Create withdrawal record
-            conn.execute(
-                "INSERT INTO withdrawals (bot_id, user_id, amount, method, account, status) VALUES (?, ?, ?, ?, ?, 'PENDING')",
-                (bot_id, user_id, amount, method, account_details)
-            )
-            conn.commit()
-            withdrawal_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-            conn.close()
-            return True, f"Withdrawal requested. ID: {withdrawal_id}"
 
 
     def get_pending_withdrawals(self, bot_id):
@@ -964,24 +978,33 @@ class Database:
         """Update withdrawal status (APPROVED/REJECTED)"""
         with self.lock:
             conn = self.get_connection()
-            
-            # If rejecting, refund the balance
-            if status == 'REJECTED':
-                withdrawal = conn.execute("SELECT bot_id, user_id, amount FROM withdrawals WHERE id = ?", (withdrawal_id,)).fetchone()
-                if withdrawal:
-                    conn.execute(
-                        "UPDATE users SET balance = balance + ? WHERE bot_id = ? AND telegram_id = ?",
-                        (withdrawal['amount'], withdrawal['bot_id'], withdrawal['user_id'])
-                    )
-            
-            # Update withdrawal status
-            conn.execute(
-                "UPDATE withdrawals SET status = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ? WHERE id = ?",
-                (status, admin_id, withdrawal_id)
-            )
-            conn.commit()
-            conn.close()
-            return True
+            try:
+                # Check current status to prevent double-processing
+                current = conn.execute("SELECT status FROM withdrawals WHERE id = ?", (withdrawal_id,)).fetchone()
+                if not current or current['status'] != 'PENDING':
+                    return False  # Already processed or not found
+                
+                # If rejecting, refund the balance
+                if status == 'REJECTED':
+                    withdrawal = conn.execute("SELECT bot_id, user_id, amount FROM withdrawals WHERE id = ?", (withdrawal_id,)).fetchone()
+                    if withdrawal:
+                        conn.execute(
+                            "UPDATE users SET balance = balance + ? WHERE bot_id = ? AND telegram_id = ?",
+                            (withdrawal['amount'], withdrawal['bot_id'], withdrawal['user_id'])
+                        )
+                
+                # Update withdrawal status
+                conn.execute(
+                    "UPDATE withdrawals SET status = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ? WHERE id = ?",
+                    (status, admin_id, withdrawal_id)
+                )
+                conn.commit()
+                return True
+            except Exception:
+                conn.rollback()
+                return False
+            finally:
+                conn.close()
 
 
     # --- Settings ---
@@ -1800,24 +1823,24 @@ class Database:
                 
                 if old_company_id:
                     buttons = conn.execute(
-                        "SELECT button_text, button_url, pair_group FROM company_buttons WHERE company_id = ?",
+                        "SELECT text, url, row_group FROM company_buttons WHERE company_id = ?",
                         (old_company_id['id'],)
                     ).fetchall()
                     for btn in buttons:
                         conn.execute(
-                            "INSERT INTO company_buttons (company_id, button_text, button_url, pair_group) VALUES (?, ?, ?, ?)",
-                            (new_company_id, btn['button_text'], btn['button_url'], btn['pair_group'])
+                            "INSERT INTO company_buttons (company_id, text, url, row_group) VALUES (?, ?, ?, ?)",
+                            (new_company_id, btn['text'], btn['url'], btn['row_group'])
                         )
             
             # Clone menu buttons
             menu_btns = conn.execute(
-                "SELECT button_text, button_url, pair_group FROM menu_buttons WHERE bot_id = ?",
+                "SELECT text, url, row_group FROM menu_buttons WHERE bot_id = ?",
                 (source_bot_id,)
             ).fetchall()
             for btn in menu_btns:
                 conn.execute(
-                    "INSERT INTO menu_buttons (bot_id, button_text, button_url, pair_group) VALUES (?, ?, ?, ?)",
-                    (target_bot_id, btn['button_text'], btn['button_url'], btn['pair_group'])
+                    "INSERT INTO menu_buttons (bot_id, text, url, row_group) VALUES (?, ?, ?, ?)",
+                    (target_bot_id, btn['text'], btn['url'], btn['row_group'])
                 )
             
             # Clone bot settings (welcome, banner, etc.)
@@ -2403,7 +2426,7 @@ class Database:
             try:
                 # Ensure table exists (Lazy Migration)
                 conn.execute('''
-                    CREATE TABLE IF NOT EXISTS known_groups (
+                    CREATE TABLE IF NOT EXISTS bot_known_groups (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         bot_id INTEGER NOT NULL,
                         group_id INTEGER NOT NULL,
@@ -2418,18 +2441,18 @@ class Database:
 
                 # Check if exists
                 exists = conn.execute(
-                    "SELECT id FROM known_groups WHERE bot_id = ? AND group_id = ?", 
+                    "SELECT id FROM bot_known_groups WHERE bot_id = ? AND group_id = ?", 
                     (bot_id, group_id)
                 ).fetchone()
 
                 if exists:
                     conn.execute(
-                        "UPDATE known_groups SET is_active = 1, group_name = ?, last_activity = CURRENT_TIMESTAMP WHERE bot_id = ? AND group_id = ?",
+                        "UPDATE bot_known_groups SET is_active = 1, group_name = ?, last_activity = CURRENT_TIMESTAMP WHERE bot_id = ? AND group_id = ?",
                         (group_name, bot_id, group_id)
                     )
                 else:
                     conn.execute(
-                        "INSERT INTO known_groups (bot_id, group_id, group_name, is_active) VALUES (?, ?, ?, 1)",
+                        "INSERT INTO bot_known_groups (bot_id, group_id, group_name, is_active) VALUES (?, ?, ?, 1)",
                         (bot_id, group_id, group_name)
                     )
                 conn.commit()
@@ -2445,7 +2468,7 @@ class Database:
         conn = self.get_connection()
         try:
             groups = conn.execute(
-                "SELECT * FROM known_groups WHERE bot_id = ? AND is_active = 1",
+                "SELECT * FROM bot_known_groups WHERE bot_id = ? AND is_active = 1",
                 (bot_id,)
             ).fetchall()
             return [dict(g) for g in groups]
@@ -2460,7 +2483,7 @@ class Database:
             conn = self.get_connection()
             try:
                 conn.execute(
-                    "UPDATE known_groups SET is_active = 0 WHERE bot_id = ? AND group_id = ?",
+                    "UPDATE bot_known_groups SET is_active = 0 WHERE bot_id = ? AND group_id = ?",
                     (bot_id, group_id)
                 )
                 conn.commit()
