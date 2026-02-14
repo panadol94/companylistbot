@@ -78,18 +78,20 @@ class BotManager:
         
         # 4. Start WhatsApp Monitor (Node.js) in background
         try:
-            import subprocess, os
-            wa_dir = os.path.join(os.path.dirname(__file__), 'wa-monitor')
-            if os.path.exists(os.path.join(wa_dir, 'index.js')):
+            import subprocess, os, shutil
+            node_path = shutil.which('node')
+            logger.info(f"📱 WA Monitor: node binary = {node_path}")
+            wa_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'wa-monitor')
+            wa_index = os.path.join(wa_dir, 'index.js')
+            logger.info(f"📱 WA Monitor: index.js exists = {os.path.exists(wa_index)}, dir = {wa_dir}")
+            if node_path and os.path.exists(wa_index):
                 self.wa_process = subprocess.Popen(
-                    ['node', 'index.js'],
-                    cwd=wa_dir,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT
+                    [node_path, 'index.js'],
+                    cwd=wa_dir
                 )
                 logger.info(f"📱 WhatsApp Monitor started (PID: {self.wa_process.pid})")
             else:
-                logger.warning("⚠️ wa-monitor/index.js not found, skipping WA Monitor")
+                logger.warning(f"⚠️ WA Monitor skipped: node={node_path}, index.js={os.path.exists(wa_index)}")
         except Exception as e:
             logger.error(f"❌ Failed to start WA Monitor: {e}")
         
