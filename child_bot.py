@@ -9183,9 +9183,9 @@ class ChildBot:
                 all_file_types = []
                 is_album = promo_data.get('is_album', False)
                 
-                if is_album and isinstance(sent_msg, list):
-                    # Album: sent_msg is list of messages from send_media_group
-                    for msg in sent_msg if isinstance(sent_msg, list) else [sent_msg]:
+                if is_album and isinstance(sent_msg, (list, tuple)):
+                    # Album: sent_msg is list/tuple of messages from send_media_group
+                    for msg in sent_msg:
                         if msg and msg.photo:
                             all_file_ids.append(msg.photo[-1].file_id)
                             all_file_types.append('photo')
@@ -9195,7 +9195,7 @@ class ChildBot:
                         elif msg and msg.document:
                             all_file_ids.append(msg.document.file_id)
                             all_file_types.append('document')
-                elif sent_msg and not isinstance(sent_msg, list):
+                elif sent_msg and not isinstance(sent_msg, (list, tuple)):
                     if sent_msg.photo:
                         all_file_ids.append(sent_msg.photo[-1].file_id)
                         all_file_types.append('photo')
