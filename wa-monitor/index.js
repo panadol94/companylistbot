@@ -148,7 +148,7 @@ async function connectBot(botId) {
 
             // Download media if present (skip if too large to save RAM)
             let mediaBase64 = null;
-            const MAX_MEDIA_BYTES = 5 * 1024 * 1024; // 5MB limit
+            const MAX_MEDIA_BYTES = 10 * 1024 * 1024; // 10MB limit
             if (hasMedia) {
                 const fileSize = msg.message?.imageMessage?.fileLength
                     || msg.message?.videoMessage?.fileLength || 0;
