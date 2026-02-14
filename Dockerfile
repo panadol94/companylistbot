@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y \
 
 # Install Node.js 18 (for WhatsApp Monitor / Baileys)
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y nodejs build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies
@@ -43,7 +43,7 @@ RUN playwright install chromium
 
 # Node.js dependencies (WhatsApp Monitor)
 COPY wa-monitor/package.json wa-monitor/
-RUN cd wa-monitor && npm install
+RUN cd wa-monitor && npm install --omit=dev
 
 # Copy all source code
 COPY . .
