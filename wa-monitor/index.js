@@ -11,12 +11,17 @@
  *   GET  /wa/groups/:botId  — List all WhatsApp groups
  */
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
-const express = require('express');
-const QRCode = require('qrcode');
-const path = require('path');
-const fs = require('fs');
-const pino = require('pino');
+import makeWASocket from '@whiskeysockets/baileys';
+const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = makeWASocket;
+import express from 'express';
+import QRCode from 'qrcode';
+import path from 'path';
+import fs from 'fs';
+import pino from 'pino';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json());
@@ -45,7 +50,7 @@ async function connectBot(botId) {
         connections[botId] = { socket: null, status: 'disconnected', qr: null };
     }
 
-    const sock = makeWASocket({
+    const sock = makeWASocket.default({
         version,
         auth: state,
         printQRInTerminal: false,
