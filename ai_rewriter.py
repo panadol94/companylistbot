@@ -4,6 +4,8 @@ Rewrites scraped promo text into engaging, professional Malay/English promotiona
 """
 import os
 import logging
+import time
+import asyncio
 import aiohttp
 
 logger = logging.getLogger(__name__)
@@ -174,6 +176,56 @@ def _basic_keywords(name: str) -> str:
     return ', '.join(sorted(keywords))
 
 
+# --- Web Search ---
+_search_cache = {}  # {query: (timestamp, results)}
+SEARCH_CACHE_TTL = 3600  # 1 hour
+
+async def web_search_company(company_name: str, max_results: int = 3) -> list:
+    """Search DuckDuckGo for company info. Returns list of {title, snippet, url}.
+    Results are cached for 1 hour."""
+    query = f"{company_name} Malaysia promotion bonus"
+    
+    # Check cache
+    if query in _search_cache:
+        ts, cached = _search_cache[query]
+        if time.time() - ts < SEARCH_CACHE_TTL:
+            logger.info(f"Web search cache hit: {company_name}")
+            return cached
+    
+    try:
+        from duckduckgo_search import DDGS
+        
+        def _search():
+            with DDGS() as ddgs:
+                results = []
+                for r in ddgs.text(query, max_results=max_results):
+                    results.append({
+                        'title': r.get('title', ''),
+                        'snippet': r.get('body', ''),
+                        'url': r.get('href', '')
+                    })
+                return results
+        
+        # Run in thread with timeout
+        loop = asyncio.get_event_loop()
+        results = await asyncio.wait_for(
+            loop.run_in_executor(None, _search),
+            timeout=5.0
+        )
+        
+        # Cache results
+        _search_cache[query] = (time.time(), results)
+        logger.info(f"Web search OK: {company_name} → {len(results)} results")
+        return results
+        
+    except asyncio.TimeoutError:
+        logger.warning(f"Web search timeout: {company_name}")
+        return []
+    except Exception as e:
+        logger.warning(f"Web search failed: {company_name}: {e}")
+        return []
+
+
 CHAT_SYSTEM_PROMPT = """Kau nama Masuk10 AI, kawan baik yang tolong orang cari platform gaming/betting terbaik di Malaysia.
 
 PERATURAN PENTING:
@@ -234,7 +286,26 @@ async def ai_chat(user_message: str, companies: list, chat_history: list = None,
 
     company_context = "\n".join(company_info) if company_info else "(Tiada company)"
 
-    system = base_prompt + f"\n\n=== SENARAI COMPANY ===\n{company_context}\n=== END ==="
+    # Web search for mentioned companies
+    web_context = ""
+    try:
+        msg_lower = user_message.lower()
+        matched_companies = [c for c in companies if c.get('name', '').lower() in msg_lower]
+        
+        if matched_companies:
+            web_results_all = []
+            for mc in matched_companies[:2]:  # Max 2 companies to search
+                results = await web_search_company(mc['name'])
+                if results:
+                    for r in results:
+                        web_results_all.append(f"- {r['title']}: {r['snippet']}")
+            
+            if web_results_all:
+                web_context = "\n\n=== INFO DARI INTERNET ===\n" + "\n".join(web_results_all) + "\n=== END INTERNET ==="
+    except Exception as e:
+        logger.warning(f"Web search context error: {e}")
+
+    system = base_prompt + f"\n\n=== SENARAI COMPANY ===\n{company_context}\n=== END ===" + web_context
 
     messages = [{"role": "system", "content": system}]
 

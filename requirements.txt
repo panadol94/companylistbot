@@ -11,4 +11,5 @@ lxml
 Pillow
 telethon
 psutil
+duckduckgo-search
 
