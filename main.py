@@ -507,17 +507,19 @@ async def wa_promo_received(request: Request):
         
         child = bot_manager.bots[bot_data['token']]
         
-        # Decode media if present
+        # Read media from temp file if present (saved by Node.js wa-monitor)
         media_bytes = None
         media_type = data.get('media_type')  # 'photo' or 'video'
-        media_base64 = data.get('media_base64')
-        if media_base64:
-            import base64
+        media_path = data.get('media_path')
+        if media_path:
+            import os
             try:
-                media_bytes = base64.b64decode(media_base64)
-                logger.info(f"📱 WA media decoded: {media_type}, {len(media_bytes)} bytes")
+                with open(media_path, 'rb') as f:
+                    media_bytes = f.read()
+                os.remove(media_path)  # Clean up temp file immediately
+                logger.info(f"📱 WA media loaded: {media_type}, {len(media_bytes)} bytes, temp file cleaned")
             except Exception as e:
-                logger.error(f"Failed to decode WA media: {e}")
+                logger.error(f"Failed to read WA media from {media_path}: {e}")
                 media_bytes = None
         
         # Build promo data (compatible with existing handle_promo_notification)

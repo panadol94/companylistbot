@@ -146,8 +146,8 @@ async function connectBot(botId) {
             // Get sender info
             const sender = msg.key.participant || msg.key.remoteJid;
 
-            // Download media if present (skip if too large to save RAM)
-            let mediaBase64 = null;
+            // Download media if present — save to temp file to minimize RAM usage
+            let mediaPath = null;
             const MAX_MEDIA_BYTES = 10 * 1024 * 1024; // 10MB limit
             if (hasMedia) {
                 const fileSize = msg.message?.imageMessage?.fileLength
@@ -158,8 +158,11 @@ async function connectBot(botId) {
                 } else {
                     try {
                         const buffer = await downloadMediaMessage(msg, 'buffer', {});
-                        mediaBase64 = buffer.toString('base64');
-                        console.log(`[Bot ${botId}] 📱 WA Group "${groupName}": [${mediaType}] ${text.substring(0, 60)}...`);
+                        const ext = mediaType === 'photo' ? 'jpg' : 'mp4';
+                        mediaPath = `/tmp/wa_media_${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+                        fs.writeFileSync(mediaPath, buffer);
+                        // buffer is released after writeFileSync — RAM freed
+                        console.log(`[Bot ${botId}] 📱 WA Group "${groupName}": [${mediaType}] saved to ${mediaPath} (${(buffer.length / 1024).toFixed(0)}KB)`);
                     } catch (e) {
                         console.error(`[Bot ${botId}] Media download failed:`, e.message);
                     }
@@ -182,7 +185,7 @@ async function connectBot(botId) {
                         timestamp: msg.messageTimestamp,
                         has_media: hasMedia,
                         media_type: mediaType,
-                        media_base64: mediaBase64,
+                        media_path: mediaPath,
                     })
                 });
 
