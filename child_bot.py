@@ -9231,11 +9231,18 @@ class ChildBot:
                     )
                     companies = self.db.get_companies(self.bot_id)
                     keyboard = []
-                    for c in companies[:20]:  # Max 20 buttons
-                        keyboard.append([InlineKeyboardButton(
-                            f"🏢 {c['name']}", 
+                    # Show 2 companies per row, up to 50
+                    row = []
+                    for c in companies[:50]:
+                        row.append(InlineKeyboardButton(
+                            f"🏢 {c['name'][:25]}", 
                             callback_data=f"rt_pick_{promo_id}_{c['id']}"
-                        )])
+                        ))
+                        if len(row) == 2:
+                            keyboard.append(row)
+                            row = []
+                    if row:
+                        keyboard.append(row)
                     keyboard.append([InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")])
 
                 sent_msg = await send_with_media(owner_id, caption, keyboard)

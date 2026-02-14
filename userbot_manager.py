@@ -83,32 +83,37 @@ class UserbotInstance:
         self.running = False
     
     async def start(self):
-        """Start the Telethon client and begin monitoring"""
-        try:
-            self.client = TelegramClient(
-                StringSession(self.session_string),
-                self.api_id,
-                self.api_hash
-            )
-            await self.client.connect()
-            
-            if not await self.client.is_user_authorized():
-                logger.warning(f"[UB-{self.bot_id}] Session not authorized")
-                return False
-            
-            # Register event handler
-            self.client.add_event_handler(
-                self._on_new_message,
-                events.NewMessage()
-            )
-            
-            self.running = True
-            logger.info(f"[UB-{self.bot_id}] Userbot started, monitoring channels")
-            return True
-            
-        except Exception as e:
-            logger.error(f"[UB-{self.bot_id}] Failed to start: {e}")
-            return False
+        """Start the Telethon client and begin monitoring (with retry)"""
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.client = TelegramClient(
+                    StringSession(self.session_string),
+                    self.api_id,
+                    self.api_hash
+                )
+                await self.client.connect()
+                
+                if not await self.client.is_user_authorized():
+                    logger.warning(f"[UB-{self.bot_id}] Session not authorized")
+                    return False
+                
+                # Register event handler
+                self.client.add_event_handler(
+                    self._on_new_message,
+                    events.NewMessage()
+                )
+                
+                self.running = True
+                logger.info(f"[UB-{self.bot_id}] Userbot started, monitoring channels")
+                return True
+                
+            except Exception as e:
+                logger.error(f"[UB-{self.bot_id}] Start attempt {attempt}/{max_retries} failed: {e}")
+                if attempt < max_retries:
+                    await asyncio.sleep(5)
+                else:
+                    return False
     
     async def stop(self):
         """Stop the Telethon client"""
@@ -907,6 +912,9 @@ class UserbotManager:
             success = await self.start_instance(bot_id, session, callback)
             if success:
                 started += 1
+            # Delay between starts to avoid Telegram rate-limit
+            if len(sessions) > 1:
+                await asyncio.sleep(2)
         logger.info(f"🤖 Userbot Manager: {started}/{len(sessions)} instances started")
     
     async def start_instance(self, bot_id, session_data=None, callback=None):
