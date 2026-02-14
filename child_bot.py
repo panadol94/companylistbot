@@ -1999,6 +1999,7 @@ class ChildBot:
         elif data.startswith("promo_bc_users_"): await self._promo_broadcast_action(update, int(data.split("_")[3]), 'users')
         elif data.startswith("promo_skip_"): await self._promo_skip_action(update, int(data.split("_")[2]))
         elif data.startswith("scan_ai_"): await self._scan_ai_rewrite(update, context)
+        elif data.startswith("wa_change_co_"): await self._wa_show_company_list(update, int(data.split("_")[3]))
         elif data.startswith("rt_pick_"):
             parts = data.split("_")
             await self._rt_pick_company(update, int(parts[2]), int(parts[3]))
@@ -9661,6 +9662,7 @@ class ChildBot:
                         [InlineKeyboardButton("✨ AI Rewrite", callback_data=f"scan_ai_0_{promo_id}")],
                         [InlineKeyboardButton("📤 Broadcast Groups", callback_data=f"promo_bc_groups_{promo_id}"),
                          InlineKeyboardButton("📤 Broadcast Users", callback_data=f"promo_bc_users_{promo_id}")],
+                        [InlineKeyboardButton("🔄 Tukar Company", callback_data=f"wa_change_co_{promo_id}")],
                         [InlineKeyboardButton("❌ Skip", callback_data=f"promo_skip_{promo_id}")]
                     ]
                 else:
@@ -9846,6 +9848,74 @@ class ChildBot:
             except Exception:
                 pass
             await self.app.bot.send_message(chat_id=query.from_user.id, text="⏭️ Promo skipped.")
+
+    async def _wa_show_company_list(self, update: Update, promo_id):
+        """Show company selection list when admin clicks 'Tukar Company'"""
+        query = update.callback_query
+        await query.answer("🏢 Pilih company...")
+        
+        try:
+            # Get current promo info
+            conn = self.db.get_connection()
+            try:
+                row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
+            finally:
+                conn.close()
+            
+            if not row:
+                await query.message.edit_text("❌ Promo tidak ditemui.")
+                return
+            
+            promo = dict(row)
+            current_company = promo.get('matched_company', '')
+            source = promo.get('source_channel', '')
+            
+            # Build company list buttons
+            companies = self.db.get_companies(self.bot_id)
+            keyboard = []
+            row_btns = []
+            for c in companies[:50]:
+                # Mark current match with ✅
+                prefix = "✅ " if c['name'] == current_company else "🏢 "
+                row_btns.append(InlineKeyboardButton(
+                    f"{prefix}{c['name'][:22]}", 
+                    callback_data=f"rt_pick_{promo_id}_{c['id']}"
+                ))
+                if len(row_btns) == 2:
+                    keyboard.append(row_btns)
+                    row_btns = []
+            if row_btns:
+                keyboard.append(row_btns)
+            keyboard.append([InlineKeyboardButton("◀️ Back", callback_data=f"promo_skip_{promo_id}")])
+            
+            # Edit message to show company list
+            caption = (
+                f"🔄 <b>TUKAR COMPANY</b>\n\n"
+                f"📢 Source: {source}\n"
+                f"🏢 Current: {current_company}\n\n"
+                f"👇 Pilih company yang betul:"
+            )
+            
+            is_media = bool(query.message.photo or query.message.video or query.message.document)
+            try:
+                if is_media:
+                    await query.message.edit_caption(
+                        caption=caption[:1024], parse_mode='HTML',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+                else:
+                    await query.message.edit_text(
+                        caption, parse_mode='HTML',
+                        reply_markup=InlineKeyboardMarkup(keyboard)
+                    )
+            except Exception:
+                await self.app.bot.send_message(
+                    chat_id=query.from_user.id,
+                    text=caption, parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+        except Exception as e:
+            self.logger.error(f"WA change company error: {e}")
 
     async def _rt_pick_company(self, update: Update, promo_id, company_id):
         """Handle real-time company pick — admin picks which company for detected post"""
