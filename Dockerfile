@@ -42,8 +42,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium
 
 # Node.js dependencies (WhatsApp Monitor)
-COPY wa-monitor/package.json wa-monitor/
-RUN cd wa-monitor && npm install --omit=dev
+COPY wa-monitor/.npmrc wa-monitor/package.json wa-monitor/
+RUN cd wa-monitor && npm install --ignore-scripts --omit=dev
 
 # Copy all source code
 COPY . .
