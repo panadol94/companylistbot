@@ -33,6 +33,10 @@ def create_grid_collage(media_list: list, watermark_text: str = "") -> bytes:
         # Single media or empty — no grid needed
         return None
     
+    # Skip grid if any media is video — send as album instead
+    if any(mt == 'video' for _, mt in media_list):
+        return None
+    
     # Convert all media to PIL Images
     images = []
     types = []
@@ -116,21 +120,23 @@ def _resize_to_height(img: Image.Image, target_h: int) -> Image.Image:
 
 
 def _resize_to_fill(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """Resize + crop image to exactly fill target dimensions (center crop)."""
+    """Resize image to fit inside target dimensions, padding with dark bars (no cropping)."""
     w, h = img.size
     if w == 0 or h == 0:
         return Image.new('RGB', (target_w, target_h), GRID_BG)
     
-    # Scale to cover target
-    scale = max(target_w / w, target_h / h)
+    # Scale to fit inside target (no crop)
+    scale = min(target_w / w, target_h / h)
     new_w = int(w * scale)
     new_h = int(h * scale)
     img = img.resize((new_w, new_h), Image.LANCZOS)
     
-    # Center crop
-    left = (new_w - target_w) // 2
-    top = (new_h - target_h) // 2
-    return img.crop((left, top, left + target_w, top + target_h))
+    # Center on dark background
+    canvas = Image.new('RGB', (target_w, target_h), GRID_BG)
+    x = (target_w - new_w) // 2
+    y = (target_h - new_h) // 2
+    canvas.paste(img, (x, y))
+    return canvas
 
 
 def _round_corners(img: Image.Image, radius: int) -> Image.Image:
