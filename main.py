@@ -522,12 +522,30 @@ async def wa_promo_received(request: Request):
                 logger.error(f"Failed to read WA media from {media_path}: {e}")
                 media_bytes = None
         
+        # Swap links with company's button_url (same as userbot logic)
+        swapped_text = text
+        if matched_company.get('button_url'):
+            import re
+            target_url = matched_company['button_url']
+            if target_url.startswith('t.me/'):
+                target_url = 'https://' + target_url
+            
+            url_pattern = re.compile(r'https?://\S+|t\.me/\S+', re.IGNORECASE)
+            urls_found = url_pattern.findall(text)
+            if urls_found:
+                for url in urls_found:
+                    swapped_text = swapped_text.replace(url, target_url)
+                logger.info(f"📱 WA link swapped: {len(urls_found)} URLs → {target_url}")
+            else:
+                swapped_text += f"\n\n🔗 {target_url}"
+                logger.info(f"📱 WA link appended: {target_url}")
+        
         # Save promo to DB first to get promo_id (required for button callbacks)
         promo_id = bot_manager.db.save_detected_promo(
             bot_id=bot_id,
             source_channel=f"📱 WA: {group_name}",
             original_text=text,
-            swapped_text=text,
+            swapped_text=swapped_text,
             media_file_ids=[],
             media_types=[],
             matched_company=matched_company['name']
@@ -539,7 +557,7 @@ async def wa_promo_received(request: Request):
             'promo_id': promo_id,
             'source_channel': f"📱 WA: {group_name}",
             'original_text': text,
-            'swapped_text': text,
+            'swapped_text': swapped_text,
             'media_file_ids': [],
             'media_types': [],
             'matched_company': matched_company['name'],
