@@ -1,11 +1,3 @@
-## ---- Stage 1: Build WA Monitor deps in a proper Node.js image ----
-FROM node:18-alpine AS wa-builder
-
-WORKDIR /wa-build
-COPY wa-monitor/package.json wa-monitor/package-lock.json ./
-RUN npm ci --ignore-scripts
-
-## ---- Stage 2: Main Python image ----
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -37,7 +29,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node.js 18 runtime only (no build tools needed — deps already built)
+# Install Node.js 18 (for WhatsApp Monitor / Baileys)
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -49,8 +41,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Install Playwright Chromium browser
 RUN playwright install chromium
 
-# Copy pre-built Node.js dependencies from Stage 1
-COPY --from=wa-builder /wa-build/node_modules /app/wa-monitor/node_modules
+# Node.js dependencies (WhatsApp Monitor)
+COPY wa-monitor/package.json wa-monitor/package-lock.json wa-monitor/
+RUN cd wa-monitor && npm ci --ignore-scripts
 
 # Copy all source code
 COPY . .
