@@ -18,7 +18,6 @@ OUTPUT_WIDTH = 1280    # final collage width
 OUTPUT_QUALITY = 92    # JPEG quality
 WATERMARK_OPACITY = 180  # 0-255
 GRADIENT_HEIGHT = 60   # dark gradient strip at bottom
-VIDEO_FPS = 15         # output video FPS
 
 
 def create_grid_collage(media_list: list, watermark_text: str = ""):
@@ -100,10 +99,19 @@ def _create_mosaic_video(media_list, watermark_text):
     # Pre-process each media item
     cells = []  # Each cell: {'type': 'photo'|'video', 'static': PIL or None, 'frames': list or None}
     max_frames = 0
+    source_fps = 30  # default, will be overridden by actual video fps
     
     for media_bytes, media_type in media_list[:6]:  # Max 6 items
         if media_type == 'video':
             try:
+                # Detect original FPS
+                try:
+                    props = iio.improps(BytesIO(media_bytes), plugin="pyav")
+                    if hasattr(props, 'fps') and props.fps:
+                        source_fps = props.fps
+                except Exception:
+                    pass
+                
                 frames_raw = iio.imread(BytesIO(media_bytes), plugin="pyav")
                 # Convert & resize frames
                 video_frames = []
@@ -166,17 +174,12 @@ def _create_mosaic_video(media_list, watermark_text):
     overlay_arr = np.array(overlay_img)  # RGBA
     
     # Generate frames
-    logger.info(f"Grid mosaic: {len(cells)} cells, {max_frames} video frames @ {VIDEO_FPS}fps")
+    logger.info(f"Grid mosaic: {len(cells)} cells, {max_frames} frames @ {source_fps}fps")
     
     output_frames = []
     bg_arr = np.full((final_h, canvas_w, 3), GRID_BG, dtype=np.uint8)
     
-    # Subsample: if source video fps > target fps, skip frames
-    # We output at VIDEO_FPS but process every source frame
-    # For 5min@30fps = 9000 frames → at 15fps = 4500 output frames
-    step = 2  # Assume source ~30fps, output 15fps
-    
-    for frame_idx in range(0, max_frames, step):
+    for frame_idx in range(max_frames):
         canvas = bg_arr.copy()
         
         for cell_idx, cell in enumerate(cells):
@@ -210,7 +213,7 @@ def _create_mosaic_video(media_list, watermark_text):
     if not output_frames:
         return None
     
-    logger.info(f"Grid mosaic: writing {len(output_frames)} frames as MP4")
+    logger.info(f"Grid mosaic: writing {len(output_frames)} frames as MP4 @ {source_fps}fps")
     
     try:
         out_buf = BytesIO()
@@ -220,7 +223,7 @@ def _create_mosaic_video(media_list, watermark_text):
             extension=".mp4",
             plugin="pyav",
             codec="libx264",
-            fps=VIDEO_FPS,
+            fps=source_fps,
         )
         out_buf.seek(0)
         return (out_buf.getvalue(), True)
