@@ -11,4 +11,4 @@ lxml
 Pillow
 telethon
 psutil
-imageio[pyav]
+
