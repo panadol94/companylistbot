@@ -146,15 +146,23 @@ async function connectBot(botId) {
             // Get sender info
             const sender = msg.key.participant || msg.key.remoteJid;
 
-            // Download media if present
+            // Download media if present (skip if too large to save RAM)
             let mediaBase64 = null;
+            const MAX_MEDIA_BYTES = 5 * 1024 * 1024; // 5MB limit
             if (hasMedia) {
-                try {
-                    const buffer = await downloadMediaMessage(msg, 'buffer', {});
-                    mediaBase64 = buffer.toString('base64');
-                    console.log(`[Bot ${botId}] 📱 WA Group "${groupName}": [${mediaType}] ${text.substring(0, 60)}...`);
-                } catch (e) {
-                    console.error(`[Bot ${botId}] Media download failed:`, e.message);
+                const fileSize = msg.message?.imageMessage?.fileLength
+                    || msg.message?.videoMessage?.fileLength || 0;
+
+                if (fileSize > MAX_MEDIA_BYTES) {
+                    console.log(`[Bot ${botId}] ⚠️ Media too large (${(fileSize / 1024 / 1024).toFixed(1)}MB), skipping download`);
+                } else {
+                    try {
+                        const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                        mediaBase64 = buffer.toString('base64');
+                        console.log(`[Bot ${botId}] 📱 WA Group "${groupName}": [${mediaType}] ${text.substring(0, 60)}...`);
+                    } catch (e) {
+                        console.error(`[Bot ${botId}] Media download failed:`, e.message);
+                    }
                 }
             } else {
                 console.log(`[Bot ${botId}] 📱 WA Group "${groupName}": ${text.substring(0, 80)}...`);
