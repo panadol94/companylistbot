@@ -286,21 +286,41 @@ class UserbotInstance:
         try:
             logger.info(f"[UB-{self.bot_id}] Processing promo: {len(all_media_bytes)} media, text: {text[:80]}...")
             
-            # Strip custom/premium emoji entities
+            # Extract message entities (including premium/custom emoji) for passthrough
+            raw_entities = []
             if event.message.entities and text:
-                from telethon.tl.types import MessageEntityCustomEmoji
-                remove_positions = set()
+                from telethon.tl.types import (
+                    MessageEntityCustomEmoji, MessageEntityBold, MessageEntityItalic,
+                    MessageEntityCode, MessageEntityPre, MessageEntityUrl,
+                    MessageEntityTextUrl, MessageEntityMention, MessageEntityHashtag,
+                    MessageEntityUnderline, MessageEntityStrike, MessageEntitySpoiler
+                )
+                ENTITY_MAP = {
+                    MessageEntityBold: 'bold',
+                    MessageEntityItalic: 'italic',
+                    MessageEntityCode: 'code',
+                    MessageEntityPre: 'pre',
+                    MessageEntityUrl: 'url',
+                    MessageEntityTextUrl: 'text_link',
+                    MessageEntityMention: 'mention',
+                    MessageEntityHashtag: 'hashtag',
+                    MessageEntityUnderline: 'underline',
+                    MessageEntityStrike: 'strikethrough',
+                    MessageEntitySpoiler: 'spoiler',
+                }
                 for ent in event.message.entities:
+                    ent_data = {'offset': ent.offset, 'length': ent.length}
                     if isinstance(ent, MessageEntityCustomEmoji):
-                        for i in range(ent.length):
-                            remove_positions.add(ent.offset + i)
-                if remove_positions:
-                    cleaned = ''.join(
-                        ch for i, ch in enumerate(text)
-                        if i not in remove_positions
-                    )
-                    import re
-                    text = re.sub(r'  +', ' ', cleaned).strip()
+                        ent_data['type'] = 'custom_emoji'
+                        ent_data['custom_emoji_id'] = str(ent.document_id)
+                    elif isinstance(ent, MessageEntityTextUrl):
+                        ent_data['type'] = 'text_link'
+                        ent_data['url'] = ent.url
+                    elif type(ent) in ENTITY_MAP:
+                        ent_data['type'] = ENTITY_MAP[type(ent)]
+                    else:
+                        continue
+                    raw_entities.append(ent_data)
             
             # Try to match a company (optional — no longer required)
             companies = self.db.get_companies(self.bot_id)
@@ -363,6 +383,7 @@ class UserbotInstance:
                 'all_media_bytes': all_media_bytes,
                 'all_media_types': all_media_types,
                 'is_album': len(all_media_bytes) > 1,
+                'entities': raw_entities,  # Telethon entities for premium emoji support
             }
             
             # Save promo record
@@ -681,30 +702,7 @@ class UserbotInstance:
                 'caption': msg.message or '',
             }
 
-            # Strip custom/premium emoji entities — Bot API can't send them
-            if msg.entities and msg.message:
-                from telethon.tl.types import MessageEntityCustomEmoji
-                # Build list of custom emoji positions to remove
-                remove_positions = set()
-                text_bytes = msg.message.encode('utf-16-le')
-                for ent in msg.entities:
-                    if isinstance(ent, MessageEntityCustomEmoji):
-                        # Custom emoji uses a placeholder char at offset
-                        # Convert UTF-16 offset to string position
-                        start = len(text_bytes[:ent.offset * 2].decode('utf-16-le', errors='ignore'))
-                        for i in range(ent.length):
-                            remove_positions.add(start + i)
-                
-                if remove_positions:
-                    cleaned = ''.join(
-                        ch for i, ch in enumerate(msg.message) 
-                        if i not in remove_positions
-                    )
-                    # Clean up double spaces
-                    import re
-                    cleaned = re.sub(r'  +', ' ', cleaned).strip()
-                    result['text'] = cleaned
-                    result['caption'] = cleaned
+            # Premium/custom emoji are preserved — entities handled via passthrough
 
             # Download media if present
             if msg.media:

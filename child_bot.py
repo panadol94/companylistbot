@@ -8997,7 +8997,7 @@ class ChildBot:
                     "Tekan button di bawah:",
                     parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📢 Add Channel", callback_data="ub_add_ch")],
+                        [InlineKeyboardButton("📢 Add Channel/Group", callback_data="ub_add_ch")],
                         [InlineKeyboardButton("🟢 Activate Now", callback_data="ub_toggle")],
                         [InlineKeyboardButton("« Back to Menu", callback_data="ub_menu")]
                     ])
@@ -9023,7 +9023,7 @@ class ChildBot:
                     "Sekarang tambah channel untuk monitor.",
                     parse_mode='Markdown',
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📢 Add Channel", callback_data="ub_add_ch")],
+                        [InlineKeyboardButton("📢 Add Channel/Group", callback_data="ub_add_ch")],
                         [InlineKeyboardButton("🟢 Activate Now", callback_data="ub_toggle")],
                         [InlineKeyboardButton("« Back to Menu", callback_data="ub_menu")]
                     ])
@@ -9082,7 +9082,7 @@ class ChildBot:
             )
         else:
             await update.message.reply_text(
-                "❌ Gagal join channel. Pastikan link betul.",
+                "❌ Gagal join. Pastikan link channel/group betul.",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🔄 Cuba Lagi", callback_data="ub_add_ch")],
                     [InlineKeyboardButton("« Back", callback_data="ub_menu")]
@@ -9113,6 +9113,32 @@ class ChildBot:
                 """Send text + media to a chat. Returns sent message for file_id capture."""
                 reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
                 try:
+                    # Build Bot API entities from promo_data (premium emoji support)
+                    from telegram import MessageEntity
+                    raw_ents = promo_data.get('entities', [])
+                    caption_entities = None
+                    use_parse_mode = 'HTML'
+                    
+                    if raw_ents:
+                        bot_entities = []
+                        for e in raw_ents:
+                            etype = e.get('type')
+                            if not etype:
+                                continue
+                            kwargs = {
+                                'type': etype,
+                                'offset': e['offset'],
+                                'length': e['length'],
+                            }
+                            if etype == 'custom_emoji':
+                                kwargs['custom_emoji_id'] = e.get('custom_emoji_id')
+                            elif etype == 'text_link':
+                                kwargs['url'] = e.get('url', '')
+                            bot_entities.append(MessageEntity(**kwargs))
+                        if bot_entities:
+                            caption_entities = bot_entities
+                            use_parse_mode = None  # Don't mix parse_mode with entities
+                    
                     is_album = promo_data.get('is_album', False)
                     all_bytes = promo_data.get('all_media_bytes', [])
                     all_types = promo_data.get('all_media_types', [])
@@ -9141,14 +9167,18 @@ class ChildBot:
                                 buf.name = 'grid_collage.mp4'
                                 return await self.app.bot.send_video(
                                     chat_id=chat_id, video=buf,
-                                    caption=text[:1024], parse_mode='HTML',
+                                    caption=text[:1024],
+                                    parse_mode=use_parse_mode,
+                                    caption_entities=caption_entities,
                                     reply_markup=reply_markup
                                 )
                             else:
                                 buf.name = 'grid_collage.jpg'
                                 return await self.app.bot.send_photo(
                                     chat_id=chat_id, photo=buf,
-                                    caption=text[:1024], parse_mode='HTML',
+                                    caption=text[:1024],
+                                    parse_mode=use_parse_mode,
+                                    caption_entities=caption_entities,
                                     reply_markup=reply_markup
                                 )
                         else:
@@ -9161,12 +9191,14 @@ class ChildBot:
                                 ext = {'photo': '.jpg', 'video': '.mp4', 'document': '.bin'}
                                 buf.name = f'promo_{i}{ext.get(mt, ".bin")}'
                                 cap = text[:1024] if i == 0 else None
+                                pm = use_parse_mode if cap else None
+                                ce = caption_entities if cap and caption_entities else None
                                 if mt == 'photo':
-                                    media_group.append(InputMediaPhoto(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                                    media_group.append(InputMediaPhoto(media=buf, caption=cap, parse_mode=pm, caption_entities=ce))
                                 elif mt == 'video':
-                                    media_group.append(InputMediaVideo(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                                    media_group.append(InputMediaVideo(media=buf, caption=cap, parse_mode=pm, caption_entities=ce))
                                 else:
-                                    media_group.append(InputMediaDocument(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                                    media_group.append(InputMediaDocument(media=buf, caption=cap, parse_mode=pm, caption_entities=ce))
                             sent_msgs = await self.app.bot.send_media_group(chat_id=chat_id, media=media_group)
                             if reply_markup:
                                 await self.app.bot.send_message(
@@ -9183,25 +9215,33 @@ class ChildBot:
                         if media_type == 'photo':
                             return await self.app.bot.send_photo(
                                 chat_id=chat_id, photo=buf,
-                                caption=text[:1024], parse_mode='HTML',
+                                caption=text[:1024],
+                                parse_mode=use_parse_mode,
+                                caption_entities=caption_entities,
                                 reply_markup=reply_markup
                             )
                         elif media_type == 'video':
                             return await self.app.bot.send_video(
                                 chat_id=chat_id, video=buf,
-                                caption=text[:1024], parse_mode='HTML',
+                                caption=text[:1024],
+                                parse_mode=use_parse_mode,
+                                caption_entities=caption_entities,
                                 reply_markup=reply_markup
                             )
                         else:
                             return await self.app.bot.send_document(
                                 chat_id=chat_id, document=buf,
-                                caption=text[:1024], parse_mode='HTML',
+                                caption=text[:1024],
+                                parse_mode=use_parse_mode,
+                                caption_entities=caption_entities,
                                 reply_markup=reply_markup
                             )
                     else:
                         return await self.app.bot.send_message(
                             chat_id=chat_id, text=text,
-                            parse_mode='HTML', reply_markup=reply_markup
+                            parse_mode=use_parse_mode,
+                            entities=caption_entities,
+                            reply_markup=reply_markup
                         )
                 except Exception as e:
                     self.logger.error(f"Send promo failed to {chat_id}: {e}")
