@@ -6344,6 +6344,10 @@ class ChildBot:
         msg_text = update.message.text[:50] if update.message.text else 'No text'
         chat = update.effective_chat
         
+        # Auto-Discovery: Save group FIRST (before any early returns)
+        if chat.type in ['group', 'supergroup']:
+            self.db.upsert_known_group(self.bot_id, chat.id, chat.title)
+        
         # --- LINK GUARD: Auto-delete links from non-admins in groups ---
         if chat.type in ['group', 'supergroup'] and self.db.is_link_guard_enabled(self.bot_id):
             text_to_check = update.message.text or update.message.caption or ''
@@ -6404,10 +6408,6 @@ class ChildBot:
                         await update.message.reply_text(reply_text, parse_mode='HTML')
                     except Exception as e:
                         self.logger.error(f"Auto-reply error: {e}")
-        
-        # Auto-Discovery: Save group if message is from a group
-        if chat.type in ['group', 'supergroup']:
-            self.db.upsert_known_group(self.bot_id, chat.id, chat.title)
         
         # Safe forwarded check for PTB v20+
         forward_from_chat = getattr(update.message, 'forward_from_chat', None)
@@ -6793,6 +6793,10 @@ class ChildBot:
         self.logger.info(f"📷 Media message received from user {update.effective_user.id}")
         
         chat = update.effective_chat
+        
+        # Auto-Discovery: Save group for media messages too
+        if chat.type in ['group', 'supergroup']:
+            self.db.upsert_known_group(self.bot_id, chat.id, chat.title)
         
         # --- LINK GUARD: Check media captions for links ---
         if chat.type in ['group', 'supergroup'] and self.db.is_link_guard_enabled(self.bot_id):
