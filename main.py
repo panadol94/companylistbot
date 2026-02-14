@@ -518,7 +518,7 @@ async def wa_promo_received(request: Request):
         }
         
         # Use existing promo notification flow
-        await child.handle_promo_notification(promo_data)
+        await child.handle_promo_notification(bot_id, promo_data)
         
         logger.info(f"📱 WA promo forwarded to admin: {matched_company['name']} from '{group_name}'")
         return {"success": True, "matched": True, "company": matched_company['name']}
