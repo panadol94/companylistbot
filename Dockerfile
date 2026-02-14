@@ -2,8 +2,8 @@
 FROM node:18-alpine AS wa-builder
 
 WORKDIR /wa-build
-COPY wa-monitor/package.json wa-monitor/.npmrc ./
-RUN npm install --ignore-scripts --omit=dev
+COPY wa-monitor/package.json ./
+RUN npm install --ignore-scripts
 
 ## ---- Stage 2: Main Python image ----
 FROM python:3.11-slim
