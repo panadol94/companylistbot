@@ -13,12 +13,17 @@ class Database:
         conn.row_factory = sqlite3.Row
         return conn
     
-    def execute_query(self, query):
-        """Execute a raw SQL query and return results"""
+    def execute_query(self, query, params=None):
+        """Execute a SQL query and return results. Use params for safe parameterized queries."""
         conn = self.get_connection()
-        rows = conn.execute(query).fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        try:
+            if params:
+                rows = conn.execute(query, params).fetchall()
+            else:
+                rows = conn.execute(query).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
 
     def init_db(self):
         with self.lock:

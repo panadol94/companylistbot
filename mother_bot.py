@@ -175,7 +175,7 @@ class MotherBot:
             
             # Get stats for confirmation message
             companies_count = len(self.db.get_companies(bot_id))
-            users = self.db.execute_query(f"SELECT COUNT(*) as count FROM users WHERE bot_id = {bot_id}")
+            users = self.db.execute_query("SELECT COUNT(*) as count FROM users WHERE bot_id = ?", (bot_id,))
             users_count = users[0]['count'] if users else 0
             
             text = (

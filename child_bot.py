@@ -1646,8 +1646,10 @@ class ChildBot:
         try:
             # Simple Logic: Top users by invite
             conn = self.db.get_connection()
-            top = conn.execute("SELECT telegram_id, total_invites FROM users WHERE bot_id = ? ORDER BY total_invites DESC LIMIT 10", (self.bot_id,)).fetchall()
-            conn.close()
+            try:
+                top = conn.execute("SELECT telegram_id, total_invites FROM users WHERE bot_id = ? ORDER BY total_invites DESC LIMIT 10", (self.bot_id,)).fetchall()
+            finally:
+                conn.close()
             
             list_text = ""
             if not top:
@@ -1826,6 +1828,23 @@ class ChildBot:
                 pass
             
         self.logger.info(f"🔘 Callback received: {data}")
+
+        try:
+            await self._route_callback(update, context, query, data)
+        except (ValueError, IndexError) as e:
+            self.logger.warning(f"⚠️ Bad callback data '{data}': {e}")
+            try:
+                await query.answer("⚠️ Invalid action", show_alert=False)
+            except Exception:
+                pass
+        except Exception as e:
+            self.logger.error(f"❌ Callback handler error for '{data}': {e}", exc_info=True)
+            try:
+                await query.answer("❌ Error occurred", show_alert=False)
+            except Exception:
+                pass
+
+    async def _route_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE, query, data):
 
         if data.startswith("list_page_"):
             page = int(data.split("_")[2])
@@ -4791,10 +4810,12 @@ class ChildBot:
         # This is a callback, we need to access application context differently
         # For simplicity, extract from delete first button's data
         conn = self.db.get_connection()
-        btn2 = conn.execute("SELECT company_id FROM company_buttons WHERE id = ?", (btn2_id,)).fetchone()
-        if btn2:
-            company_id = btn2['company_id']
-        conn.close()
+        try:
+            btn2 = conn.execute("SELECT company_id FROM company_buttons WHERE id = ?", (btn2_id,)).fetchone()
+            if btn2:
+                company_id = btn2['company_id']
+        finally:
+            conn.close()
         
         if company_id:
             # Since we can't easily access context in callback, use a simpler approach
@@ -8751,8 +8772,10 @@ class ChildBot:
 
         # Get promo from DB
         conn = self.db.get_connection()
-        row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
-        conn.close()
+        try:
+            row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
+        finally:
+            conn.close()
 
         if not row:
             await query.message.edit_text("❌ Promo tidak ditemui.")
@@ -9135,12 +9158,14 @@ class ChildBot:
                     try:
                         import json
                         conn = self.db.get_connection()
-                        conn.execute(
-                            "UPDATE detected_promos SET media_file_ids = ?, media_types = ? WHERE id = ?",
-                            (json.dumps([file_id]), json.dumps([media_type]), promo_id)
-                        )
-                        conn.commit()
-                        conn.close()
+                        try:
+                            conn.execute(
+                                "UPDATE detected_promos SET media_file_ids = ?, media_types = ? WHERE id = ?",
+                                (json.dumps([file_id]), json.dumps([media_type]), promo_id)
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
                     except Exception:
                         pass
                 
@@ -9229,12 +9254,14 @@ class ChildBot:
                         try:
                             import json
                             conn = self.db.get_connection()
-                            conn.execute(
-                                "UPDATE detected_promos SET media_file_ids = ?, media_types = ? WHERE id = ?",
-                                (json.dumps([file_id]), json.dumps([media_type]), promo_id)
-                            )
-                            conn.commit()
-                            conn.close()
+                            try:
+                                conn.execute(
+                                    "UPDATE detected_promos SET media_file_ids = ?, media_types = ? WHERE id = ?",
+                                    (json.dumps([file_id]), json.dumps([media_type]), promo_id)
+                                )
+                                conn.commit()
+                            finally:
+                                conn.close()
                         except Exception:
                             pass
 
@@ -9249,8 +9276,10 @@ class ChildBot:
         try:
             # Get promo from DB
             conn = self.db.get_connection()
-            row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
-            conn.close()
+            try:
+                row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
+            finally:
+                conn.close()
 
             if not row:
                 await query.message.edit_text("❌ Promo tidak ditemui.")
@@ -9426,8 +9455,10 @@ class ChildBot:
             
             # Get promo from DB
             conn = self.db.get_connection()
-            row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
-            conn.close()
+            try:
+                row = conn.execute("SELECT * FROM detected_promos WHERE id = ?", (promo_id,)).fetchone()
+            finally:
+                conn.close()
             
             if not row:
                 await _edit_or_send("❌ Promo tidak ditemui.")
