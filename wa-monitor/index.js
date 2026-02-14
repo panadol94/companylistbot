@@ -11,8 +11,7 @@
  *   GET  /wa/groups/:botId  — List all WhatsApp groups
  */
 
-import makeWASocket from '@whiskeysockets/baileys';
-const { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = makeWASocket;
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import express from 'express';
 import QRCode from 'qrcode';
 import path from 'path';
@@ -50,7 +49,7 @@ async function connectBot(botId) {
         connections[botId] = { socket: null, status: 'disconnected', qr: null };
     }
 
-    const sock = makeWASocket.default({
+    const sock = makeWASocket({
         version,
         auth: state,
         printQRInTerminal: false,
