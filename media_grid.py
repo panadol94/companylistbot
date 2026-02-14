@@ -1,7 +1,8 @@
 """
 Media Grid Collage Generator
-Combines multiple media (photos/videos) into a single grid collage with watermark.
-Videos play in the grid using FFmpeg subprocess — fast, low memory.
+Combines multiple media (photos/videos) into a single grid collage.
+Features: fade-in, branding bar, golden border, company name, media badge, animated watermark.
+Videos use FFmpeg subprocess — fast, low memory.
 """
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
@@ -15,16 +16,19 @@ logger = logging.getLogger(__name__)
 
 # Grid config
 GRID_GAP = 6
-GRID_BG_HEX = '0x141414'  # for FFmpeg
-GRID_BG = (20, 20, 20)     # for PIL
+GRID_BG_HEX = '0x141414'
+GRID_BG = (20, 20, 20)
 CORNER_RADIUS = 16
 OUTPUT_WIDTH = 1280
 OUTPUT_QUALITY = 92
 WATERMARK_OPACITY = 180
-GRADIENT_HEIGHT = 60
+BRANDING_BAR_H = 56     # bottom branding bar height
+BORDER_W = 3             # golden border width
+BORDER_COLOR = 'gold'
+BORDER_COLOR_RGB = (218, 165, 32)
 
 
-def create_grid_collage(media_list: list, watermark_text: str = ""):
+def create_grid_collage(media_list: list, watermark_text: str = "", company_name: str = ""):
     """
     Create a grid collage from multiple media items.
     Returns (bytes, is_video) tuple or None.
@@ -34,14 +38,18 @@ def create_grid_collage(media_list: list, watermark_text: str = ""):
     
     has_video = any(mt == 'video' for _, mt in media_list)
     
+    # Count media types for badge
+    photo_count = sum(1 for _, mt in media_list if mt == 'photo')
+    video_count = sum(1 for _, mt in media_list if mt == 'video')
+    
     if has_video:
-        return _create_mosaic_video_ffmpeg(media_list, watermark_text)
+        return _create_mosaic_video_ffmpeg(media_list, watermark_text, company_name, photo_count, video_count)
     else:
-        return _create_static_grid(media_list, watermark_text)
+        return _create_static_grid(media_list, watermark_text, company_name, photo_count, video_count)
 
 
-def _create_static_grid(media_list, watermark_text):
-    """Create static JPEG grid for photos only."""
+def _create_static_grid(media_list, watermark_text, company_name, photo_count, video_count):
+    """Create static JPEG grid for photos only — with all visual enhancements."""
     images = []
     for media_bytes, media_type in media_list:
         try:
@@ -55,9 +63,12 @@ def _create_static_grid(media_list, watermark_text):
         return None
     
     grid = _build_grid(images)
-    grid = _add_gradient(grid)
-    if watermark_text:
-        grid = _add_watermark(grid, watermark_text)
+    
+    # Add branding bar at bottom
+    grid = _add_branding_bar(grid, watermark_text, company_name, photo_count, video_count)
+    
+    # Add golden border
+    grid = _add_border(grid)
     
     output = BytesIO()
     grid.save(output, format='JPEG', quality=OUTPUT_QUALITY, optimize=True)
@@ -65,21 +76,88 @@ def _create_static_grid(media_list, watermark_text):
     return (output.getvalue(), False)
 
 
-def _create_mosaic_video_ffmpeg(media_list, watermark_text):
+def _add_branding_bar(img, watermark_text, company_name, photo_count, video_count):
+    """Add a dark branding bar at bottom with bot name, company name, media badge."""
+    w, h = img.size
+    new_h = h + BRANDING_BAR_H
+    canvas = Image.new('RGB', (w, new_h), GRID_BG)
+    canvas.paste(img, (0, 0))
+    
+    draw = ImageDraw.Draw(canvas, 'RGBA')
+    
+    # Dark bar background
+    draw.rectangle(
+        [(0, h), (w, new_h)],
+        fill=(15, 15, 15, 255)
+    )
+    
+    # Subtle top border on bar
+    draw.line([(0, h), (w, h)], fill=BORDER_COLOR_RGB, width=1)
+    
+    font_brand = _get_font(20)
+    font_small = _get_font(14)
+    bar_center_y = h + (BRANDING_BAR_H // 2)
+    
+    # Left: Media count badge
+    badge_parts = []
+    if photo_count > 0:
+        badge_parts.append(f"📷 {photo_count}")
+    if video_count > 0:
+        badge_parts.append(f"🎥 {video_count}")
+    badge_text = " + ".join(badge_parts) if badge_parts else ""
+    if badge_text:
+        bbox = draw.textbbox((0, 0), badge_text, font=font_small)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        bx, by = 14, bar_center_y - th // 2
+        draw.rounded_rectangle(
+            [bx - 6, by - 4, bx + tw + 6, by + th + 4],
+            radius=6, fill=(255, 255, 255, 30))
+        draw.text((bx, by), badge_text, fill=(200, 200, 200, 230), font=font_small)
+    
+    # Center: Company name
+    if company_name:
+        bbox = draw.textbbox((0, 0), company_name, font=font_brand)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        cx = (w - tw) // 2
+        cy = bar_center_y - th // 2
+        draw.text((cx, cy), company_name, fill=(255, 255, 255, 240), font=font_brand)
+    
+    # Right: Watermark / bot name
+    if watermark_text:
+        bbox = draw.textbbox((0, 0), watermark_text, font=font_brand)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        wx = w - tw - 14
+        wy = bar_center_y - th // 2
+        draw.text((wx, wy), watermark_text, fill=(*BORDER_COLOR_RGB, 240), font=font_brand)
+    
+    return canvas.convert('RGB')
+
+
+def _add_border(img):
+    """Add thin golden border around the entire image."""
+    w, h = img.size
+    draw = ImageDraw.Draw(img)
+    for i in range(BORDER_W):
+        draw.rectangle(
+            [(i, i), (w - 1 - i, h - 1 - i)],
+            outline=BORDER_COLOR_RGB
+        )
+    return img
+
+
+def _create_mosaic_video_ffmpeg(media_list, watermark_text, company_name, photo_count, video_count):
     """
-    Create mosaic video using FFmpeg subprocess.
-    FFmpeg handles everything natively in C — fast & low memory.
+    Create mosaic video using FFmpeg subprocess with visual enhancements:
+    fade-in, branding bar, golden border, company name, media badge, animated watermark.
     """
     n = min(len(media_list), 6)
     gap = GRID_GAP
     
-    # Cell dimensions (must be even for h264)
     cell_w = (OUTPUT_WIDTH - gap) // 2
-    cell_w = cell_w - (cell_w % 2)  # ensure even
+    cell_w = cell_w - (cell_w % 2)
     cell_h = int(cell_w * 0.75)
-    cell_h = cell_h - (cell_h % 2)  # ensure even
+    cell_h = cell_h - (cell_h % 2)
     
-    # Canvas size
     if n == 2:
         rows = 1
     elif n == 3:
@@ -87,16 +165,18 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
     else:
         rows = (n + 1) // 2
     
-    canvas_w = cell_w * 2 + gap
-    canvas_h = cell_h * rows + gap * (rows - 1)
-    # Ensure even
-    canvas_w = canvas_w + (canvas_w % 2)
+    grid_w = cell_w * 2 + gap
+    grid_h = cell_h * rows + gap * (rows - 1)
+    
+    # Total canvas = grid + branding bar + borders
+    canvas_w = grid_w + (BORDER_W * 2)
+    canvas_h = grid_h + BRANDING_BAR_H + (BORDER_W * 2)
+    canvas_w = canvas_w + (canvas_w % 2)  # ensure even
     canvas_h = canvas_h + (canvas_h % 2)
     
     temp_files = []
     
     try:
-        # Save media to temp files & detect max video duration
         inputs = []
         max_duration = 0
         
@@ -108,7 +188,6 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
             temp_files.append(tmp.name)
             inputs.append({'path': tmp.name, 'type': media_type})
             
-            # Get video duration
             if media_type == 'video':
                 dur = _get_video_duration(tmp.name)
                 if dur > max_duration:
@@ -117,34 +196,32 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
         if max_duration <= 0:
             max_duration = 10
         
-        # Calculate cell positions
         positions = _get_cell_positions(n, cell_w, cell_h, gap)
         
         # Build FFmpeg command
         cmd = ['ffmpeg', '-y']
         
-        # Input: background color
+        # Input 0: background
         cmd.extend([
             '-f', 'lavfi', '-i',
             f'color=c={GRID_BG_HEX}:s={canvas_w}x{canvas_h}:d={max_duration}:r=30'
         ])
         
-        # Add each media as input
-        first_video_input = None  # FFmpeg input index of first video (for audio)
+        first_video_input = None
         for i, inp in enumerate(inputs):
             if inp['type'] != 'video':
                 cmd.extend(['-loop', '1', '-t', str(max_duration)])
             else:
                 if first_video_input is None:
-                    first_video_input = i + 1  # +1 because input 0 is background
+                    first_video_input = i + 1
             cmd.extend(['-i', inp['path']])
         
         # Build filter_complex
         filters = []
         
-        # Scale each input to cell size (input 0 is background, so media starts from 1)
+        # Scale each input to cell size
         for i in range(n):
-            input_idx = i + 1  # offset by 1 because of background
+            input_idx = i + 1
             filters.append(
                 f'[{input_idx}:v]scale={cell_w}:{cell_h}:'
                 f'force_original_aspect_ratio=decrease,'
@@ -152,28 +229,83 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
                 f'color={GRID_BG_HEX},setsar=1[v{i}]'
             )
         
-        # Overlay each cell onto background
+        # Overlay cells onto background (offset by border width)
         prev = '0:v'
         for i in range(n):
             x, y = positions[i]
+            x += BORDER_W  # offset for border
+            y += BORDER_W
             out_label = f'tmp{i}'
             filters.append(
                 f'[{prev}][v{i}]overlay={x}:{y}:shortest=1[{out_label}]'
             )
             prev = out_label
         
-        # Add watermark with drawtext
-        if watermark_text:
-            safe_text = watermark_text.replace("'", "\\'").replace(":", "\\:")
+        # 1. Golden border (drawbox)
+        filters.append(
+            f'[{prev}]drawbox=x=0:y=0:w=iw:h=ih:color={BORDER_COLOR}:t={BORDER_W}[bordered]'
+        )
+        prev = 'bordered'
+        
+        # 2. Branding bar background (dark strip at bottom)
+        bar_y = BORDER_W + grid_h
+        filters.append(
+            f'[{prev}]drawbox=x=0:y={bar_y}:w=iw:h={BRANDING_BAR_H}:'
+            f'color=black@0.9:t=fill[bar]'
+        )
+        # Gold line above bar
+        filters.append(
+            f'[bar]drawbox=x=0:y={bar_y}:w=iw:h=1:color={BORDER_COLOR}:t=fill[barline]'
+        )
+        prev = 'barline'
+        
+        # 3. Media count badge (top-left of bar)
+        badge_parts = []
+        if photo_count > 0:
+            badge_parts.append(f"{photo_count} Photo{'s' if photo_count > 1 else ''}")
+        if video_count > 0:
+            badge_parts.append(f"{video_count} Video{'s' if video_count > 1 else ''}")
+        badge_text = " + ".join(badge_parts)
+        if badge_text:
+            safe_badge = badge_text.replace("'", "\\'").replace(":", "\\:")
+            badge_y = bar_y + (BRANDING_BAR_H // 2)
             filters.append(
-                f'[{prev}]drawtext=text=\'{safe_text}\':'
-                f'x=w-tw-28:y=h-th-20:'
-                f'fontsize=22:fontcolor=white:'
-                f'box=1:boxcolor=black@0.7:boxborderw=8[out]'
+                f'[{prev}]drawtext=text=\'{safe_badge}\':'
+                f'x=16:y={badge_y}-th/2:'
+                f'fontsize=15:fontcolor=white@0.7:'
+                f'box=1:boxcolor=white@0.1:boxborderw=5[badge]'
             )
-            final_label = '[out]'
-        else:
-            final_label = f'[{prev}]'
+            prev = 'badge'
+        
+        # 4. Company name (center of bar)
+        if company_name:
+            safe_company = company_name.replace("'", "\\'").replace(":", "\\:")
+            company_y = bar_y + (BRANDING_BAR_H // 2)
+            filters.append(
+                f'[{prev}]drawtext=text=\'{safe_company}\':'
+                f'x=(w-tw)/2:y={company_y}-th/2:'
+                f'fontsize=22:fontcolor=white[company]'
+            )
+            prev = 'company'
+        
+        # 5. Animated watermark (slides in from right, 0.3s delay)
+        if watermark_text:
+            safe_wm = watermark_text.replace("'", "\\'").replace(":", "\\:")
+            wm_y = bar_y + (BRANDING_BAR_H // 2)
+            # Slide from right edge to final position over 0.5s, starting at 0.3s
+            filters.append(
+                f'[{prev}]drawtext=text=\'{safe_wm}\':'
+                f'x=\'if(lt(t\\,0.8)\\,w\\,min(w-tw-16\\,w-(w-tw-16+tw)*min(1\\,(t-0.3)*3)))\'  :'
+                f'y={wm_y}-th/2:'
+                f'fontsize=20:fontcolor={BORDER_COLOR}[watermark]'
+            )
+            prev = 'watermark'
+        
+        # 6. Fade-in (0.5s from black)
+        filters.append(
+            f'[{prev}]fade=t=in:st=0:d=0.5[out]'
+        )
+        final_label = '[out]'
         
         filter_str = ';'.join(filters)
         
@@ -186,7 +318,6 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
             '-filter_complex', filter_str,
             '-map', final_label,
         ])
-        # Map audio from first video if available
         if first_video_input is not None:
             cmd.extend(['-map', f'{first_video_input}:a?'])
             cmd.extend(['-c:a', 'aac', '-b:a', '128k'])
@@ -202,7 +333,6 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
         
         logger.info(f"FFmpeg grid: {n} inputs, {max_duration:.1f}s, {canvas_w}x{canvas_h}")
         
-        # Run FFmpeg
         timeout = max(max_duration * 3, 120)
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout
@@ -212,7 +342,6 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
             logger.error(f"FFmpeg failed (rc={result.returncode}): {result.stderr[-500:]}")
             return None
         
-        # Read output
         if not os.path.exists(out_tmp.name):
             return None
         
@@ -241,7 +370,7 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text):
 
 
 def _get_video_duration(filepath):
-    """Get video duration in seconds using ffprobe/ffmpeg."""
+    """Get video duration in seconds."""
     try:
         result = subprocess.run(
             ['ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
@@ -252,8 +381,6 @@ def _get_video_duration(filepath):
             return float(result.stdout.strip())
     except Exception:
         pass
-    
-    # Fallback: parse ffmpeg output
     try:
         result = subprocess.run(
             ['ffmpeg', '-i', filepath], capture_output=True, text=True, timeout=10
@@ -264,7 +391,6 @@ def _get_video_duration(filepath):
             return int(h) * 3600 + int(m) * 60 + float(s)
     except Exception:
         pass
-    
     return 0
 
 
@@ -284,7 +410,7 @@ def _get_cell_positions(n, cell_w, cell_h, gap):
         return positions
 
 
-# --- Static grid helpers (for photos-only) ---
+# --- Static grid helpers (PIL) ---
 
 def _create_placeholder(text, size):
     img = Image.new('RGB', size, (60, 60, 70))
@@ -351,36 +477,6 @@ def _build_grid(images):
             cell = _round_corners(_resize_to_fill(img, cell_w, cell_h), CORNER_RADIUS)
             canvas.paste(cell, (col * (cell_w + gap), row * (cell_h + gap)))
         return canvas
-
-
-def _add_gradient(img):
-    img = img.copy()
-    w, h = img.size
-    gradient = Image.new('RGBA', (w, GRADIENT_HEIGHT), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(gradient)
-    for y in range(GRADIENT_HEIGHT):
-        alpha = int(160 * (y / GRADIENT_HEIGHT))
-        draw.line([(0, y), (w, y)], fill=(0, 0, 0, alpha))
-    img = img.convert('RGBA')
-    img.paste(gradient, (0, h - GRADIENT_HEIGHT), gradient)
-    return img.convert('RGB')
-
-
-def _add_watermark(img, text):
-    img = img.copy()
-    draw = ImageDraw.Draw(img, 'RGBA')
-    w, h = img.size
-    font = _get_font(22)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    pad_x, pad_y = 12, 8
-    x = w - tw - pad_x - 16
-    y = h - th - pad_y - 12
-    draw.rounded_rectangle(
-        [x - pad_x, y - pad_y, x + tw + pad_x, y + th + pad_y],
-        radius=8, fill=(0, 0, 0, WATERMARK_OPACITY))
-    draw.text((x, y), text, fill=(255, 255, 255, 240), font=font)
-    return img.convert('RGB')
 
 
 def _get_font(size):

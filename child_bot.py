@@ -9129,7 +9129,7 @@ class ChildBot:
                                 from media_grid import create_grid_collage
                                 bot_name = self.app.bot.first_name or "Bot"
                                 media_list = list(zip(all_bytes, all_types))
-                                grid_result = create_grid_collage(media_list, watermark_text=bot_name)
+                                grid_result = create_grid_collage(media_list, watermark_text=bot_name, company_name=company)
                             except Exception as e:
                                 self.logger.error(f"Grid collage failed: {e}")
                         
