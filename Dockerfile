@@ -59,6 +59,6 @@ ENV PYTHONUNBUFFERED=1
 
 # Startup script runs both Python + Node.js
 COPY start.sh .
-RUN chmod +x start.sh
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 CMD ["./start.sh"]
