@@ -76,6 +76,23 @@ class BotManager:
         # 3. Start Userbot Manager (load all active sessions)
         await self.userbot_manager.start_all()
         
+        # 4. Start WhatsApp Monitor (Node.js) in background
+        try:
+            import subprocess, os
+            wa_dir = os.path.join(os.path.dirname(__file__), 'wa-monitor')
+            if os.path.exists(os.path.join(wa_dir, 'index.js')):
+                self.wa_process = subprocess.Popen(
+                    ['node', 'index.js'],
+                    cwd=wa_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT
+                )
+                logger.info(f"📱 WhatsApp Monitor started (PID: {self.wa_process.pid})")
+            else:
+                logger.warning("⚠️ wa-monitor/index.js not found, skipping WA Monitor")
+        except Exception as e:
+            logger.error(f"❌ Failed to start WA Monitor: {e}")
+        
         logger.info(f"🌟 Platform Running. Domain: {DOMAIN_URL}")
 
     async def backup_database(self):
