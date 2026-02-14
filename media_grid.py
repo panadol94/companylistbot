@@ -33,9 +33,7 @@ def create_grid_collage(media_list: list, watermark_text: str = "") -> bytes:
         # Single media or empty — no grid needed
         return None
     
-    # Skip grid if any media is video — send as album instead
-    if any(mt == 'video' for _, mt in media_list):
-        return None
+    has_video = any(mt == 'video' for _, mt in media_list)
     
     # Convert all media to PIL Images
     images = []
@@ -74,11 +72,48 @@ def create_grid_collage(media_list: list, watermark_text: str = "") -> bytes:
     if watermark_text:
         grid = _add_watermark(grid, watermark_text)
     
-    # Export as JPEG bytes
+    # Export
+    if has_video:
+        # Convert grid image to short static video
+        video_bytes = _image_to_video(grid)
+        if video_bytes:
+            return (video_bytes, True)
+        # Fallback to photo if video conversion fails
+    
     output = BytesIO()
     grid.save(output, format='JPEG', quality=OUTPUT_QUALITY, optimize=True)
     output.seek(0)
-    return output.getvalue()
+    return (output.getvalue(), False)
+
+
+def _image_to_video(img: Image.Image, duration_secs: int = 3) -> bytes:
+    """Convert a PIL Image to a short static MP4 video."""
+    try:
+        import imageio.v3 as iio
+        import numpy as np
+        
+        # Convert PIL to numpy array
+        frame = np.array(img.convert('RGB'))
+        
+        output = BytesIO()
+        
+        # Write frames (repeat the same frame for duration)
+        fps = 1
+        frames = [frame] * (fps * duration_secs)
+        iio.imwrite(
+            output, frames, 
+            extension=".mp4",
+            plugin="pyav",
+            codec="libx264",
+            fps=fps,
+        )
+        output.seek(0)
+        return output.getvalue()
+    except ImportError:
+        logger.warning("imageio not available for video conversion")
+    except Exception as e:
+        logger.warning(f"Image to video conversion failed: {e}")
+    return None
 
 
 def _extract_video_frame(video_bytes: bytes) -> Image.Image:

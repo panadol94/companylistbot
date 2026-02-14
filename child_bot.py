@@ -9122,27 +9122,35 @@ class ChildBot:
                         session = self.db.get_userbot_session(self.bot_id)
                         grid_mode = session.get('grid_mode', 1) if session else 1
                         
-                        grid_bytes = None
+                        grid_result = None
                         if grid_mode:
                             # Create grid collage from all media
                             try:
                                 from media_grid import create_grid_collage
                                 bot_name = self.app.bot.first_name or "Bot"
                                 media_list = list(zip(all_bytes, all_types))
-                                grid_bytes = create_grid_collage(media_list, watermark_text=bot_name)
+                                grid_result = create_grid_collage(media_list, watermark_text=bot_name)
                             except Exception as e:
                                 self.logger.error(f"Grid collage failed: {e}")
                         
-                        if grid_bytes:
-                            # Send as single grid photo
+                        if grid_result:
+                            grid_data, is_video = grid_result
                             from io import BytesIO
-                            buf = BytesIO(grid_bytes)
-                            buf.name = 'grid_collage.jpg'
-                            return await self.app.bot.send_photo(
-                                chat_id=chat_id, photo=buf,
-                                caption=text[:1024], parse_mode='HTML',
-                                reply_markup=reply_markup
-                            )
+                            buf = BytesIO(grid_data)
+                            if is_video:
+                                buf.name = 'grid_collage.mp4'
+                                return await self.app.bot.send_video(
+                                    chat_id=chat_id, video=buf,
+                                    caption=text[:1024], parse_mode='HTML',
+                                    reply_markup=reply_markup
+                                )
+                            else:
+                                buf.name = 'grid_collage.jpg'
+                                return await self.app.bot.send_photo(
+                                    chat_id=chat_id, photo=buf,
+                                    caption=text[:1024], parse_mode='HTML',
+                                    reply_markup=reply_markup
+                                )
                         else:
                             # Fallback: send as album
                             from io import BytesIO
@@ -9214,6 +9222,7 @@ class ChildBot:
                 
                 # Capture file_id from admin message for broadcast
                 grid_file_id = None
+                grid_type = None  # 'photo' or 'video'
                 all_file_ids = []
                 all_file_types = []
                 
@@ -9221,10 +9230,13 @@ class ChildBot:
                     # Single message (grid collage or single media)
                     if sent_msg.photo:
                         grid_file_id = sent_msg.photo[-1].file_id
+                        grid_type = 'photo'
                         all_file_ids = [grid_file_id]
                         all_file_types = ['photo']
                     elif sent_msg.video:
-                        all_file_ids = [sent_msg.video.file_id]
+                        grid_file_id = sent_msg.video.file_id
+                        grid_type = 'video'
+                        all_file_ids = [grid_file_id]
                         all_file_types = ['video']
                     elif sent_msg.document:
                         all_file_ids = [sent_msg.document.file_id]
@@ -9264,10 +9276,15 @@ class ChildBot:
                 for g in groups:
                     try:
                         if grid_file_id:
-                            # Grid collage: just send the same grid photo
-                            await self.app.bot.send_photo(
-                                chat_id=g['group_id'], photo=grid_file_id,
-                                caption=swapped[:1024], parse_mode='HTML')
+                            # Grid collage: send as video or photo based on type
+                            if grid_type == 'video':
+                                await self.app.bot.send_video(
+                                    chat_id=g['group_id'], video=grid_file_id,
+                                    caption=swapped[:1024], parse_mode='HTML')
+                            else:
+                                await self.app.bot.send_photo(
+                                    chat_id=g['group_id'], photo=grid_file_id,
+                                    caption=swapped[:1024], parse_mode='HTML')
                         elif len(all_file_ids) == 1:
                             fid, ft = all_file_ids[0], all_file_types[0]
                             if ft == 'photo':
