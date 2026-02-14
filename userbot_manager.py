@@ -81,6 +81,9 @@ class UserbotInstance:
         self.notify_callback = notify_callback  # async func(bot_id, promo_data)
         self.client = None
         self.running = False
+        # Album (media group) buffer: {grouped_id: [messages]}
+        self._album_buffer = {}
+        self._album_timers = {}  # {grouped_id: asyncio.Task}
     
     async def start(self):
         """Start the Telethon client and begin monitoring (with retry)"""
@@ -163,12 +166,125 @@ class UserbotInstance:
             if not matched:
                 return
             
-            # Get message text
-            text = event.message.message or ""
-            if not text and not event.message.media:
+            # Check if this is part of a media group (album)
+            grouped_id = event.message.grouped_id
+            
+            if grouped_id:
+                # Buffer album messages — wait for all to arrive
+                gid = str(grouped_id)
+                if gid not in self._album_buffer:
+                    self._album_buffer[gid] = []
+                self._album_buffer[gid].append(event)
+                
+                # Cancel previous timer for this group
+                if gid in self._album_timers:
+                    self._album_timers[gid].cancel()
+                
+                # Schedule processing after 2s (enough for all parts to arrive)
+                self._album_timers[gid] = asyncio.create_task(
+                    self._process_album_delayed(gid)
+                )
                 return
             
-            logger.info(f"[UB-{self.bot_id}] New msg from monitored channel {chat_id}: {text[:80]}...")
+            # Single message — process normally
+            await self._process_single_message(event)
+            
+        except Exception as e:
+            logger.error(f"[UB-{self.bot_id}] Error processing message: {e}")
+
+    async def _process_album_delayed(self, grouped_id):
+        """Wait for album to fully arrive, then process all media together"""
+        await asyncio.sleep(2)
+        try:
+            events_list = self._album_buffer.pop(grouped_id, [])
+            self._album_timers.pop(grouped_id, None)
+            
+            if not events_list:
+                return
+            
+            # Sort by message ID to maintain order
+            events_list.sort(key=lambda e: e.message.id)
+            
+            # Use the first message with caption as the main event
+            main_event = events_list[0]
+            caption = ''
+            for evt in events_list:
+                if evt.message.message:
+                    caption = evt.message.message
+                    main_event = evt
+                    break
+            
+            logger.info(f"[UB-{self.bot_id}] Album detected: {len(events_list)} media, caption: {caption[:60]}...")
+            
+            # Download ALL media from the album
+            all_media_bytes = []
+            all_media_types = []
+            
+            for evt in events_list:
+                if evt.message.media:
+                    from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+                    mt = None
+                    if isinstance(evt.message.media, MessageMediaPhoto):
+                        mt = 'photo'
+                    elif isinstance(evt.message.media, MessageMediaDocument):
+                        doc = evt.message.media.document
+                        mime = getattr(doc, 'mime_type', '') or ''
+                        mt = 'video' if mime.startswith('video/') else 'document'
+                    
+                    if mt:
+                        try:
+                            from io import BytesIO
+                            buffer = BytesIO()
+                            await self.client.download_media(evt.message, file=buffer)
+                            all_media_bytes.append(buffer.getvalue())
+                            all_media_types.append(mt)
+                        except Exception as e:
+                            logger.error(f"[UB-{self.bot_id}] Album media download failed: {e}")
+            
+            # Process as single promo with multiple media
+            await self._process_promo_data(
+                main_event, caption, all_media_bytes, all_media_types
+            )
+            
+        except Exception as e:
+            logger.error(f"[UB-{self.bot_id}] Album processing error: {e}")
+
+    async def _process_single_message(self, event):
+        """Process a single (non-album) message"""
+        text = event.message.message or ""
+        if not text and not event.message.media:
+            return
+        
+        # Download single media
+        all_media_bytes = []
+        all_media_types = []
+        
+        if event.message.media:
+            from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+            mt = None
+            if isinstance(event.message.media, MessageMediaPhoto):
+                mt = 'photo'
+            elif isinstance(event.message.media, MessageMediaDocument):
+                doc = event.message.media.document
+                mime = getattr(doc, 'mime_type', '') or ''
+                mt = 'video' if mime.startswith('video/') else 'document'
+            
+            if mt:
+                try:
+                    from io import BytesIO
+                    buffer = BytesIO()
+                    await self.client.download_media(event.message, file=buffer)
+                    all_media_bytes.append(buffer.getvalue())
+                    all_media_types.append(mt)
+                except Exception as e:
+                    logger.error(f"[UB-{self.bot_id}] Media download failed: {e}")
+        
+        await self._process_promo_data(event, text, all_media_bytes, all_media_types)
+
+    async def _process_promo_data(self, event, text, all_media_bytes, all_media_types):
+        """Common promo processing for both single messages and albums"""
+        try:
+            logger.info(f"[UB-{self.bot_id}] Processing promo: {len(all_media_bytes)} media, text: {text[:80]}...")
             
             # Strip custom/premium emoji entities
             if event.message.entities and text:
@@ -216,37 +332,13 @@ class UserbotInstance:
             
             # Get channel info
             chat = await event.get_chat()
-            source_name = getattr(chat, 'title', None) or getattr(chat, 'username', None) or str(chat_id)
+            source_name = getattr(chat, 'title', None) or getattr(chat, 'username', None) or str(event.chat_id)
             
-            # Download media to bytes
-            media_bytes = None
-            media_type = None
-            media_file_ids = []
-            media_types = []
-            
-            if event.message.media:
-                from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
-                
-                if isinstance(event.message.media, MessageMediaPhoto):
-                    media_type = 'photo'
-                elif isinstance(event.message.media, MessageMediaDocument):
-                    doc = event.message.media.document
-                    mime = getattr(doc, 'mime_type', '') or ''
-                    if mime.startswith('video/'):
-                        media_type = 'video'
-                    else:
-                        media_type = 'document'
-                
-                if media_type:
-                    try:
-                        from io import BytesIO
-                        buffer = BytesIO()
-                        await self.client.download_media(event.message, file=buffer)
-                        media_bytes = buffer.getvalue()
-                        media_types.append(media_type)
-                        media_file_ids.append(f'{media_type}_pending')
-                    except Exception as e:
-                        logger.error(f"[UB-{self.bot_id}] Media download failed: {e}")
+            # Use first media as primary (for notification)
+            media_bytes = all_media_bytes[0] if all_media_bytes else None
+            media_type = all_media_types[0] if all_media_types else None
+            media_file_ids = [f'{mt}_pending' for mt in all_media_types]
+            media_types = all_media_types
             
             # Save to DB
             session_data = self.db.get_userbot_session(self.bot_id)
@@ -267,6 +359,10 @@ class UserbotInstance:
                 'auto_mode': auto_mode,
                 'media_bytes': media_bytes,
                 'media_type': media_type,
+                # Include ALL media bytes for album support
+                'all_media_bytes': all_media_bytes,
+                'all_media_types': all_media_types,
+                'is_album': len(all_media_bytes) > 1,
             }
             
             # Save promo record
@@ -284,13 +380,12 @@ class UserbotInstance:
             # Notify via callback — fire as background task so handler
             # returns immediately and doesn't block subsequent events
             if self.notify_callback:
-                import asyncio
                 asyncio.create_task(self._safe_notify(promo_data))
             
-            logger.info(f"[UB-{self.bot_id}] Promo forwarded: company={company_name or 'PENDING'} from {source_name}")
+            logger.info(f"[UB-{self.bot_id}] Promo forwarded: company={company_name or 'PENDING'} from {source_name} ({len(all_media_bytes)} media)")
             
         except Exception as e:
-            logger.error(f"[UB-{self.bot_id}] Error processing message: {e}")
+            logger.error(f"[UB-{self.bot_id}] Error processing promo: {e}")
     
     async def _safe_notify(self, promo_data):
         """Wrapper to safely call notify_callback without crashing"""

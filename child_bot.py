@@ -9098,7 +9098,38 @@ class ChildBot:
                 """Send text + media to a chat. Returns sent message for file_id capture."""
                 reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
                 try:
-                    if media_bytes and media_type in ('photo', 'video', 'document'):
+                    is_album = promo_data.get('is_album', False)
+                    all_bytes = promo_data.get('all_media_bytes', [])
+                    all_types = promo_data.get('all_media_types', [])
+                    
+                    if is_album and len(all_bytes) > 1:
+                        # Send as media group (album)
+                        from io import BytesIO
+                        from telegram import InputMediaPhoto, InputMediaVideo, InputMediaDocument
+                        media_group = []
+                        for i, (mb, mt) in enumerate(zip(all_bytes, all_types)):
+                            buf = BytesIO(mb)
+                            ext = {'photo': '.jpg', 'video': '.mp4', 'document': '.bin'}
+                            buf.name = f'promo_{i}{ext.get(mt, ".bin")}'
+                            cap = text[:1024] if i == 0 else None
+                            if mt == 'photo':
+                                media_group.append(InputMediaPhoto(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                            elif mt == 'video':
+                                media_group.append(InputMediaVideo(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                            else:
+                                media_group.append(InputMediaDocument(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                        
+                        sent_msgs = await self.app.bot.send_media_group(chat_id=chat_id, media=media_group)
+                        
+                        # Send keyboard as separate message if needed
+                        if reply_markup:
+                            await self.app.bot.send_message(
+                                chat_id=chat_id, text="👆 Pilih tindakan:",
+                                reply_markup=reply_markup
+                            )
+                        return sent_msgs[0] if sent_msgs else None
+                    
+                    elif media_bytes and media_type in ('photo', 'video', 'document'):
                         from io import BytesIO
                         buf = BytesIO(media_bytes)
                         ext = {'photo': '.jpg', 'video': '.mp4', 'document': '.bin'}
