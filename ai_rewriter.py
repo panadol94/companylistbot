@@ -249,7 +249,7 @@ async def ai_chat(user_message: str, companies: list, chat_history: list = None,
         "model": GROQ_MODEL,
         "messages": messages,
         "temperature": 0.8,
-        "max_tokens": 200,
+        "max_tokens": 500,
     }
 
     headers = {

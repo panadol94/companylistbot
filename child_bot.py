@@ -3495,7 +3495,7 @@ class ChildBot:
         
         await update.message.reply_text(
             f"✅ **AI Personality saved!**\n\n"
-            f"Prompt:\n`{prompt[:200]}{'...' if len(prompt) > 200 else ''}`",
+            f"Prompt:\n`{prompt[:500]}{'...' if len(prompt) > 500 else ''}`",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🤖 AI Settings", callback_data="ai_settings")],
