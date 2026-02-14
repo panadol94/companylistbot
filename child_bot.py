@@ -3155,9 +3155,12 @@ class ChildBot:
         
         keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_settings")])
         
-        await update.callback_query.message.edit_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
-        )
+        try:
+            await update.callback_query.message.edit_text(
+                text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+            )
+        except Exception:
+            pass  # Status unchanged — ignore "Message is not modified"
     
     async def wa_connect(self, update: Update):
         """Initiate WhatsApp connection — get QR from Baileys service"""
