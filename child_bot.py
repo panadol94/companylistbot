@@ -3424,7 +3424,7 @@ class ChildBot:
                 [InlineKeyboardButton("💳 Withdrawals", callback_data="admin_withdrawals"), InlineKeyboardButton(referral_btn_text, callback_data="toggle_referral")],
                 [InlineKeyboardButton(livegram_btn_text, callback_data="toggle_livegram"), InlineKeyboardButton("🔁 Manage Recurring", callback_data="manage_recurring")],
                 [InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu"), InlineKeyboardButton("📊 Analytics", callback_data="show_analytics")],
-                [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")],
+                [InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")],
                 [InlineKeyboardButton("🛡️ Group Management", callback_data="group_mgmt"), InlineKeyboardButton(ai_chat_btn_text, callback_data="toggle_ai_chat")],
                 [InlineKeyboardButton("🤖 Userbot", callback_data="userbot_hub"), InlineKeyboardButton("🧠 AI Settings", callback_data="ai_settings")],
                 [InlineKeyboardButton("📱 WhatsApp Monitor", callback_data="wa_hub")]
