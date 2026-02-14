@@ -129,7 +129,9 @@ async function connectBot(botId) {
                 || msg.message?.videoMessage?.caption
                 || '';
 
-            if (!text || text.length < 5) continue;  // Skip very short / empty
+            const hasMedia = !!(msg.message?.imageMessage || msg.message?.videoMessage);
+
+            if (!hasMedia && (!text || text.length < 5)) continue;  // Skip very short text-only msgs
 
             // Get group info
             let groupName = msg.key.remoteJid;
@@ -157,7 +159,7 @@ async function connectBot(botId) {
                         sender: sender,
                         text: text,
                         timestamp: msg.messageTimestamp,
-                        has_media: !!(msg.message?.imageMessage || msg.message?.videoMessage),
+                        has_media: hasMedia,
                     })
                 });
 

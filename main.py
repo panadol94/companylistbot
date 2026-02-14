@@ -452,8 +452,8 @@ async def wa_promo_received(request: Request):
         text = data.get('text', '')
         group_name = data.get('group_name', 'Unknown Group')
         
-        if not bot_id or not text:
-            return {"success": False, "error": "Missing bot_id or text"}
+        if not bot_id or (not text and not data.get('has_media')):
+            return {"success": False, "error": "Missing bot_id or content"}
         
         if not bot_manager:
             return {"success": False, "error": "Platform not ready"}
@@ -467,15 +467,25 @@ async def wa_promo_received(request: Request):
         from userbot_manager import match_company_in_text
         matched_company = None
         
+        # Priority 1: Match by group name (most reliable)
         for company in companies:
             keywords = company.get('keywords', '')
-            if match_company_in_text(company['name'], text, keywords):
+            if match_company_in_text(company['name'], group_name, keywords):
                 matched_company = company
-                logger.info(f"📱 WA Layer 1 match: '{company['name']}' in group '{group_name}'")
+                logger.info(f"📱 WA Layer 1 match (group name): '{company['name']}' in group '{group_name}'")
                 break
         
-        # Layer 2: AI detection (if Layer 1 fails)
-        if not matched_company:
+        # Priority 2: Match by message text
+        if not matched_company and text:
+            for company in companies:
+                keywords = company.get('keywords', '')
+                if match_company_in_text(company['name'], text, keywords):
+                    matched_company = company
+                    logger.info(f"📱 WA Layer 1 match (text): '{company['name']}' in group '{group_name}'")
+                    break
+        
+        # Layer 2: AI detection (if Layer 1 fails and there's text)
+        if not matched_company and text:
             try:
                 from ai_rewriter import detect_company_ai
                 company_names = [c['name'] for c in companies]
