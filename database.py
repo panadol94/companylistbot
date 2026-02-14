@@ -608,9 +608,15 @@ class Database:
     def add_company(self, bot_id, name, description, media_file_id, media_type, button_text, button_url):
         with self.lock:
             conn = self.get_connection()
+            # Get next display_order position
+            max_order = conn.execute(
+                "SELECT COALESCE(MAX(display_order), -1) FROM companies WHERE bot_id = ?",
+                (bot_id,)
+            ).fetchone()[0]
+            next_order = max_order + 1
             conn.execute(
-                "INSERT INTO companies (bot_id, name, description, media_file_id, media_type, button_text, button_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (bot_id, name, description, media_file_id, media_type, button_text, button_url)
+                "INSERT INTO companies (bot_id, name, description, media_file_id, media_type, button_text, button_url, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (bot_id, name, description, media_file_id, media_type, button_text, button_url, next_order)
             )
             conn.commit()
             company_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
@@ -675,7 +681,21 @@ class Database:
         with self.lock:
             conn = self.get_connection()
             
-            # Get current position
+            # First: normalize display_order so every company has a unique sequential value
+            # This fixes legacy data where all companies have display_order=0
+            all_companies = conn.execute(
+                "SELECT id FROM companies WHERE bot_id = ? ORDER BY display_order ASC, id ASC",
+                (bot_id,)
+            ).fetchall()
+            
+            for idx, row in enumerate(all_companies):
+                conn.execute(
+                    "UPDATE companies SET display_order = ? WHERE id = ?",
+                    (idx, row['id'])
+                )
+            conn.commit()
+            
+            # Now get the current (normalized) position
             current = conn.execute(
                 "SELECT display_order FROM companies WHERE id = ? AND bot_id = ?",
                 (company_id, bot_id)
@@ -685,9 +705,13 @@ class Database:
                 conn.close()
                 return False
                 
-            old_position = current['display_order'] or 0
+            old_position = current['display_order']
             # Convert 1-indexed to 0-indexed
             new_pos_idx = new_position - 1
+            
+            if new_pos_idx == old_position:
+                conn.close()
+                return True  # No change needed
             
             # Shift other companies
             if new_pos_idx > old_position:

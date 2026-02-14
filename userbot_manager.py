@@ -236,10 +236,30 @@ class UserbotInstance:
                             from io import BytesIO
                             buffer = BytesIO()
                             await self.client.download_media(evt.message, file=buffer)
-                            all_media_bytes.append(buffer.getvalue())
-                            all_media_types.append(mt)
+                            data = buffer.getvalue()
+                            if data:
+                                all_media_bytes.append(data)
+                                all_media_types.append(mt)
+                            else:
+                                logger.warning(f"[UB-{self.bot_id}] Album media download empty for msg {evt.message.id} (possibly restricted)")
                         except Exception as e:
-                            logger.error(f"[UB-{self.bot_id}] Album media download failed: {e}")
+                            err_str = str(e).lower()
+                            if 'protected' in err_str or 'forward' in err_str or 'restricted' in err_str or 'savecontent' in err_str:
+                                logger.warning(f"[UB-{self.bot_id}] Album media restricted, trying direct download: {e}")
+                                try:
+                                    import tempfile, os
+                                    tmp = tempfile.mkdtemp()
+                                    path = await self.client.download_media(evt.message, file=tmp)
+                                    if path and os.path.exists(path):
+                                        with open(path, 'rb') as f:
+                                            all_media_bytes.append(f.read())
+                                        all_media_types.append(mt)
+                                        os.remove(path)
+                                    os.rmdir(tmp)
+                                except Exception as e2:
+                                    logger.error(f"[UB-{self.bot_id}] Album restricted fallback also failed: {e2}")
+                            else:
+                                logger.error(f"[UB-{self.bot_id}] Album media download failed: {e}")
             
             # Process as single promo with multiple media
             await self._process_promo_data(
@@ -274,10 +294,30 @@ class UserbotInstance:
                     from io import BytesIO
                     buffer = BytesIO()
                     await self.client.download_media(event.message, file=buffer)
-                    all_media_bytes.append(buffer.getvalue())
-                    all_media_types.append(mt)
+                    data = buffer.getvalue()
+                    if data:
+                        all_media_bytes.append(data)
+                        all_media_types.append(mt)
+                    else:
+                        logger.warning(f"[UB-{self.bot_id}] Media download empty for msg {event.message.id} (possibly restricted)")
                 except Exception as e:
-                    logger.error(f"[UB-{self.bot_id}] Media download failed: {e}")
+                    err_str = str(e).lower()
+                    if 'protected' in err_str or 'forward' in err_str or 'restricted' in err_str or 'savecontent' in err_str:
+                        logger.warning(f"[UB-{self.bot_id}] Media restricted, trying direct download: {e}")
+                        try:
+                            import tempfile, os
+                            tmp = tempfile.mkdtemp()
+                            path = await self.client.download_media(event.message, file=tmp)
+                            if path and os.path.exists(path):
+                                with open(path, 'rb') as f:
+                                    all_media_bytes.append(f.read())
+                                all_media_types.append(mt)
+                                os.remove(path)
+                            os.rmdir(tmp)
+                        except Exception as e2:
+                            logger.error(f"[UB-{self.bot_id}] Restricted fallback also failed: {e2}")
+                    else:
+                        logger.error(f"[UB-{self.bot_id}] Media download failed: {e}")
         
         await self._process_promo_data(event, text, all_media_bytes, all_media_types)
 
@@ -746,9 +786,29 @@ class UserbotInstance:
 
                 if result['media_type']:
                     tmp_dir = tempfile.mkdtemp()
-                    path = await self.client.download_media(msg, file=tmp_dir)
-                    if path:
-                        result['media_path'] = path
+                    try:
+                        path = await self.client.download_media(msg, file=tmp_dir)
+                        if path:
+                            result['media_path'] = path
+                    except Exception as dl_err:
+                        err_str = str(dl_err).lower()
+                        if 'protected' in err_str or 'forward' in err_str or 'restricted' in err_str or 'savecontent' in err_str:
+                            logger.warning(f"[UB-{self.bot_id}] get_message_content: restricted media, trying BytesIO: {dl_err}")
+                            try:
+                                from io import BytesIO
+                                buf = BytesIO()
+                                await self.client.download_media(msg, file=buf)
+                                media_bytes = buf.getvalue()
+                                if media_bytes:
+                                    ext = 'jpg' if result['media_type'] == 'photo' else 'mp4' if result['media_type'] == 'video' else 'bin'
+                                    fpath = os.path.join(tmp_dir, f'media.{ext}')
+                                    with open(fpath, 'wb') as f:
+                                        f.write(media_bytes)
+                                    result['media_path'] = fpath
+                            except Exception as e2:
+                                logger.error(f"[UB-{self.bot_id}] get_message_content restricted fallback failed: {e2}")
+                        else:
+                            logger.error(f"[UB-{self.bot_id}] get_message_content download failed: {dl_err}")
 
             return result
 

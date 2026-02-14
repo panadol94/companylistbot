@@ -2001,6 +2001,10 @@ class ChildBot:
         elif data.startswith("rt_pick_"):
             parts = data.split("_")
             await self._rt_pick_company(update, int(parts[2]), int(parts[3]))
+        # Userbot Hub / Promo Monitor / Clone — route so they work from any ConversationHandler fallback
+        elif data == "userbot_hub": await self.userbot_hub_menu(update, context)
+        elif data == "ub_menu": await self.ub_menu(update, context)
+        elif data == "clone_menu": await self.clone_media_menu(update, context)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -3098,7 +3102,17 @@ class ChildBot:
 
     async def execute_reorder(self, update: Update, company_id: int, new_position: int):
         """Execute the reorder operation"""
+        # Debug: log before state
+        before = self.db.get_companies(self.bot_id)
+        self.logger.info(f"🔢 REORDER: company_id={company_id}, new_position={new_position}")
+        self.logger.info(f"🔢 BEFORE: {[(c['id'], c['name'], c.get('display_order')) for c in before]}")
+        
         success = self.db.update_company_position(company_id, new_position, self.bot_id)
+        
+        # Debug: log after state
+        after = self.db.get_companies(self.bot_id)
+        self.logger.info(f"🔢 AFTER:  {[(c['id'], c['name'], c.get('display_order')) for c in after]}")
+        self.logger.info(f"🔢 RESULT: {'SUCCESS' if success else 'FAILED'}")
         
         if success:
             await update.callback_query.answer("✅ Position updated!")
@@ -7413,6 +7427,16 @@ class ChildBot:
             # Forward message content to ALL targets
             success_count = 0
             
+            # Helper: download media bytes for restricted content fallback
+            async def _download_media_bytes(file_obj):
+                """Download media to bytes via Bot API for re-upload."""
+                try:
+                    tg_file = await file_obj.get_file()
+                    return await tg_file.download_as_bytearray()
+                except Exception as dl_err:
+                    self.logger.warning(f"⚠️ Media download failed: {dl_err}")
+                    return None
+            
             for tid in target_ids:
                 try:
                     if message.text:
@@ -7425,51 +7449,140 @@ class ChildBot:
                         )
                     elif message.photo:
                         # Photo message
-                        await context.bot.send_photo(
-                            chat_id=tid,
-                            photo=message.photo[-1].file_id,  # Largest photo
-                            caption=message.caption,
-                            caption_entities=message.caption_entities
-                        )
+                        try:
+                            await context.bot.send_photo(
+                                chat_id=tid,
+                                photo=message.photo[-1].file_id,
+                                caption=message.caption,
+                                caption_entities=message.caption_entities
+                            )
+                        except Exception as e:
+                            err_s = str(e).lower()
+                            if 'forward' in err_s or 'restrict' in err_s or 'protect' in err_s:
+                                media_bytes = await _download_media_bytes(message.photo[-1])
+                                if media_bytes:
+                                    await context.bot.send_photo(
+                                        chat_id=tid, photo=bytes(media_bytes),
+                                        caption=message.caption,
+                                        caption_entities=message.caption_entities
+                                    )
+                                else:
+                                    raise
+                            else:
+                                raise
                     elif message.video:
                         # Video message
-                        await context.bot.send_video(
-                            chat_id=tid,
-                            video=message.video.file_id,
-                            caption=message.caption,
-                            caption_entities=message.caption_entities
-                        )
+                        try:
+                            await context.bot.send_video(
+                                chat_id=tid,
+                                video=message.video.file_id,
+                                caption=message.caption,
+                                caption_entities=message.caption_entities
+                            )
+                        except Exception as e:
+                            err_s = str(e).lower()
+                            if 'forward' in err_s or 'restrict' in err_s or 'protect' in err_s:
+                                media_bytes = await _download_media_bytes(message.video)
+                                if media_bytes:
+                                    await context.bot.send_video(
+                                        chat_id=tid, video=bytes(media_bytes),
+                                        caption=message.caption,
+                                        caption_entities=message.caption_entities
+                                    )
+                                else:
+                                    raise
+                            else:
+                                raise
                     elif message.document:
                         # Document message
-                        await context.bot.send_document(
-                            chat_id=tid,
-                            document=message.document.file_id,
-                            caption=message.caption,
-                            caption_entities=message.caption_entities
-                        )
+                        try:
+                            await context.bot.send_document(
+                                chat_id=tid,
+                                document=message.document.file_id,
+                                caption=message.caption,
+                                caption_entities=message.caption_entities
+                            )
+                        except Exception as e:
+                            err_s = str(e).lower()
+                            if 'forward' in err_s or 'restrict' in err_s or 'protect' in err_s:
+                                media_bytes = await _download_media_bytes(message.document)
+                                if media_bytes:
+                                    await context.bot.send_document(
+                                        chat_id=tid, document=bytes(media_bytes),
+                                        caption=message.caption,
+                                        caption_entities=message.caption_entities
+                                    )
+                                else:
+                                    raise
+                            else:
+                                raise
                     elif message.animation:
                         # GIF/Animation message
-                        await context.bot.send_animation(
-                            chat_id=tid,
-                            animation=message.animation.file_id,
-                            caption=message.caption,
-                            caption_entities=message.caption_entities
-                        )
+                        try:
+                            await context.bot.send_animation(
+                                chat_id=tid,
+                                animation=message.animation.file_id,
+                                caption=message.caption,
+                                caption_entities=message.caption_entities
+                            )
+                        except Exception as e:
+                            err_s = str(e).lower()
+                            if 'forward' in err_s or 'restrict' in err_s or 'protect' in err_s:
+                                media_bytes = await _download_media_bytes(message.animation)
+                                if media_bytes:
+                                    await context.bot.send_animation(
+                                        chat_id=tid, animation=bytes(media_bytes),
+                                        caption=message.caption,
+                                        caption_entities=message.caption_entities
+                                    )
+                                else:
+                                    raise
+                            else:
+                                raise
                     elif message.audio:
                         # Audio message
-                        await context.bot.send_audio(
-                            chat_id=tid,
-                            audio=message.audio.file_id,
-                            caption=message.caption,
-                            caption_entities=message.caption_entities
-                        )
+                        try:
+                            await context.bot.send_audio(
+                                chat_id=tid,
+                                audio=message.audio.file_id,
+                                caption=message.caption,
+                                caption_entities=message.caption_entities
+                            )
+                        except Exception as e:
+                            err_s = str(e).lower()
+                            if 'forward' in err_s or 'restrict' in err_s or 'protect' in err_s:
+                                media_bytes = await _download_media_bytes(message.audio)
+                                if media_bytes:
+                                    await context.bot.send_audio(
+                                        chat_id=tid, audio=bytes(media_bytes),
+                                        caption=message.caption,
+                                        caption_entities=message.caption_entities
+                                    )
+                                else:
+                                    raise
+                            else:
+                                raise
                     elif message.voice:
                         # Voice message
-                        await context.bot.send_voice(
-                            chat_id=tid,
-                            voice=message.voice.file_id,
-                            caption=message.caption
-                        )
+                        try:
+                            await context.bot.send_voice(
+                                chat_id=tid,
+                                voice=message.voice.file_id,
+                                caption=message.caption
+                            )
+                        except Exception as e:
+                            err_s = str(e).lower()
+                            if 'forward' in err_s or 'restrict' in err_s or 'protect' in err_s:
+                                media_bytes = await _download_media_bytes(message.voice)
+                                if media_bytes:
+                                    await context.bot.send_voice(
+                                        chat_id=tid, voice=bytes(media_bytes),
+                                        caption=message.caption
+                                    )
+                                else:
+                                    raise
+                            else:
+                                raise
                     elif message.sticker:
                         # Sticker
                         await context.bot.send_sticker(
@@ -7477,8 +7590,15 @@ class ChildBot:
                             sticker=message.sticker.file_id
                         )
                     else:
-                        # Fallback - try to copy message
-                        await message.copy(chat_id=tid)
+                        # Fallback - send text if available
+                        fallback_text = message.caption or message.text
+                        if fallback_text:
+                            await context.bot.send_message(
+                                chat_id=tid,
+                                text=fallback_text,
+                                entities=message.entities or message.caption_entities,
+                                parse_mode=None
+                            )
                     
                     success_count += 1
                     
