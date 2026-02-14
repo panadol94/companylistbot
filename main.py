@@ -541,6 +541,36 @@ async def wa_status_update(request: Request):
         bot_manager.db.save_whatsapp_session(bot_id, status=status)
         logger.info(f"📱 WA status update: bot {bot_id} → {status}")
         
+        # Notify bot admins via Telegram
+        try:
+            # Find bot instance by bot_id
+            child = None
+            for token, bot in bot_manager.bots.items():
+                if bot.bot_id == bot_id:
+                    child = bot
+                    break
+            
+            if child:
+                admins = child.db.get_admins(bot_id)
+                if status == 'connected':
+                    msg = "✅ <b>WhatsApp Connected!</b>\n\n📱 WhatsApp monitor aktif. Semua mesej group akan dimonitor untuk company detection."
+                elif status == 'disconnected':
+                    msg = "❌ <b>WhatsApp Disconnected</b>\n\nSambungan WhatsApp terputus. Pergi ke /settings → 📱 WhatsApp Monitor untuk reconnect."
+                else:
+                    msg = f"📱 WhatsApp status: <b>{status}</b>"
+                
+                for admin_id in admins:
+                    try:
+                        await child.app.bot.send_message(
+                            chat_id=admin_id,
+                            text=msg,
+                            parse_mode='HTML'
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to notify admin {admin_id}: {e}")
+        except Exception as e:
+            logger.error(f"WA admin notification error: {e}")
+        
         return {"success": True}
     except Exception as e:
         logger.error(f"WA status error: {e}")
