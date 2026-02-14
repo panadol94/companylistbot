@@ -430,6 +430,23 @@ class UserbotInstance:
             else:
                 # Public channel @username or t.me/username
                 username = channel_link.replace('https://t.me/', '').replace('t.me/', '').replace('@', '').strip('/')
+                
+                # Detect bot links (usernames ending with 'bot')
+                if username.lower().endswith('bot'):
+                    # Bot — use get_entity + /start instead of JoinChannelRequest
+                    entity = await self.client.get_entity(username)
+                    # Send /start to initiate conversation
+                    try:
+                        await self.client.send_message(entity, '/start')
+                    except Exception:
+                        pass  # OK if /start fails, entity is still resolved
+                    return {
+                        'id': str(entity.id),
+                        'title': getattr(entity, 'first_name', None) or getattr(entity, 'title', username),
+                        'username': getattr(entity, 'username', None),
+                        'is_bot': True
+                    }
+                
                 result = await self.client(JoinChannelRequest(username))
                 chat = result.chats[0]
             

@@ -9064,15 +9064,25 @@ class ChildBot:
         result = await self.userbot_manager.join_channel_for_bot(self.bot_id, link)
 
         if result:
+            is_bot = result.get('is_bot', False)
             self.db.add_monitored_channel(
                 self.bot_id,
                 channel_id=result['id'],
                 channel_title=result['title'],
                 channel_username=result.get('username')
             )
+            if is_bot:
+                success_msg = (
+                    f"🤖 Bot **{result['title']}** ditambah!\n"
+                    f"Bot akan dimonitor untuk mesej."
+                )
+            else:
+                success_msg = (
+                    f"✅ Joined **{result['title']}**!\n"
+                    f"Channel akan dimonitor untuk promo."
+                )
             await update.message.reply_text(
-                f"✅ Joined **{result['title']}**!\n"
-                f"Channel akan dimonitor untuk promo.",
+                success_msg,
                 parse_mode='Markdown',
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("➕ Add Another", callback_data="ub_add_ch")],
