@@ -2621,6 +2621,21 @@ class Database:
             conn.commit()
             conn.close()
 
+    def set_grid_mode(self, bot_id, grid_mode):
+        """Set grid collage mode on/off"""
+        with self.lock:
+            conn = self.get_connection()
+            try:
+                # Lazy migration: add column if not exists
+                try:
+                    conn.execute("ALTER TABLE userbot_sessions ADD COLUMN grid_mode INTEGER DEFAULT 1")
+                except Exception:
+                    pass
+                conn.execute("UPDATE userbot_sessions SET grid_mode = ? WHERE bot_id = ?", (1 if grid_mode else 0, bot_id))
+                conn.commit()
+            finally:
+                conn.close()
+
     def update_userbot_session_string(self, bot_id, session_string):
         """Update session string after auth"""
         with self.lock:

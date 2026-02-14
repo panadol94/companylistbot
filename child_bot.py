@@ -8061,8 +8061,10 @@ class ChildBot:
         if session and session.get('session_string'):
             is_active = session.get('is_active', 0)
             auto_mode = session.get('auto_mode', 0)
+            grid_mode = session.get('grid_mode', 1)  # Default ON
             status_text = "🟢 Active" if is_active else "🔴 Inactive"
             mode_text = "Auto" if auto_mode else "Manual"
+            grid_text = "🖼️ Grid ON" if grid_mode else "📎 Grid OFF"
             phone = session.get('phone', '***')
 
             text = (
@@ -8070,6 +8072,7 @@ class ChildBot:
                 f"📱 Phone: `{phone}`\n"
                 f"📡 Status: {status_text}\n"
                 f"⚙️ Mode: {mode_text}\n"
+                f"🖼️ Grid Collage: {grid_text}\n"
                 f"📢 Channels/Groups: {len(channels)} monitored"
             )
             keyboard = [
@@ -8077,6 +8080,7 @@ class ChildBot:
                     InlineKeyboardButton(f"{'🔴 OFF' if is_active else '🟢 ON'}", callback_data="ub_toggle"),
                     InlineKeyboardButton(f"⚙️ {'Auto' if auto_mode else 'Manual'}", callback_data="ub_mode")
                 ],
+                [InlineKeyboardButton(f"{grid_text}", callback_data="ub_grid")],
                 [InlineKeyboardButton("📢 Manage Channels/Groups", callback_data="ub_channels")],
                 [InlineKeyboardButton("📥 Scan 1 Bulan", callback_data="ub_scan_history")],
                 [InlineKeyboardButton("« Back", callback_data="userbot_hub")]
@@ -8146,6 +8150,13 @@ class ChildBot:
             if session:
                 new_mode = not session.get('auto_mode', 0)
                 self.db.set_userbot_mode(self.bot_id, new_mode)
+            return await self.ub_menu(update, context)
+
+        elif data == "ub_grid":
+            session = self.db.get_userbot_session(self.bot_id)
+            if session:
+                new_grid = not session.get('grid_mode', 1)
+                self.db.set_grid_mode(self.bot_id, new_grid)
             return await self.ub_menu(update, context)
 
         elif data == "ub_setup":
@@ -9107,31 +9118,54 @@ class ChildBot:
                     all_types = promo_data.get('all_media_types', [])
                     
                     if is_album and len(all_bytes) > 1:
-                        # Send as media group (album)
-                        from io import BytesIO
-                        from telegram import InputMediaPhoto, InputMediaVideo, InputMediaDocument
-                        media_group = []
-                        for i, (mb, mt) in enumerate(zip(all_bytes, all_types)):
-                            buf = BytesIO(mb)
-                            ext = {'photo': '.jpg', 'video': '.mp4', 'document': '.bin'}
-                            buf.name = f'promo_{i}{ext.get(mt, ".bin")}'
-                            cap = text[:1024] if i == 0 else None
-                            if mt == 'photo':
-                                media_group.append(InputMediaPhoto(media=buf, caption=cap, parse_mode='HTML' if cap else None))
-                            elif mt == 'video':
-                                media_group.append(InputMediaVideo(media=buf, caption=cap, parse_mode='HTML' if cap else None))
-                            else:
-                                media_group.append(InputMediaDocument(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                        # Check if grid mode is enabled
+                        session = self.db.get_userbot_session(self.bot_id)
+                        grid_mode = session.get('grid_mode', 1) if session else 1
                         
-                        sent_msgs = await self.app.bot.send_media_group(chat_id=chat_id, media=media_group)
+                        grid_bytes = None
+                        if grid_mode:
+                            # Create grid collage from all media
+                            try:
+                                from media_grid import create_grid_collage
+                                bot_name = self.app.bot.first_name or "Bot"
+                                media_list = list(zip(all_bytes, all_types))
+                                grid_bytes = create_grid_collage(media_list, watermark_text=bot_name)
+                            except Exception as e:
+                                self.logger.error(f"Grid collage failed: {e}")
                         
-                        # Send keyboard as separate message if needed
-                        if reply_markup:
-                            await self.app.bot.send_message(
-                                chat_id=chat_id, text="👆 Pilih tindakan:",
+                        if grid_bytes:
+                            # Send as single grid photo
+                            from io import BytesIO
+                            buf = BytesIO(grid_bytes)
+                            buf.name = 'grid_collage.jpg'
+                            return await self.app.bot.send_photo(
+                                chat_id=chat_id, photo=buf,
+                                caption=text[:1024], parse_mode='HTML',
                                 reply_markup=reply_markup
                             )
-                        return sent_msgs if sent_msgs else None
+                        else:
+                            # Fallback: send as album
+                            from io import BytesIO
+                            from telegram import InputMediaPhoto, InputMediaVideo, InputMediaDocument
+                            media_group = []
+                            for i, (mb, mt) in enumerate(zip(all_bytes, all_types)):
+                                buf = BytesIO(mb)
+                                ext = {'photo': '.jpg', 'video': '.mp4', 'document': '.bin'}
+                                buf.name = f'promo_{i}{ext.get(mt, ".bin")}'
+                                cap = text[:1024] if i == 0 else None
+                                if mt == 'photo':
+                                    media_group.append(InputMediaPhoto(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                                elif mt == 'video':
+                                    media_group.append(InputMediaVideo(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                                else:
+                                    media_group.append(InputMediaDocument(media=buf, caption=cap, parse_mode='HTML' if cap else None))
+                            sent_msgs = await self.app.bot.send_media_group(chat_id=chat_id, media=media_group)
+                            if reply_markup:
+                                await self.app.bot.send_message(
+                                    chat_id=chat_id, text="👆 Pilih tindakan:",
+                                    reply_markup=reply_markup
+                                )
+                            return sent_msgs if sent_msgs else None
                     
                     elif media_bytes and media_type in ('photo', 'video', 'document'):
                         from io import BytesIO
@@ -9178,13 +9212,25 @@ class ChildBot:
                 )
                 sent_msg = await send_with_media(owner_id, admin_caption)
                 
-                # Capture file_id(s) from admin message for broadcast
+                # Capture file_id from admin message for broadcast
+                grid_file_id = None
                 all_file_ids = []
                 all_file_types = []
-                is_album = promo_data.get('is_album', False)
                 
-                if is_album and isinstance(sent_msg, (list, tuple)):
-                    # Album: sent_msg is list/tuple of messages from send_media_group
+                if sent_msg and not isinstance(sent_msg, (list, tuple)):
+                    # Single message (grid collage or single media)
+                    if sent_msg.photo:
+                        grid_file_id = sent_msg.photo[-1].file_id
+                        all_file_ids = [grid_file_id]
+                        all_file_types = ['photo']
+                    elif sent_msg.video:
+                        all_file_ids = [sent_msg.video.file_id]
+                        all_file_types = ['video']
+                    elif sent_msg.document:
+                        all_file_ids = [sent_msg.document.file_id]
+                        all_file_types = ['document']
+                elif sent_msg and isinstance(sent_msg, (list, tuple)):
+                    # Fallback: album (tuple from send_media_group)
                     for msg in sent_msg:
                         if msg and msg.photo:
                             all_file_ids.append(msg.photo[-1].file_id)
@@ -9195,18 +9241,8 @@ class ChildBot:
                         elif msg and msg.document:
                             all_file_ids.append(msg.document.file_id)
                             all_file_types.append('document')
-                elif sent_msg and not isinstance(sent_msg, (list, tuple)):
-                    if sent_msg.photo:
-                        all_file_ids.append(sent_msg.photo[-1].file_id)
-                        all_file_types.append('photo')
-                    elif sent_msg.video:
-                        all_file_ids.append(sent_msg.video.file_id)
-                        all_file_types.append('video')
-                    elif sent_msg.document:
-                        all_file_ids.append(sent_msg.document.file_id)
-                        all_file_types.append('document')
                 
-                # Update DB with ALL file_ids
+                # Update DB with file_ids
                 if all_file_ids:
                     try:
                         import json
@@ -9227,8 +9263,21 @@ class ChildBot:
                 bc_count = 0
                 for g in groups:
                     try:
-                        if len(all_file_ids) > 1:
-                            # Album: send_media_group
+                        if grid_file_id:
+                            # Grid collage: just send the same grid photo
+                            await self.app.bot.send_photo(
+                                chat_id=g['group_id'], photo=grid_file_id,
+                                caption=swapped[:1024], parse_mode='HTML')
+                        elif len(all_file_ids) == 1:
+                            fid, ft = all_file_ids[0], all_file_types[0]
+                            if ft == 'photo':
+                                await self.app.bot.send_photo(chat_id=g['group_id'], photo=fid, caption=swapped[:1024], parse_mode='HTML')
+                            elif ft == 'video':
+                                await self.app.bot.send_video(chat_id=g['group_id'], video=fid, caption=swapped[:1024], parse_mode='HTML')
+                            else:
+                                await self.app.bot.send_document(chat_id=g['group_id'], document=fid, caption=swapped[:1024], parse_mode='HTML')
+                        elif len(all_file_ids) > 1:
+                            # Fallback album
                             from telegram import InputMediaPhoto, InputMediaVideo, InputMediaDocument
                             media_group = []
                             for i, (fid, ft) in enumerate(zip(all_file_ids, all_file_types)):
@@ -9241,14 +9290,6 @@ class ChildBot:
                                 else:
                                     media_group.append(InputMediaDocument(media=fid, caption=cap, parse_mode=pm))
                             await self.app.bot.send_media_group(chat_id=g['group_id'], media=media_group)
-                        elif all_file_ids:
-                            fid, ft = all_file_ids[0], all_file_types[0]
-                            if ft == 'photo':
-                                await self.app.bot.send_photo(chat_id=g['group_id'], photo=fid, caption=swapped[:1024], parse_mode='HTML')
-                            elif ft == 'video':
-                                await self.app.bot.send_video(chat_id=g['group_id'], video=fid, caption=swapped[:1024], parse_mode='HTML')
-                            else:
-                                await self.app.bot.send_document(chat_id=g['group_id'], document=fid, caption=swapped[:1024], parse_mode='HTML')
                         else:
                             await self.app.bot.send_message(chat_id=g['group_id'], text=swapped, parse_mode='HTML')
                         bc_count += 1
