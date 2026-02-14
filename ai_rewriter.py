@@ -97,6 +97,94 @@ async def rewrite_promo(original_text: str, company_name: str = '') -> str:
         return original_text
 
 
+# --- AI Company Detection ---
+_detect_cache = {}  # {text_hash: (timestamp, result)}
+DETECT_CACHE_TTL = 300  # 5 minutes
+
+async def detect_company_ai(message_text: str, company_names: list) -> str | None:
+    """AI-powered company name detection for fuzzy variations.
+    
+    Handles creative spellings: a9play, playa9, a 9, mega 888, etc.
+    Returns matched company name from the list, or None if no match.
+    """
+    if not GROQ_API_KEY or not company_names:
+        return None
+    
+    # Check cache
+    import hashlib
+    cache_key = hashlib.md5(f"{message_text}:{','.join(company_names)}".encode()).hexdigest()
+    cached = _detect_cache.get(cache_key)
+    if cached and (time.time() - cached[0]) < DETECT_CACHE_TTL:
+        return cached[1]
+    
+    # Clean up old cache entries
+    now = time.time()
+    expired = [k for k, v in _detect_cache.items() if now - v[0] > DETECT_CACHE_TTL]
+    for k in expired:
+        del _detect_cache[k]
+    
+    names_str = ", ".join(company_names)
+    
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a company name detector. Given a list of company names and a message, "
+                    "identify which company(s) are mentioned in the message.\n\n"
+                    "RULES:\n"
+                    "- Match even if the name has extra words (a9play = A9, mega888slot = Mega888)\n"
+                    "- Match creative spellings (playa9 = A9, m8ga888 = Mega888)\n"
+                    "- Match with spaces/symbols (a 9 = A9, mega-888 = Mega888)\n"
+                    "- Return ONLY the exact company name(s) from the list, comma-separated\n"
+                    "- If NO company matches, return exactly: NONE\n"
+                    "- Do NOT explain, just return the name(s)"
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Company names: [{names_str}]\n\nMessage: {message_text[:500]}"
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 100,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(GROQ_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    logger.error(f"Groq detect API error {resp.status}")
+                    return None
+
+                data = await resp.json()
+                result = data['choices'][0]['message']['content'].strip()
+                
+                if result.upper() == "NONE" or not result:
+                    _detect_cache[cache_key] = (time.time(), None)
+                    return None
+                
+                # Validate result against actual company names
+                matched = None
+                for name in company_names:
+                    if name.lower() in result.lower():
+                        matched = name
+                        break
+                
+                logger.info(f"AI detect: '{message_text[:60]}...' → {matched or 'NONE'}")
+                _detect_cache[cache_key] = (time.time(), matched)
+                return matched
+
+    except Exception as e:
+        logger.error(f"Groq detect failed: {e}")
+        return None
+
 async def generate_keywords(company_name: str) -> str:
     """Auto-generate keywords/aliases for a company name using Groq AI.
     

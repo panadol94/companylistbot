@@ -555,6 +555,19 @@ class Database:
                 )
             ''')
 
+            # 16. WhatsApp Sessions Table (Baileys WhatsApp monitoring per bot)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS whatsapp_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bot_id INTEGER NOT NULL UNIQUE,
+                    status TEXT DEFAULT 'disconnected',
+                    phone_number TEXT,
+                    excluded_groups TEXT DEFAULT '[]',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(bot_id) REFERENCES bots(id) ON DELETE CASCADE
+                )
+            ''')
+
             conn.commit()
             conn.close()
 
@@ -2826,3 +2839,58 @@ class Database:
         ).fetchall()
         conn.close()
         return [dict(row) for row in rows]
+
+    # --- WhatsApp Session Management ---
+    
+    def get_whatsapp_session(self, bot_id):
+        """Get WhatsApp session for a bot"""
+        conn = self.get_connection()
+        row = conn.execute(
+            "SELECT * FROM whatsapp_sessions WHERE bot_id = ?", (bot_id,)
+        ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def save_whatsapp_session(self, bot_id, status='disconnected', phone_number=None):
+        """Create or update WhatsApp session"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute('''
+                INSERT INTO whatsapp_sessions (bot_id, status, phone_number)
+                VALUES (?, ?, ?)
+                ON CONFLICT(bot_id) DO UPDATE SET
+                    status = excluded.status,
+                    phone_number = COALESCE(excluded.phone_number, whatsapp_sessions.phone_number)
+            ''', (bot_id, status, phone_number))
+            conn.commit()
+            conn.close()
+
+    def update_whatsapp_status(self, bot_id, status):
+        """Update WhatsApp connection status"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "UPDATE whatsapp_sessions SET status = ? WHERE bot_id = ?",
+                (status, bot_id)
+            )
+            conn.commit()
+            conn.close()
+
+    def update_whatsapp_excluded_groups(self, bot_id, excluded_groups_json):
+        """Update excluded WhatsApp groups (JSON string)"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "UPDATE whatsapp_sessions SET excluded_groups = ? WHERE bot_id = ?",
+                (excluded_groups_json, bot_id)
+            )
+            conn.commit()
+            conn.close()
+
+    def delete_whatsapp_session(self, bot_id):
+        """Delete WhatsApp session for a bot"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute("DELETE FROM whatsapp_sessions WHERE bot_id = ?", (bot_id,))
+            conn.commit()
+            conn.close()

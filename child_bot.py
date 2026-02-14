@@ -1,6 +1,7 @@
 import logging
 import datetime
 import re
+import os
 import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo, InputMediaAnimation, BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatMemberHandler
@@ -2005,6 +2006,11 @@ class ChildBot:
         elif data == "userbot_hub": await self.userbot_hub_menu(update, context)
         elif data == "ub_menu": await self.ub_menu(update, context)
         elif data == "clone_menu": await self.clone_media_menu(update, context)
+        # WhatsApp Monitor
+        elif data == "wa_hub": await self.wa_hub_menu(update)
+        elif data == "wa_connect": await self.wa_connect(update)
+        elif data == "wa_disconnect": await self.wa_disconnect(update)
+        elif data == "wa_status": await self.wa_check_status(update)
         # Note: edit_company_* is handled by ConversationHandler, NOT here
         elif data == "close_panel": await query.message.delete()
 
@@ -3120,6 +3126,148 @@ class ChildBot:
         else:
             await update.callback_query.answer("❌ Failed to reorder", show_alert=True)
     
+    # --- WhatsApp Monitor Hub ---
+    
+    WA_SERVICE_URL = os.environ.get("WA_SERVICE_URL", "http://localhost:3001")  # Same container
+    
+    async def wa_hub_menu(self, update: Update):
+        """Show WhatsApp Monitor hub menu"""
+        wa_session = self.db.get_whatsapp_session(self.bot_id)
+        status = wa_session['status'] if wa_session else 'disconnected'
+        
+        status_emoji = "🟢" if status == 'connected' else "🔴"
+        status_text = "Connected" if status == 'connected' else "Disconnected"
+        
+        text = (
+            f"📱 **WHATSAPP MONITOR**\n\n"
+            f"Status: {status_emoji} {status_text}\n\n"
+            f"Monitor semua WhatsApp group untuk detect promo automatically.\n"
+            f"Bila detect company → notify admin via Telegram."
+        )
+        
+        keyboard = []
+        if status == 'connected':
+            keyboard.append([InlineKeyboardButton("🔍 Check Status", callback_data="wa_status")])
+            keyboard.append([InlineKeyboardButton("❌ Disconnect", callback_data="wa_disconnect")])
+        else:
+            keyboard.append([InlineKeyboardButton("🔗 Connect WhatsApp", callback_data="wa_connect")])
+        
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="admin_settings")])
+        
+        await update.callback_query.message.edit_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown'
+        )
+    
+    async def wa_connect(self, update: Update):
+        """Initiate WhatsApp connection — get QR from Baileys service"""
+        import aiohttp
+        
+        await update.callback_query.answer("⏳ Generating QR code...")
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.WA_SERVICE_URL}/wa/qr/{self.bot_id}",
+                    timeout=aiohttp.ClientTimeout(total=15)
+                ) as resp:
+                    data = await resp.json()
+            
+            if data.get('status') == 'already_connected':
+                await update.callback_query.message.edit_text(
+                    "✅ WhatsApp sudah connected!",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Back", callback_data="wa_hub")]
+                    ])
+                )
+                return
+            
+            if data.get('qr'):
+                # QR is base64 data URL, extract and send as photo
+                import base64
+                qr_b64 = data['qr'].split(',')[1]  # Remove data:image/png;base64, prefix
+                qr_bytes = base64.b64decode(qr_b64)
+                
+                from io import BytesIO
+                qr_file = BytesIO(qr_bytes)
+                qr_file.name = 'whatsapp_qr.png'
+                
+                await update.callback_query.message.delete()
+                await update.effective_chat.send_photo(
+                    photo=qr_file,
+                    caption=(
+                        "📱 **SCAN QR CODE**\n\n"
+                        "1. Buka WhatsApp di phone\n"
+                        "2. Settings → Linked Devices → Link a Device\n"
+                        "3. Scan QR code ni\n\n"
+                        "⏳ QR expired dalam 60 saat. Klik 'Connect' semula kalau expired."
+                    ),
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Refresh QR", callback_data="wa_connect")],
+                        [InlineKeyboardButton("🔙 Back", callback_data="wa_hub")]
+                    ])
+                )
+            else:
+                await update.callback_query.message.edit_text(
+                    f"⏳ QR belum ready. Status: {data.get('status', 'unknown')}\n\nCuba lagi dalam beberapa saat.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Try Again", callback_data="wa_connect")],
+                        [InlineKeyboardButton("🔙 Back", callback_data="wa_hub")]
+                    ])
+                )
+                
+        except Exception as e:
+            self.logger.error(f"WA connect error: {e}")
+            await update.callback_query.message.edit_text(
+                "❌ Failed to connect to WhatsApp service.\n\nMake sure WA Monitor is running.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back", callback_data="wa_hub")]
+                ])
+            )
+    
+    async def wa_disconnect(self, update: Update):
+        """Disconnect WhatsApp session"""
+        import aiohttp
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.WA_SERVICE_URL}/wa/disconnect/{self.bot_id}",
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    await resp.json()
+            
+            self.db.save_whatsapp_session(self.bot_id, status='disconnected')
+            await update.callback_query.answer("✅ WhatsApp disconnected!")
+            await self.wa_hub_menu(update)
+            
+        except Exception as e:
+            self.logger.error(f"WA disconnect error: {e}")
+            await update.callback_query.answer("❌ Disconnect failed", show_alert=True)
+    
+    async def wa_check_status(self, update: Update):
+        """Check WhatsApp connection status"""
+        import aiohttp
+        
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.WA_SERVICE_URL}/wa/status/{self.bot_id}",
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    data = await resp.json()
+            
+            status = data.get('status', 'unknown')
+            self.db.save_whatsapp_session(self.bot_id, status=status)
+            
+            emoji = "🟢" if status == 'connected' else "🔴"
+            await update.callback_query.answer(f"{emoji} Status: {status}", show_alert=True)
+            await self.wa_hub_menu(update)
+            
+        except Exception as e:
+            self.logger.error(f"WA status check error: {e}")
+            await update.callback_query.answer("❌ Cannot reach WA service", show_alert=True)
+
     # --- Customize Menu Logic ---
 
     
@@ -3275,7 +3423,8 @@ class ChildBot:
                 [InlineKeyboardButton("📡 Forwarder", callback_data="forwarder_menu"), InlineKeyboardButton("📊 Analytics", callback_data="show_analytics")],
                 [InlineKeyboardButton("📥 Export Data", callback_data="export_data"), InlineKeyboardButton("🔄 Manage Referrals", callback_data="admin_ref_manage")],
                 [InlineKeyboardButton("🛡️ Group Management", callback_data="group_mgmt"), InlineKeyboardButton(ai_chat_btn_text, callback_data="toggle_ai_chat")],
-                [InlineKeyboardButton("🤖 Userbot", callback_data="userbot_hub"), InlineKeyboardButton("🧠 AI Settings", callback_data="ai_settings")]
+                [InlineKeyboardButton("🤖 Userbot", callback_data="userbot_hub"), InlineKeyboardButton("🧠 AI Settings", callback_data="ai_settings")],
+                [InlineKeyboardButton("📱 WhatsApp Monitor", callback_data="wa_hub")]
             ]
             
             # Only owner can manage admins

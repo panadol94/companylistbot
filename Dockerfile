@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies for Playwright and FFmpeg
+# Install system dependencies for Playwright, FFmpeg AND Node.js
 RUN apt-get update && apt-get install -y \
     wget \
     gnupg \
@@ -26,16 +26,32 @@ RUN apt-get update && apt-get install -y \
     libxrandr2 \
     xdg-utils \
     ffmpeg \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 18 (for WhatsApp Monitor / Baileys)
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Install Playwright Chromium browser
 RUN playwright install chromium
 
+# Node.js dependencies (WhatsApp Monitor)
+COPY wa-monitor/package.json wa-monitor/
+RUN cd wa-monitor && npm install
+
+# Copy all source code
 COPY . .
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "main.py"]
+# Startup script runs both Python + Node.js
+COPY start.sh .
+RUN chmod +x start.sh
+
+CMD ["./start.sh"]

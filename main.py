@@ -420,6 +420,114 @@ async def server_status():
     except Exception as e:
         return {"error": str(e)}
 
+# --- WhatsApp Monitor API ---
+
+@app.post("/api/wa-promo")
+async def wa_promo_received(request: Request):
+    """Receive WhatsApp group message from Baileys monitor.
+    Runs 2-layer company detection (fuzzy + AI) and notifies admin.
+    """
+    try:
+        data = await request.json()
+        bot_id = data.get('bot_id')
+        text = data.get('text', '')
+        group_name = data.get('group_name', 'Unknown Group')
+        
+        if not bot_id or not text:
+            return {"success": False, "error": "Missing bot_id or text"}
+        
+        if not bot_manager:
+            return {"success": False, "error": "Platform not ready"}
+        
+        # Get companies for this bot
+        companies = bot_manager.db.get_companies(bot_id)
+        if not companies:
+            return {"success": False, "error": "No companies for this bot"}
+        
+        # Layer 1: Fuzzy match (fast, free)
+        from userbot_manager import match_company_in_text
+        matched_company = None
+        
+        for company in companies:
+            keywords = company.get('keywords', '')
+            if match_company_in_text(company['name'], text, keywords):
+                matched_company = company
+                logger.info(f"📱 WA Layer 1 match: '{company['name']}' in group '{group_name}'")
+                break
+        
+        # Layer 2: AI detection (if Layer 1 fails)
+        if not matched_company:
+            try:
+                from ai_rewriter import detect_company_ai
+                company_names = [c['name'] for c in companies]
+                ai_match = await detect_company_ai(text, company_names)
+                if ai_match:
+                    matched_company = next((c for c in companies if c['name'] == ai_match), None)
+                    logger.info(f"📱 WA Layer 2 AI match: '{ai_match}' in group '{group_name}'")
+            except Exception as e:
+                logger.error(f"AI detection error: {e}")
+        
+        if not matched_company:
+            logger.debug(f"📱 WA no match in group '{group_name}': {text[:50]}...")
+            return {"success": True, "matched": False}
+        
+        # Find the correct child bot to notify
+        bot_data = bot_manager.db.get_bot_by_id(bot_id)
+        if not bot_data or bot_data['token'] not in bot_manager.bots:
+            return {"success": False, "error": "Bot not running"}
+        
+        child = bot_manager.bots[bot_data['token']]
+        
+        # Build promo data (compatible with existing handle_promo_notification)
+        promo_data = {
+            'bot_id': bot_id,
+            'source_channel': f"📱 WA: {group_name}",
+            'original_text': text,
+            'swapped_text': text,
+            'media_file_ids': [],
+            'media_types': [],
+            'matched_company': matched_company['name'],
+            'company_button_url': matched_company.get('button_url', ''),
+            'company_button_text': matched_company.get('button_text', ''),
+            'auto_mode': 0,  # Always manual review for WA
+            'media_bytes': None,
+            'media_type': None,
+            'all_media_bytes': [],
+            'all_media_types': [],
+            'is_album': False,
+            'entities': [],
+        }
+        
+        # Use existing promo notification flow
+        await child.handle_promo_notification(promo_data)
+        
+        logger.info(f"📱 WA promo forwarded to admin: {matched_company['name']} from '{group_name}'")
+        return {"success": True, "matched": True, "company": matched_company['name']}
+        
+    except Exception as e:
+        logger.error(f"❌ WA promo API error: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
+
+@app.post("/api/wa-status")
+async def wa_status_update(request: Request):
+    """Receive WhatsApp connection status update from Baileys."""
+    try:
+        data = await request.json()
+        bot_id = data.get('bot_id')
+        status = data.get('status', 'disconnected')
+        
+        if not bot_id or not bot_manager:
+            return {"success": False}
+        
+        bot_manager.db.save_whatsapp_session(bot_id, status=status)
+        logger.info(f"📱 WA status update: bot {bot_id} → {status}")
+        
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"WA status error: {e}")
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     if not MOTHER_TOKEN:
         logger.critical("❌ MOTHER_TOKEN not found! Exiting.")
