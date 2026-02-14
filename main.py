@@ -507,6 +507,19 @@ async def wa_promo_received(request: Request):
         
         child = bot_manager.bots[bot_data['token']]
         
+        # Decode media if present
+        media_bytes = None
+        media_type = data.get('media_type')  # 'photo' or 'video'
+        media_base64 = data.get('media_base64')
+        if media_base64:
+            import base64
+            try:
+                media_bytes = base64.b64decode(media_base64)
+                logger.info(f"📱 WA media decoded: {media_type}, {len(media_bytes)} bytes")
+            except Exception as e:
+                logger.error(f"Failed to decode WA media: {e}")
+                media_bytes = None
+        
         # Build promo data (compatible with existing handle_promo_notification)
         promo_data = {
             'bot_id': bot_id,
@@ -519,10 +532,10 @@ async def wa_promo_received(request: Request):
             'company_button_url': matched_company.get('button_url', ''),
             'company_button_text': matched_company.get('button_text', ''),
             'auto_mode': 0,  # Always manual review for WA
-            'media_bytes': None,
-            'media_type': None,
-            'all_media_bytes': [],
-            'all_media_types': [],
+            'media_bytes': media_bytes,
+            'media_type': media_type,
+            'all_media_bytes': [media_bytes] if media_bytes else [],
+            'all_media_types': [media_type] if media_type else [],
             'is_album': False,
             'entities': [],
         }

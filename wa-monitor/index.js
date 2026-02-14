@@ -11,7 +11,7 @@
  *   GET  /wa/groups/:botId  — List all WhatsApp groups
  */
 
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
 import express from 'express';
 import QRCode from 'qrcode';
 import path from 'path';
@@ -130,6 +130,7 @@ async function connectBot(botId) {
                 || '';
 
             const hasMedia = !!(msg.message?.imageMessage || msg.message?.videoMessage);
+            const mediaType = msg.message?.imageMessage ? 'photo' : (msg.message?.videoMessage ? 'video' : null);
 
             if (!hasMedia && (!text || text.length < 5)) continue;  // Skip very short text-only msgs
 
@@ -145,7 +146,19 @@ async function connectBot(botId) {
             // Get sender info
             const sender = msg.key.participant || msg.key.remoteJid;
 
-            console.log(`[Bot ${botId}] 📱 WA Group "${groupName}": ${text.substring(0, 80)}...`);
+            // Download media if present
+            let mediaBase64 = null;
+            if (hasMedia) {
+                try {
+                    const buffer = await downloadMediaMessage(msg, 'buffer', {});
+                    mediaBase64 = buffer.toString('base64');
+                    console.log(`[Bot ${botId}] 📱 WA Group "${groupName}": [${mediaType}] ${text.substring(0, 60)}...`);
+                } catch (e) {
+                    console.error(`[Bot ${botId}] Media download failed:`, e.message);
+                }
+            } else {
+                console.log(`[Bot ${botId}] 📱 WA Group "${groupName}": ${text.substring(0, 80)}...`);
+            }
 
             // Forward to Python bot for company detection
             try {
@@ -160,6 +173,8 @@ async function connectBot(botId) {
                         text: text,
                         timestamp: msg.messageTimestamp,
                         has_media: hasMedia,
+                        media_type: mediaType,
+                        media_base64: mediaBase64,
                     })
                 });
 
