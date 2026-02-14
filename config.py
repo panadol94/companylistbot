@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Mother Bot Token (SaaS Platform Owner)
-MOTHER_TOKEN = os.getenv("MOTHER_TOKEN", "8297991145:AAEptyoDK1NU9Y_6n5lq0KUcIcWR1FoVEI4")
+MOTHER_TOKEN = os.getenv("MOTHER_TOKEN", "")
 
 # Master Admin IDs (Comma-separated list of owners/partners)
 # Example: 123456789,987654321

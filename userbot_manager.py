@@ -493,12 +493,57 @@ class UserbotInstance:
 
             # Fallback: copy the message content (for restricted forward channels)
             if msg.media:
-                await self.client.send_message(
-                    to_user_id,
-                    message=msg.message or '',
-                    file=msg.media,
-                    formatting_entities=msg.entities
-                )
+                try:
+                    await self.client.send_message(
+                        to_user_id,
+                        message=msg.message or '',
+                        file=msg.media,
+                        formatting_entities=msg.entities
+                    )
+                except Exception as media_err:
+                    err_str = str(media_err).lower()
+                    if 'protected' in err_str or 'forward' in err_str or 'restricted' in err_str:
+                        # Protected channel — download to bytes and re-upload
+                        from io import BytesIO
+                        from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+                        
+                        buffer = BytesIO()
+                        await self.client.download_media(msg, file=buffer)
+                        media_bytes = buffer.getvalue()
+                        
+                        if not media_bytes:
+                            logger.warning(f"[UB-{self.bot_id}] Forward msg {msg_id}: download returned empty")
+                            return False
+                        
+                        if isinstance(msg.media, MessageMediaPhoto):
+                            buffer = BytesIO(media_bytes)
+                            buffer.name = 'photo.jpg'
+                        elif isinstance(msg.media, MessageMediaDocument):
+                            doc = msg.media.document
+                            mime = getattr(doc, 'mime_type', '') or ''
+                            fname = None
+                            for attr in (doc.attributes or []):
+                                if hasattr(attr, 'file_name'):
+                                    fname = attr.file_name
+                                    break
+                            if not fname:
+                                ext = mime.split('/')[-1] if '/' in mime else 'bin'
+                                fname = f'file.{ext}'
+                            buffer = BytesIO(media_bytes)
+                            buffer.name = fname
+                        else:
+                            buffer = BytesIO(media_bytes)
+                            buffer.name = 'file.bin'
+                        
+                        await self.client.send_message(
+                            to_user_id,
+                            message=msg.message or '',
+                            file=buffer,
+                            formatting_entities=msg.entities
+                        )
+                        logger.info(f"[UB-{self.bot_id}] Forward msg {msg_id}: re-uploaded from bytes (protected)")
+                    else:
+                        raise media_err
             elif msg.message:
                 await self.client.send_message(
                     to_user_id,
