@@ -3266,7 +3266,6 @@ class ChildBot:
             
             emoji = "🟢" if status == 'connected' else "🔴"
             await update.callback_query.answer(f"{emoji} Status: {status}", show_alert=True)
-            await self.wa_hub_menu(update)
             
         except Exception as e:
             self.logger.error(f"WA status check error: {e}")
