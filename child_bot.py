@@ -1821,7 +1821,7 @@ class ChildBot:
         
         # Skip early answer for navigation/company buttons - let edit_media handle it 
         # to avoid button flash. Answer immediately for all other callbacks.
-        skip_answer = data.startswith("list_page_") or (data.startswith("c_") and data != "c_4d" and not data.startswith("c_edit"))
+        skip_answer = data.startswith("list_page_") or data == "wa_status" or (data.startswith("c_") and data != "c_4d" and not data.startswith("c_edit"))
         if not skip_answer:
             try:
                 await query.answer()
