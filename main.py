@@ -522,9 +522,21 @@ async def wa_promo_received(request: Request):
                 logger.error(f"Failed to read WA media from {media_path}: {e}")
                 media_bytes = None
         
+        # Save promo to DB first to get promo_id (required for button callbacks)
+        promo_id = bot_manager.db.save_detected_promo(
+            bot_id=bot_id,
+            source_channel=f"📱 WA: {group_name}",
+            original_text=text,
+            swapped_text=text,
+            media_file_ids=[],
+            media_types=[],
+            matched_company=matched_company['name']
+        )
+        
         # Build promo data (compatible with existing handle_promo_notification)
         promo_data = {
             'bot_id': bot_id,
+            'promo_id': promo_id,
             'source_channel': f"📱 WA: {group_name}",
             'original_text': text,
             'swapped_text': text,
