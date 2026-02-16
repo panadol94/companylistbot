@@ -5828,7 +5828,7 @@ class ChildBot:
         
         # Call AI Vision
         from ai_rewriter import generate_caption_from_image
-        caption = await generate_caption_from_image(bytes(image_bytes), company_name)
+        caption, _ = await generate_caption_from_image(bytes(image_bytes), company_name)
         
         if not caption:
             await query.message.edit_text(
@@ -9746,26 +9746,38 @@ class ChildBot:
             media_type = promo_data.get('media_type')
 
             # AI Vision: generate caption if image present but text is short/empty
-            vision_bytes = None
+            vision_images = []  # Collect all photos for multi-image vision
             if media_bytes and media_type == 'photo':
-                vision_bytes = media_bytes
-            elif promo_data.get('is_album') and promo_data.get('all_media_bytes'):
-                # Use first photo from album
+                vision_images = [media_bytes]
+            if promo_data.get('is_album') and promo_data.get('all_media_bytes'):
+                # Collect ALL photos from album
                 for mb, mt in zip(promo_data['all_media_bytes'], promo_data.get('all_media_types', [])):
-                    if mt == 'photo':
-                        vision_bytes = mb
-                        break
+                    if mt == 'photo' and mb not in vision_images:
+                        vision_images.append(mb)
             
-            if vision_bytes and len(swapped.strip()) < 50:
+            if vision_images and len(swapped.strip()) < 50:
                 try:
                     from ai_rewriter import generate_caption_from_image
-                    ai_caption = await generate_caption_from_image(vision_bytes, company)
+                    ai_caption, detected_co = await generate_caption_from_image(vision_images, company)
                     if ai_caption:
                         swapped = ai_caption
-                        # Update DB with AI-generated caption
+                        # Use detected company if none was matched from text
+                        if detected_co and (not company or company == 'Unknown'):
+                            company = detected_co
+                            # Try to match with existing companies in DB
+                            existing = self.db.get_companies(self.bot_id)
+                            matched = None
+                            for c in existing:
+                                if detected_co.lower() in c['name'].lower() or c['name'].lower() in detected_co.lower():
+                                    matched = c['name']
+                                    break
+                            if matched:
+                                company = matched
+                            self.logger.info(f"AI detected company from image: {detected_co} → matched: {matched or 'new'}")
+                        # Update DB with AI-generated caption and detected company
                         try:
                             conn = self.db.get_connection()
-                            conn.execute("UPDATE detected_promos SET swapped_text = ? WHERE id = ?", (ai_caption, promo_id))
+                            conn.execute("UPDATE detected_promos SET swapped_text = ?, matched_company = ? WHERE id = ?", (ai_caption, company, promo_id))
                             conn.commit()
                             conn.close()
                         except Exception:

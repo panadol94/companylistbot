@@ -100,16 +100,21 @@ async def rewrite_promo(original_text: str, company_name: str = '') -> str:
 GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct'
 
 VISION_CAPTION_PROMPT = """Kau adalah pakar copywriter untuk promosi online di Malaysia.
-Tugas kau: tengok gambar ni dan tulis caption promosi yang menarik berdasarkan apa yang kau nampak.
+Tugas kau: tengok SEMUA gambar yang diberikan dan tulis caption promosi yang menarik berdasarkan apa yang kau nampak.
 
 Peraturan:
-- Tulis berdasarkan APA YANG KAU NAMPAK dalam gambar (winning screenshot, game name, amount, etc)
+- Tulis berdasarkan APA YANG KAU NAMPAK dalam gambar (winning screenshot, game name, amount, logo, etc)
 - Guna bahasa campur (Malay + sedikit English) — gaya santai tapi profesional
 - Tambah emoji yang sesuai di permulaan baris untuk visual structure
 - Pendek dan padat — max 500 aksara
 - Fokus pada urgency dan benefit
 - Guna "korang", "anda", "bro" — jangan "saya"
-- Output teks sahaja, tiada penjelasan
+
+PENTING - DETECT COMPANY:
+- Cuba kenal pasti nama company/platform/casino dari gambar (logo, watermark, URL, nama dalam screenshot)
+- Kalau nampak nama, tulis DETECTED_COMPANY: [nama] di BARIS PERTAMA output
+- Kalau tak nampak/tak pasti, tulis DETECTED_COMPANY: NONE
+- Lepas tu baru tulis caption biasa
 
 FORMAT HTML (WAJIB):
 - Guna <b>bold</b> untuk highlight penting (nama company, bonus amount, game name)
@@ -118,35 +123,46 @@ FORMAT HTML (WAJIB):
 - Structure kemas: Header → Info → CTA"""
 
 
-async def generate_caption_from_image(image_bytes: bytes, company_name: str = '') -> str:
-    """Generate a promo caption by analyzing an image using Groq Vision AI.
+async def generate_caption_from_image(image_bytes, company_name: str = '') -> tuple:
+    """Generate a promo caption by analyzing images using Groq Vision AI.
     
     Args:
-        image_bytes: Raw image bytes
+        image_bytes: Raw image bytes (single bytes) or list of bytes (multiple images)
         company_name: Company name for context
     
     Returns:
-        Generated caption text, or None if failed
+        tuple(caption, detected_company) or (None, None) if failed
+        - caption: Generated caption text
+        - detected_company: Company name detected from image, or None
     """
     if not GROQ_API_KEY:
         logger.warning("GROQ_API_KEY not set, skipping vision caption")
-        return None
+        return None, None
     
     import base64
-    image_b64 = base64.b64encode(image_bytes).decode('utf-8')
     
+    # Normalize to list of image bytes
+    if isinstance(image_bytes, (bytes, bytearray)):
+        images_list = [image_bytes]
+    else:
+        images_list = list(image_bytes)  # Already a list
+    
+    # Build user content with all images
     user_content = [
         {
             "type": "text",
-            "text": f"Company: {company_name}\n\nTengok gambar ni dan tulis caption promosi yang menarik berdasarkan apa yang kau nampak:"
-        },
-        {
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/jpeg;base64,{image_b64}"
-            }
+            "text": f"Company: {company_name or 'Unknown'}\n\nTengok {'semua ' + str(len(images_list)) + ' gambar' if len(images_list) > 1 else 'gambar'} ni dan tulis caption promosi yang menarik berdasarkan apa yang kau nampak:"
         }
     ]
+    
+    for img_bytes in images_list[:5]:  # Max 5 images to avoid token limit
+        img_b64 = base64.b64encode(img_bytes).decode('utf-8')
+        user_content.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/jpeg;base64,{img_b64}"
+            }
+        })
     
     payload = {
         "model": GROQ_VISION_MODEL,
@@ -169,12 +185,23 @@ async def generate_caption_from_image(image_bytes: bytes, company_name: str = ''
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"Groq Vision API error {resp.status}: {error_text[:200]}")
-                    return None
+                    return None, None
                 
                 data = await resp.json()
-                caption = data['choices'][0]['message']['content'].strip()
-                logger.info(f"AI vision caption generated: {len(caption)} chars")
-                return caption
+                raw = data['choices'][0]['message']['content'].strip()
+                
+                # Parse detected company from response
+                detected_company = None
+                caption = raw
+                if raw.startswith('DETECTED_COMPANY:'):
+                    lines = raw.split('\n', 1)
+                    company_line = lines[0].replace('DETECTED_COMPANY:', '').strip()
+                    if company_line and company_line.upper() != 'NONE':
+                        detected_company = company_line
+                    caption = lines[1].strip() if len(lines) > 1 else ''
+                
+                logger.info(f"AI vision caption generated: {len(caption)} chars, detected_company: {detected_company}")
+                return caption, detected_company
     
     except Exception as e:
         logger.error(f"Groq Vision API failed: {e}")
