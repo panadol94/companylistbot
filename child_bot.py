@@ -284,10 +284,13 @@ class ChildBot:
                 ],
                 BROADCAST_AI_REWRITE: [
                     CallbackQueryHandler(self.ai_rewrite_execute, pattern="^bc_ai_yes$"),
+                    CallbackQueryHandler(self.ai_vision_execute, pattern="^bc_ai_vision$"),
+                    CallbackQueryHandler(self.ai_manual_caption, pattern="^bc_ai_manual$"),
                     CallbackQueryHandler(self.ai_rewrite_skip, pattern="^bc_ai_skip$"),
                     CallbackQueryHandler(self.ai_rewrite_accept, pattern="^bc_ai_accept$"),
                     CallbackQueryHandler(self.ai_rewrite_original, pattern="^bc_ai_original$"),
                     CallbackQueryHandler(self.ai_rewrite_retry, pattern="^bc_ai_retry$"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.ai_manual_caption_receive),
                 ]
             },
             fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.handle_callback)],
@@ -5678,30 +5681,50 @@ class ChildBot:
     
     # ==================== AI REWRITE FOR BROADCAST ====================
     async def _show_ai_rewrite_prompt(self, update, context):
-        """Show AI rewrite prompt after company selection"""
+        """Show AI rewrite/vision prompt after company selection"""
         company_name = context.user_data.get('broadcast_company_name', '')
         
         # Get the text to rewrite
         data = context.user_data.get('broadcast_data', {})
         text = data.get('text') or context.user_data.get('grid_caption') or ''
         
-        if not text.strip():
-            # No text to rewrite, go directly to confirm
+        # Check if broadcast has image(s)
+        has_image = bool(data.get('photo') or context.user_data.get('grid_media'))
+        
+        if text.strip():
+            # Has text → offer AI rewrite OR vision caption
+            preview = text[:200] + ('...' if len(text) > 200 else '')
+            
+            keyboard = [
+                [InlineKeyboardButton("✨ AI Rewrite Text", callback_data="bc_ai_yes")],
+            ]
+            if has_image:
+                keyboard.append([InlineKeyboardButton("🖼️ AI Generate dari Gambar", callback_data="bc_ai_vision")])
+            keyboard.append([InlineKeyboardButton("⏭️ Skip (guna asal)", callback_data="bc_ai_skip")])
+            
+            msg_text = (
+                f"🤖 **AI CAPTION**\n\n"
+                f"🏢 Company: **{company_name}**\n\n"
+                f"📝 Text semasa:\n{preview}\n\n"
+                f"Pilih option:"
+            )
+        elif has_image:
+            # No text but has image → offer AI vision generate
+            keyboard = [
+                [InlineKeyboardButton("🖼️ AI Generate dari Gambar", callback_data="bc_ai_vision")],
+                [InlineKeyboardButton("✍️ Tulis Sendiri", callback_data="bc_ai_manual")],
+                [InlineKeyboardButton("⏭️ Skip Caption", callback_data="bc_ai_skip")]
+            ]
+            
+            msg_text = (
+                f"🤖 **AI CAPTION**\n\n"
+                f"🏢 Company: **{company_name}**\n\n"
+                f"🖼️ Ada gambar tapi takde caption.\n"
+                f"Nak AI generate caption dari gambar?"
+            )
+        else:
+            # No text, no image → go to confirm
             return await self._go_to_confirm(update, context)
-        
-        preview = text[:200] + ('...' if len(text) > 200 else '')
-        
-        keyboard = [
-            [InlineKeyboardButton("✨ AI Rewrite", callback_data="bc_ai_yes")],
-            [InlineKeyboardButton("⏭️ Skip (guna asal)", callback_data="bc_ai_skip")]
-        ]
-        
-        msg_text = (
-            f"🤖 **AI REWRITE**\n\n"
-            f"🏢 Company: **{company_name}**\n\n"
-            f"📝 Text semasa:\n{preview}\n\n"
-            f"Nak AI tulis semula text ni supaya lebih menarik?"
-        )
         
         query = update.callback_query
         if query:
@@ -5756,6 +5779,202 @@ class ChildBot:
             parse_mode='Markdown'
         )
         return BROADCAST_AI_REWRITE
+    
+    async def ai_vision_execute(self, update, context):
+        """Generate caption from image using AI Vision"""
+        query = update.callback_query
+        await query.answer()
+        
+        company_name = context.user_data.get('broadcast_company_name', '')
+        data = context.user_data.get('broadcast_data', {})
+        
+        # Show loading
+        await query.message.edit_text(
+            f"🖼️ **AI sedang baca gambar...**\n\n"
+            f"🏢 Company: {company_name}\n"
+            f"⏳ Tunggu sekejap...",
+            parse_mode='Markdown'
+        )
+        
+        # Download the image
+        image_bytes = None
+        try:
+            if data.get('photo'):
+                file = await self.app.bot.get_file(data['photo'])
+                image_bytes = await file.download_as_bytearray()
+            elif context.user_data.get('grid_media'):
+                import json
+                grid_media = context.user_data['grid_media']
+                media_items = json.loads(grid_media) if isinstance(grid_media, str) else grid_media
+                if media_items:
+                    # Use first image from grid
+                    first = media_items[0]
+                    file_id = first.get('file_id', '')
+                    if file_id:
+                        file = await self.app.bot.get_file(file_id)
+                        image_bytes = await file.download_as_bytearray()
+        except Exception as e:
+            self.logger.error(f"Failed to download image for vision: {e}")
+        
+        if not image_bytes:
+            await query.message.edit_text(
+                "❌ Tak dapat download gambar. Cuba tulis caption sendiri.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✍️ Tulis Sendiri", callback_data="bc_ai_manual")],
+                    [InlineKeyboardButton("⏭️ Skip Caption", callback_data="bc_ai_skip")]
+                ])
+            )
+            return BROADCAST_AI_REWRITE
+        
+        # Call AI Vision
+        from ai_rewriter import generate_caption_from_image
+        caption = await generate_caption_from_image(bytes(image_bytes), company_name)
+        
+        if not caption:
+            await query.message.edit_text(
+                "❌ AI Vision gagal. Cuba tulis caption sendiri.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✍️ Tulis Sendiri", callback_data="bc_ai_manual")],
+                    [InlineKeyboardButton("🖼️ Retry", callback_data="bc_ai_vision")],
+                    [InlineKeyboardButton("⏭️ Skip Caption", callback_data="bc_ai_skip")]
+                ])
+            )
+            return BROADCAST_AI_REWRITE
+        
+        # Store generated caption
+        context.user_data['broadcast_rewritten_text'] = caption
+        
+        preview = caption[:400] + ('...' if len(caption) > 400 else '')
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Guna Caption Ni", callback_data="bc_ai_accept")],
+            [InlineKeyboardButton("🖼️ Generate Lagi", callback_data="bc_ai_vision")],
+            [InlineKeyboardButton("✍️ Tulis Sendiri", callback_data="bc_ai_manual")],
+            [InlineKeyboardButton("⏭️ Skip Caption", callback_data="bc_ai_skip")]
+        ]
+        
+        await query.message.edit_text(
+            f"🖼️ **AI VISION CAPTION!**\n\n"
+            f"🏢 Company: {company_name}\n\n"
+            f"✨ **Generated:**\n{preview}\n\n"
+            f"Pilih option:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return BROADCAST_AI_REWRITE
+    
+    async def ai_manual_caption(self, update, context):
+        """Prompt admin to type caption manually"""
+        query = update.callback_query
+        await query.answer()
+        
+        company_name = context.user_data.get('broadcast_company_name', '')
+        
+        await query.message.edit_text(
+            f"✍️ **TULIS CAPTION**\n\n"
+            f"🏢 Company: {company_name}\n\n"
+            f"Taipkan caption untuk broadcast ni.\n"
+            f"Boleh guna HTML: <b>bold</b>, <i>italic</i>",
+            parse_mode='Markdown'
+        )
+        # Set flag so we know to capture next text message as caption
+        context.user_data['awaiting_manual_caption'] = True
+        return BROADCAST_AI_REWRITE
+    
+    async def ai_manual_caption_receive(self, update, context):
+        """Receive manually typed caption"""
+        if not context.user_data.get('awaiting_manual_caption'):
+            return
+        
+        context.user_data.pop('awaiting_manual_caption', None)
+        caption = message_to_html(update.message)
+        
+        # Store as the text
+        data = context.user_data.get('broadcast_data', {})
+        data['text'] = caption
+        if context.user_data.get('grid_caption') is not None or context.user_data.get('grid_media'):
+            context.user_data['grid_caption'] = caption
+        
+        return await self._go_to_confirm_from_message(update, context)
+    
+    async def _go_to_confirm_from_message(self, update, context):
+        """Route to confirm screen from a message (not callback)"""
+        is_grid = context.user_data.get('grid_media') is not None
+        if is_grid:
+            return await self._grid_show_confirm_from_message(update, context)
+        else:
+            return await self._show_single_confirm_from_message(update, context)
+    
+    async def _grid_show_confirm_from_message(self, update, context):
+        """Show grid confirm from message context"""
+        # Build same confirm as _grid_show_confirm but from message
+        grid_media = context.user_data.get('grid_media', '[]')
+        import json
+        media_items = json.loads(grid_media) if isinstance(grid_media, str) else grid_media
+        caption = context.user_data.get('grid_caption', '')
+        buttons = context.user_data.get('grid_buttons', [])
+        target_type = context.user_data.get('broadcast_target_type', 'users')
+        target_display = "👤 All Users" if target_type == "users" else "👥 All Known Groups"
+        
+        btn_info = f"{len(buttons)} buttons" if buttons else "None"
+        caption_preview = caption[:100] + '...' if len(caption) > 100 else caption
+        
+        summary = (
+            f"📋 **BROADCAST PREVIEW**\n\n"
+            f"🎯 Target: **{target_display}**\n"
+            f"🖼️ Grid Mode: **{len(media_items)} media**\n"
+            f"📝 Caption: {caption_preview or '(tiada)'}\n"
+            f"🔘 Buttons: {btn_info}\n\n"
+            f"Confirm broadcast?"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("📤 Broadcast Sekarang", callback_data="broadcast_now")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
+        ]
+        
+        # Store confirm data
+        context.user_data['broadcast_data'] = {
+            'text': caption,
+            'grid_media': grid_media,
+            'grid_buttons': json.dumps(buttons) if buttons else None,
+            'photo': None, 'video': None, 'document': None
+        }
+        
+        await update.message.reply_text(summary, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return BROADCAST_CONFIRM
+    
+    async def _show_single_confirm_from_message(self, update, context):
+        """Show single broadcast confirm from message context"""
+        buttons = context.user_data.get('single_buttons', [])
+        data = context.user_data.get('broadcast_data', {})
+        target_type = context.user_data.get('broadcast_target_type', 'users')
+        target_display = "👤 All Users" if target_type == "users" else "👥 All Known Groups"
+        
+        has_media = bool(data.get('photo') or data.get('video') or data.get('document'))
+        media_type = "Photo" if data.get('photo') else "Video" if data.get('video') else "Document" if data.get('document') else "Text Only"
+        btn_info = f"{len(buttons)} buttons" if buttons else "None"
+        
+        text_preview = (data.get('text', '') or '')[:100]
+        if len(data.get('text', '') or '') > 100:
+            text_preview += '...'
+        
+        summary = (
+            f"📋 **BROADCAST PREVIEW**\n\n"
+            f"🎯 Target: **{target_display}**\n"
+            f"📎 Media: **{media_type}**\n"
+            f"📝 Text: {text_preview or '(tiada)'}\n"
+            f"🔘 Buttons: {btn_info}\n\n"
+            f"Confirm broadcast?"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("📤 Broadcast Sekarang", callback_data="broadcast_now")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="broadcast_cancel")]
+        ]
+        
+        await update.message.reply_text(summary, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return BROADCAST_CONFIRM
     
     async def ai_rewrite_accept(self, update, context):
         """Accept rewritten text and go to confirm"""

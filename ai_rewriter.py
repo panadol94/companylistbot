@@ -97,6 +97,89 @@ async def rewrite_promo(original_text: str, company_name: str = '') -> str:
         return original_text
 
 
+GROQ_VISION_MODEL = 'llama-3.2-11b-vision-preview'
+
+VISION_CAPTION_PROMPT = """Kau adalah pakar copywriter untuk promosi online di Malaysia.
+Tugas kau: tengok gambar ni dan tulis caption promosi yang menarik berdasarkan apa yang kau nampak.
+
+Peraturan:
+- Tulis berdasarkan APA YANG KAU NAMPAK dalam gambar (winning screenshot, game name, amount, etc)
+- Guna bahasa campur (Malay + sedikit English) — gaya santai tapi profesional
+- Tambah emoji yang sesuai di permulaan baris untuk visual structure
+- Pendek dan padat — max 500 aksara
+- Fokus pada urgency dan benefit
+- Guna "korang", "anda", "bro" — jangan "saya"
+- Output teks sahaja, tiada penjelasan
+
+FORMAT HTML (WAJIB):
+- Guna <b>bold</b> untuk highlight penting (nama company, bonus amount, game name)
+- Guna <i>italic</i> untuk penekanan ringan
+- JANGAN guna markdown — HANYA HTML tags
+- Structure kemas: Header → Info → CTA"""
+
+
+async def generate_caption_from_image(image_bytes: bytes, company_name: str = '') -> str:
+    """Generate a promo caption by analyzing an image using Groq Vision AI.
+    
+    Args:
+        image_bytes: Raw image bytes
+        company_name: Company name for context
+    
+    Returns:
+        Generated caption text, or None if failed
+    """
+    if not GROQ_API_KEY:
+        logger.warning("GROQ_API_KEY not set, skipping vision caption")
+        return None
+    
+    import base64
+    image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+    
+    user_content = [
+        {
+            "type": "text",
+            "text": f"Company: {company_name}\n\nTengok gambar ni dan tulis caption promosi yang menarik berdasarkan apa yang kau nampak:"
+        },
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/jpeg;base64,{image_b64}"
+            }
+        }
+    ]
+    
+    payload = {
+        "model": GROQ_VISION_MODEL,
+        "messages": [
+            {"role": "system", "content": VISION_CAPTION_PROMPT},
+            {"role": "user", "content": user_content}
+        ],
+        "temperature": 0.8,
+        "max_tokens": 600,
+    }
+    
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(GROQ_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"Groq Vision API error {resp.status}: {error_text[:200]}")
+                    return None
+                
+                data = await resp.json()
+                caption = data['choices'][0]['message']['content'].strip()
+                logger.info(f"AI vision caption generated: {len(caption)} chars")
+                return caption
+    
+    except Exception as e:
+        logger.error(f"Groq Vision API failed: {e}")
+        return None
+
 # --- AI Company Detection ---
 _detect_cache = {}  # {text_hash: (timestamp, result)}
 DETECT_CACHE_TTL = 300  # 5 minutes
