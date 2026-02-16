@@ -7169,7 +7169,8 @@ class ChildBot:
         # Private: all text messages from non-owner | Group: when @mentioned or replied to bot
         ai_chat_on = self.db.is_ai_chat_enabled(self.bot_id)
         should_ai_respond = False
-        user_text = update.message.text or ''
+        user_text = update.message.text or update.message.caption or ''
+        has_photo = bool(update.message.photo)
         
         # In groups: passively record all messages for context
         if chat.type in ['group', 'supergroup'] and user_text:
@@ -7181,7 +7182,7 @@ class ChildBot:
             # Keep last 20 messages
             context.bot_data[group_key] = context.bot_data[group_key][-20:]
         
-        if user_text and not is_forwarded:
+        if (user_text or has_photo) and not is_forwarded:
             if chat.type == 'private' and user_id != owner_id and ai_chat_on:
                 should_ai_respond = True
             elif chat.type in ['group', 'supergroup'] and ai_chat_on:
@@ -7201,6 +7202,16 @@ class ChildBot:
                     # Enrich companies with buttons
                     for c in companies:
                         c['buttons'] = self.db.get_company_buttons(c['id'])
+                    
+                    # Download image if present
+                    image_bytes = None
+                    if has_photo:
+                        try:
+                            photo = update.message.photo[-1]  # Largest size
+                            file = await self.app.bot.get_file(photo.file_id)
+                            image_bytes = bytes(await file.download_as_bytearray())
+                        except Exception as e:
+                            self.logger.warning(f"Failed to download chat image: {e}")
                     
                     # Build chat history based on context
                     chat_history = []
@@ -7230,7 +7241,7 @@ class ChildBot:
                     
                     # Get custom prompt if set
                     custom_prompt = self.db.get_ai_prompt(self.bot_id) or None
-                    response = await ai_chat(user_text, companies, chat_history, custom_prompt=custom_prompt)
+                    response = await ai_chat(user_text, companies, chat_history, custom_prompt=custom_prompt, image_bytes=image_bytes)
                     
                     if response:
                         if chat.type == 'private':

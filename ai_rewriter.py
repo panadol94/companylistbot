@@ -418,7 +418,7 @@ CONTOH JAWAPAN BURUK (JANGAN BUAT MACAM NI):
 ^ INI TERUK. Jangan list macam database."""
 
 
-async def ai_chat(user_message: str, companies: list, chat_history: list = None, custom_prompt: str = None) -> str:
+async def ai_chat(user_message: str, companies: list, chat_history: list = None, custom_prompt: str = None, image_bytes: bytes = None) -> str:
     """AI chatbot that responds based on user questions.
     
     Args:
@@ -426,6 +426,7 @@ async def ai_chat(user_message: str, companies: list, chat_history: list = None,
         companies: List of company dicts with name, description, button_url
         chat_history: Optional list of previous messages for context
         custom_prompt: Optional custom system prompt (overrides default)
+        image_bytes: Optional image bytes for vision analysis
     
     Returns:
         AI response text
@@ -460,7 +461,7 @@ async def ai_chat(user_message: str, companies: list, chat_history: list = None,
     # Web search for mentioned companies
     web_context = ""
     try:
-        msg_lower = user_message.lower()
+        msg_lower = user_message.lower() if user_message else ""
         matched_companies = [c for c in companies if c.get('name', '').lower() in msg_lower]
         
         if matched_companies:
@@ -477,6 +478,9 @@ async def ai_chat(user_message: str, companies: list, chat_history: list = None,
         logger.warning(f"Web search context error: {e}")
 
     system = base_prompt + f"\n\n=== SENARAI COMPANY ===\n{company_context}\n=== END ===" + web_context
+    
+    if image_bytes:
+        system += "\n\nKau boleh tengok gambar yang user hantar. Describe apa kau nampak dan jawab soalan berkaitan."
 
     messages = [{"role": "system", "content": system}]
 
@@ -485,10 +489,22 @@ async def ai_chat(user_message: str, companies: list, chat_history: list = None,
         for msg in chat_history[-6:]:
             messages.append(msg)
 
-    messages.append({"role": "user", "content": user_message})
+    # Build user message content (with or without image)
+    if image_bytes:
+        import base64
+        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+        user_content = [
+            {"type": "text", "text": user_message or "Apa yang kau nampak dalam gambar ni?"},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}
+        ]
+        messages.append({"role": "user", "content": user_content})
+        model = GROQ_VISION_MODEL
+    else:
+        messages.append({"role": "user", "content": user_message})
+        model = GROQ_MODEL
 
     payload = {
-        "model": GROQ_MODEL,
+        "model": model,
         "messages": messages,
         "temperature": 0.8,
         "max_tokens": 500,
