@@ -7369,6 +7369,114 @@ class ChildBot:
                 self.logger.info("Processing as forwarder target (media)...")
                 await self.save_forwarder_target(update, context)
                 return
+        
+        # --- AI PHOTO RESPONSE (non-forwarded photos) ---
+        bot_data = self.db.get_bot_by_token(self.token)
+        owner_id = bot_data['owner_id']
+        user_id = update.effective_user.id
+        ai_chat_on = self.db.is_ai_chat_enabled(self.bot_id)
+        has_photo = bool(update.message.photo)
+        user_text = update.message.caption or ''
+        
+        if has_photo and not is_forwarded and ai_chat_on:
+            should_respond = False
+            if chat.type == 'private' and user_id != owner_id:
+                should_respond = True
+            elif chat.type in ['group', 'supergroup']:
+                should_respond = True
+            
+            if should_respond:
+                try:
+                    from ai_rewriter import ai_chat
+                    companies = self.db.get_companies(self.bot_id)
+                    
+                    if companies:
+                        for c in companies:
+                            c['buttons'] = self.db.get_company_buttons(c['id'])
+                        
+                        # Download image
+                        image_bytes = None
+                        try:
+                            photo = update.message.photo[-1]
+                            file = await self.app.bot.get_file(photo.file_id)
+                            image_bytes = bytes(await file.download_as_bytearray())
+                        except Exception as e:
+                            self.logger.warning(f"Failed to download chat image: {e}")
+                        
+                        if image_bytes:
+                            # Build chat history for groups
+                            chat_history = []
+                            if chat.type in ['group', 'supergroup']:
+                                group_key = f'group_chat_{chat.id}'
+                                recent_msgs = context.bot_data.get(group_key, [])
+                                if recent_msgs:
+                                    group_context = "\n".join(recent_msgs[-15:])
+                                    chat_history.append({
+                                        "role": "user",
+                                        "content": f"[Perbualan terkini dalam group ini:]\n{group_context}\n\n[Sekarang jawab soalan terbaru]"
+                                    })
+                                    chat_history.append({
+                                        "role": "assistant",
+                                        "content": "Baik, saya dah baca perbualan group. Saya sedia membantu!"
+                                    })
+                            else:
+                                if 'ai_chat_history' not in context.user_data:
+                                    context.user_data['ai_chat_history'] = []
+                                chat_history = context.user_data['ai_chat_history']
+                            
+                            await context.bot.send_chat_action(chat_id=chat.id, action='typing')
+                            self.logger.info(f"AI photo chat: user={user_id}, chat={chat.id}, caption='{user_text[:50]}', image_bytes=yes")
+                            
+                            custom_prompt = self.db.get_ai_prompt(self.bot_id) or None
+                            response = await ai_chat(user_text, companies, chat_history, custom_prompt=custom_prompt, image_bytes=image_bytes)
+                            
+                            if response:
+                                if chat.type == 'private':
+                                    chat_history.append({"role": "user", "content": user_text or "[sent photo]"})
+                                    chat_history.append({"role": "assistant", "content": response})
+                                    context.user_data['ai_chat_history'] = chat_history[-10:]
+                                
+                                keyboard = None
+                                if chat.type == 'private':
+                                    keyboard = InlineKeyboardMarkup([
+                                        [InlineKeyboardButton("📋 Senarai Company", callback_data="main_menu")]
+                                    ])
+                                
+                                await update.message.reply_text(
+                                    response,
+                                    parse_mode='Markdown',
+                                    reply_markup=keyboard,
+                                    disable_web_page_preview=True
+                                )
+                                return
+                            else:
+                                self.logger.warning(f"AI photo chat returned None for user={user_id}")
+                except Exception as e:
+                    self.logger.error(f"AI photo chatbot error: {e}", exc_info=True)
+        
+        # --- LIVEGRAM: Forward media to admin ---
+        if user_id != owner_id and self.db.is_livegram_enabled(self.bot_id) and chat.type == 'private':
+            try:
+                forwarded = await context.bot.forward_message(
+                    chat_id=owner_id,
+                    from_chat_id=chat.id,
+                    message_id=update.message.message_id
+                )
+                if 'forwarded_msgs' not in context.bot_data:
+                    context.bot_data['forwarded_msgs'] = {}
+                context.bot_data['forwarded_msgs'][forwarded.message_id] = {
+                    'user_id': user_id,
+                    'chat_id': chat.id,
+                    'msg_id': update.message.message_id
+                }
+                user_name = update.effective_user.first_name or "User"
+                await context.bot.send_message(
+                    chat_id=owner_id,
+                    text=f"👤 **{user_name}** (ID: `{user_id}`)\n📍 Private Chat\n\n💡 _Reply terus ke message di atas untuk balas._",
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                self.logger.error(f"Livegram media forward error: {e}")
 
     # ==================== FORWARDER FUNCTIONS ====================
     
