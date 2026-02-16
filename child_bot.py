@@ -5984,9 +5984,9 @@ class ChildBot:
         if rewritten:
             # Update the broadcast text
             data = context.user_data.get('broadcast_data', {})
-            if data.get('text') is not None:
-                data['text'] = rewritten
-            if context.user_data.get('grid_caption') is not None:
+            data['text'] = rewritten
+            # Always update grid_caption for grid broadcasts
+            if context.user_data.get('grid_media') is not None:
                 context.user_data['grid_caption'] = rewritten
         
         return await self._go_to_confirm(update, context)
@@ -6666,7 +6666,7 @@ class ChildBot:
             if not media_items:
                 return
             
-            caption_text = broadcast.get('message', '') or ''
+            caption_text = broadcast.get('text', '') or broadcast.get('message', '') or ''
             
             # Parse buttons
             buttons = []
