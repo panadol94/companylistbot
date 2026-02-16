@@ -219,14 +219,27 @@ def _create_mosaic_video_ffmpeg(media_list, watermark_text, company_name, photo_
         # Build filter_complex
         filters = []
         
-        # Scale each input to cell size
+        # Scale each input to cell size with blurred background
         for i in range(n):
             input_idx = i + 1
+            # Split input for bg and fg processing
+            filters.append(f'[{input_idx}:v]split=2[src{i}a][src{i}b]')
+            # Create blurred+darkened background (fill cell)
             filters.append(
-                f'[{input_idx}:v]scale={cell_w}:{cell_h}:'
+                f'[src{i}a]scale={cell_w}:{cell_h}:'
+                f'force_original_aspect_ratio=increase,'
+                f'crop={cell_w}:{cell_h},'
+                f'gblur=sigma=25,eq=brightness=-0.6[bg{i}]'
+            )
+            # Create sharp foreground (fit, no crop)
+            filters.append(
+                f'[src{i}b]scale={cell_w}:{cell_h}:'
                 f'force_original_aspect_ratio=decrease,'
-                f'pad={cell_w}:{cell_h}:(ow-iw)/2:(oh-ih)/2:'
-                f'color={GRID_BG_HEX},setsar=1[v{i}]'
+                f'pad={cell_w}:{cell_h}:-1:-1:color=0x00000000,format=yuva420p[fg{i}]'
+            )
+            # Overlay sharp on blur
+            filters.append(
+                f'[bg{i}][fg{i}]overlay=(W-w)/2:(H-h)/2:shortest=1[v{i}]'
             )
         
         # Overlay cells onto background (offset by border width)
@@ -423,16 +436,32 @@ def _create_placeholder(text, size):
 
 
 def _resize_to_fill(img, target_w, target_h):
-    """Resize image to FIT inside target dimensions (no cropping)."""
+    """Resize image to FIT inside target, with blurred image as background (premium look)."""
+    from PIL import ImageFilter, ImageEnhance
     w, h = img.size
     if w == 0 or h == 0:
         return Image.new('RGB', (target_w, target_h), GRID_BG)
-    scale = min(target_w / w, target_h / h)
-    new_w, new_h = int(w * scale), int(h * scale)
-    img = img.resize((new_w, new_h), Image.LANCZOS)
-    canvas = Image.new('RGB', (target_w, target_h), GRID_BG)
-    canvas.paste(img, ((target_w-new_w)//2, (target_h-new_h)//2))
-    return canvas
+    
+    # Step 1: Create blurred background — scale image to FILL the cell completely
+    bg_scale = max(target_w / w, target_h / h)
+    bg_w, bg_h = int(w * bg_scale), int(h * bg_scale)
+    bg = img.resize((bg_w, bg_h), Image.LANCZOS)
+    # Center crop the background to exact cell size
+    left = (bg_w - target_w) // 2
+    top = (bg_h - target_h) // 2
+    bg = bg.crop((left, top, left + target_w, top + target_h))
+    # Apply heavy blur + darken for premium effect
+    bg = bg.filter(ImageFilter.GaussianBlur(radius=25))
+    bg = ImageEnhance.Brightness(bg).enhance(0.4)
+    
+    # Step 2: Fit the sharp image on top (no cropping)
+    fg_scale = min(target_w / w, target_h / h)
+    fg_w, fg_h = int(w * fg_scale), int(h * fg_scale)
+    fg = img.resize((fg_w, fg_h), Image.LANCZOS)
+    
+    # Paste sharp image centered on blurred background
+    bg.paste(fg, ((target_w - fg_w) // 2, (target_h - fg_h) // 2))
+    return bg
 
 
 def _round_corners(img, radius):
