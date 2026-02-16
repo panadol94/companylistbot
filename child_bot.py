@@ -5391,8 +5391,7 @@ class ChildBot:
     
     async def _show_button_picker(self, message_or_query, context):
         """Show company picker + manual option for broadcast buttons"""
-        bot_id = context.user_data.get('bot_id') or context.bot_data.get('bot_id')
-        companies = self.db.get_companies(bot_id) if bot_id else []
+        companies = self.db.get_companies(self.bot_id)
         
         keyboard = []
         # Show companies that have button_url
@@ -5434,8 +5433,7 @@ class ChildBot:
         data = update.callback_query.data  # grid_comp_<id>
         comp_id = int(data.replace("grid_comp_", ""))
         
-        bot_id = context.user_data.get('bot_id') or context.bot_data.get('bot_id')
-        companies = self.db.get_companies(bot_id) if bot_id else []
+        companies = self.db.get_companies(self.bot_id)
         company = next((c for c in companies if c['id'] == comp_id), None)
         
         if not company or not company.get('button_url'):
@@ -5577,8 +5575,7 @@ class ChildBot:
         }
         
         # Show company picker for buttons
-        bot_id = context.user_data.get('bot_id') or context.bot_data.get('bot_id')
-        companies = self.db.get_companies(bot_id) if bot_id else []
+        companies = self.db.get_companies(self.bot_id)
         
         keyboard = []
         for comp in companies:
@@ -5604,8 +5601,7 @@ class ChildBot:
         await update.callback_query.answer()
         comp_id = int(update.callback_query.data.replace("sbtn_comp_", ""))
         
-        bot_id = context.user_data.get('bot_id') or context.bot_data.get('bot_id')
-        companies = self.db.get_companies(bot_id) if bot_id else []
+        companies = self.db.get_companies(self.bot_id)
         company = next((c for c in companies if c['id'] == comp_id), None)
         
         if not company:
