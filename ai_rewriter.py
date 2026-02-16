@@ -200,15 +200,19 @@ async def generate_caption_from_image(image_bytes, company_name: str = '', compa
                 data = await resp.json()
                 raw = data['choices'][0]['message']['content'].strip()
                 
-                # Parse detected company from response
+                # Parse and REMOVE detected company from response
                 detected_company = None
-                caption = raw
-                if raw.startswith('DETECTED_COMPANY:'):
-                    lines = raw.split('\n', 1)
-                    company_line = lines[0].replace('DETECTED_COMPANY:', '').strip()
-                    if company_line and company_line.upper() != 'NONE':
-                        detected_company = company_line
-                    caption = lines[1].strip() if len(lines) > 1 else ''
+                caption_lines = []
+                for line in raw.split('\n'):
+                    stripped = line.strip()
+                    if stripped.upper().startswith('DETECTED_COMPANY:'):
+                        company_val = stripped.split(':', 1)[1].strip()
+                        if company_val and company_val.upper() != 'NONE':
+                            detected_company = company_val
+                        # Skip this line - don't include in caption
+                    else:
+                        caption_lines.append(line)
+                caption = '\n'.join(caption_lines).strip()
                 
                 logger.info(f"AI vision caption generated: {len(caption)} chars, detected_company: {detected_company}")
                 return caption, detected_company
