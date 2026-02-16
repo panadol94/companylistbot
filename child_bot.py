@@ -9745,6 +9745,35 @@ class ChildBot:
             media_bytes = promo_data.get('media_bytes')
             media_type = promo_data.get('media_type')
 
+            # AI Vision: generate caption if image present but text is short/empty
+            vision_bytes = None
+            if media_bytes and media_type == 'photo':
+                vision_bytes = media_bytes
+            elif promo_data.get('is_album') and promo_data.get('all_media_bytes'):
+                # Use first photo from album
+                for mb, mt in zip(promo_data['all_media_bytes'], promo_data.get('all_media_types', [])):
+                    if mt == 'photo':
+                        vision_bytes = mb
+                        break
+            
+            if vision_bytes and len(swapped.strip()) < 50:
+                try:
+                    from ai_rewriter import generate_caption_from_image
+                    ai_caption = await generate_caption_from_image(vision_bytes, company)
+                    if ai_caption:
+                        swapped = ai_caption
+                        # Update DB with AI-generated caption
+                        try:
+                            conn = self.db.get_connection()
+                            conn.execute("UPDATE detected_promos SET swapped_text = ? WHERE id = ?", (ai_caption, promo_id))
+                            conn.commit()
+                            conn.close()
+                        except Exception:
+                            pass
+                        self.logger.info(f"AI Vision caption generated for channel post: {len(ai_caption)} chars")
+                except Exception as e:
+                    self.logger.warning(f"AI Vision caption failed for channel post: {e}")
+
             # Helper: send message with optional media
             async def send_with_media(chat_id, text, keyboard=None):
                 """Send text + media to a chat. Returns sent message for file_id capture."""
