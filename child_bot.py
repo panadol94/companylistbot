@@ -143,6 +143,7 @@ GW_MENU, GW_TEXT, GW_MEDIA = range(90, 93)
 BROADCAST_TYPE = 100
 GRID_MEDIA, GRID_CAPTION, GRID_BUTTONS = range(101, 104)
 SINGLE_BUTTONS = 105
+BROADCAST_AI_REWRITE = 106
 # States for Userbot Setup
 UB_MENU, UB_SETUP_API, UB_SETUP_HASH, UB_SETUP_PHONE, UB_SETUP_OTP, UB_SETUP_2FA, UB_ADD_CHANNEL = range(110, 117)
 # States for Userbot Hub & Clone Media
@@ -280,6 +281,13 @@ class ChildBot:
                     CallbackQueryHandler(self.grid_manual_btn, pattern="^grid_manual_btn$"),
                     CallbackQueryHandler(self.grid_buttons_done, pattern="^grid_buttons_done$"),
                     CallbackQueryHandler(self.grid_buttons_skip, pattern="^grid_skip_buttons$")
+                ],
+                BROADCAST_AI_REWRITE: [
+                    CallbackQueryHandler(self.ai_rewrite_execute, pattern="^bc_ai_yes$"),
+                    CallbackQueryHandler(self.ai_rewrite_skip, pattern="^bc_ai_skip$"),
+                    CallbackQueryHandler(self.ai_rewrite_accept, pattern="^bc_ai_accept$"),
+                    CallbackQueryHandler(self.ai_rewrite_original, pattern="^bc_ai_original$"),
+                    CallbackQueryHandler(self.ai_rewrite_retry, pattern="^bc_ai_retry$"),
                 ]
             },
             fallbacks=[CommandHandler("cancel", self.cancel_op), CallbackQueryHandler(self.handle_callback)],
@@ -5440,7 +5448,8 @@ class ChildBot:
             btn_url = 'https://' + btn_url
         
         context.user_data['grid_buttons'] = [{'text': btn_text, 'url': btn_url}]
-        return await self._grid_show_confirm(update, context)
+        context.user_data['broadcast_company_name'] = company['name']
+        return await self._show_ai_rewrite_prompt(update, context)
     
     async def grid_manual_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Switch to manual button input"""
@@ -5622,7 +5631,8 @@ class ChildBot:
             btn_url = 'https://' + btn_url
         
         context.user_data['single_buttons'] = [{'text': btn_text, 'url': btn_url}]
-        return await self._show_single_confirm(update, context)
+        context.user_data['broadcast_company_name'] = company['name']
+        return await self._show_ai_rewrite_prompt(update, context)
     
     async def single_btn_manual(self, update, context):
         """Switch to manual button input for single broadcast"""
@@ -5669,6 +5679,124 @@ class ChildBot:
             await update.callback_query.answer()
         context.user_data['single_buttons'] = []
         return await self._show_single_confirm(update, context)
+    
+    # ==================== AI REWRITE FOR BROADCAST ====================
+    async def _show_ai_rewrite_prompt(self, update, context):
+        """Show AI rewrite prompt after company selection"""
+        company_name = context.user_data.get('broadcast_company_name', '')
+        
+        # Get the text to rewrite
+        data = context.user_data.get('broadcast_data', {})
+        text = data.get('text') or context.user_data.get('grid_caption') or ''
+        
+        if not text.strip():
+            # No text to rewrite, go directly to confirm
+            return await self._go_to_confirm(update, context)
+        
+        preview = text[:200] + ('...' if len(text) > 200 else '')
+        
+        keyboard = [
+            [InlineKeyboardButton("✨ AI Rewrite", callback_data="bc_ai_yes")],
+            [InlineKeyboardButton("⏭️ Skip (guna asal)", callback_data="bc_ai_skip")]
+        ]
+        
+        msg_text = (
+            f"🤖 **AI REWRITE**\n\n"
+            f"🏢 Company: **{company_name}**\n\n"
+            f"📝 Text semasa:\n{preview}\n\n"
+            f"Nak AI tulis semula text ni supaya lebih menarik?"
+        )
+        
+        query = update.callback_query
+        if query:
+            await query.message.edit_text(msg_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await update.message.reply_text(msg_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        
+        return BROADCAST_AI_REWRITE
+    
+    async def ai_rewrite_execute(self, update, context):
+        """Execute AI rewrite using Groq API"""
+        query = update.callback_query
+        await query.answer()
+        
+        company_name = context.user_data.get('broadcast_company_name', '')
+        data = context.user_data.get('broadcast_data', {})
+        original_text = data.get('text') or context.user_data.get('grid_caption') or ''
+        
+        # Store original for later
+        context.user_data['broadcast_original_text'] = original_text
+        
+        # Show loading
+        await query.message.edit_text(
+            f"✨ **AI sedang menulis semula...**\n\n"
+            f"🏢 Company: {company_name}\n"
+            f"⏳ Tunggu sekejap...",
+            parse_mode='Markdown'
+        )
+        
+        # Call AI
+        from ai_rewriter import rewrite_promo
+        rewritten = await rewrite_promo(original_text, company_name)
+        
+        context.user_data['broadcast_rewritten_text'] = rewritten
+        
+        preview_orig = original_text[:150] + ('...' if len(original_text) > 150 else '')
+        preview_new = rewritten[:300] + ('...' if len(rewritten) > 300 else '')
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Guna Rewritten", callback_data="bc_ai_accept")],
+            [InlineKeyboardButton("📝 Guna Original", callback_data="bc_ai_original")],
+            [InlineKeyboardButton("✨ Rewrite Lagi", callback_data="bc_ai_retry")]
+        ]
+        
+        await query.message.edit_text(
+            f"✨ **AI REWRITE SELESAI!**\n\n"
+            f"🏢 Company: {company_name}\n\n"
+            f"📝 **Original:**\n{preview_orig}\n\n"
+            f"✨ **Rewritten:**\n{preview_new}\n\n"
+            f"Pilih mana nak guna:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return BROADCAST_AI_REWRITE
+    
+    async def ai_rewrite_accept(self, update, context):
+        """Accept rewritten text and go to confirm"""
+        await update.callback_query.answer()
+        rewritten = context.user_data.get('broadcast_rewritten_text', '')
+        
+        if rewritten:
+            # Update the broadcast text
+            data = context.user_data.get('broadcast_data', {})
+            if data.get('text') is not None:
+                data['text'] = rewritten
+            if context.user_data.get('grid_caption') is not None:
+                context.user_data['grid_caption'] = rewritten
+        
+        return await self._go_to_confirm(update, context)
+    
+    async def ai_rewrite_original(self, update, context):
+        """Keep original text and go to confirm"""
+        await update.callback_query.answer()
+        return await self._go_to_confirm(update, context)
+    
+    async def ai_rewrite_retry(self, update, context):
+        """Retry AI rewrite"""
+        return await self.ai_rewrite_execute(update, context)
+    
+    async def ai_rewrite_skip(self, update, context):
+        """Skip AI rewrite and go to confirm"""
+        await update.callback_query.answer()
+        return await self._go_to_confirm(update, context)
+    
+    async def _go_to_confirm(self, update, context):
+        """Route to the correct confirm screen based on broadcast mode"""
+        is_grid = context.user_data.get('grid_media') is not None
+        if is_grid:
+            return await self._grid_show_confirm(update, context)
+        else:
+            return await self._show_single_confirm(update, context)
     
     async def _show_single_confirm(self, update, context):
         """Show single broadcast confirm with buttons info"""

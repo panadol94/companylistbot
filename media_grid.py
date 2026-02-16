@@ -426,7 +426,7 @@ def _resize_to_fill(img, target_w, target_h):
     w, h = img.size
     if w == 0 or h == 0:
         return Image.new('RGB', (target_w, target_h), GRID_BG)
-    scale = min(target_w / w, target_h / h)
+    scale = max(target_w / w, target_h / h)
     new_w, new_h = int(w * scale), int(h * scale)
     img = img.resize((new_w, new_h), Image.LANCZOS)
     canvas = Image.new('RGB', (target_w, target_h), GRID_BG)
