@@ -5854,12 +5854,12 @@ class ChildBot:
         ]
         
         await query.message.edit_text(
-            f"🖼️ **AI VISION CAPTION!**\n\n"
+            f"🖼️ <b>AI VISION CAPTION!</b>\n\n"
             f"🏢 Company: {company_name}\n\n"
-            f"✨ **Generated:**\n{preview}\n\n"
+            f"✨ <b>Generated:</b>\n{preview}\n\n"
             f"Pilih option:",
             reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
+            parse_mode='HTML'
         )
         return BROADCAST_AI_REWRITE
     
