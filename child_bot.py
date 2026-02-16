@@ -7240,6 +7240,8 @@ class ChildBot:
                     # Show typing indicator
                     await context.bot.send_chat_action(chat_id=chat.id, action='typing')
                     
+                    self.logger.info(f"AI chat: user={user_id}, chat={chat.id}, text='{user_text[:50]}', has_photo={has_photo}, image_bytes={'yes' if image_bytes else 'no'}")
+                    
                     # Get custom prompt if set
                     custom_prompt = self.db.get_ai_prompt(self.bot_id) or None
                     response = await ai_chat(user_text, companies, chat_history, custom_prompt=custom_prompt, image_bytes=image_bytes)
@@ -7265,8 +7267,10 @@ class ChildBot:
                             disable_web_page_preview=True
                         )
                         return
+                    else:
+                        self.logger.warning(f"AI chat returned None for user={user_id}, chat={chat.id}")
             except Exception as e:
-                self.logger.error(f"AI chatbot error: {e}")
+                self.logger.error(f"AI chatbot error: {e}", exc_info=True)
 
         # User -> Admin (forward message and store mapping)
         if user_id != owner_id and self.db.is_livegram_enabled(self.bot_id):

@@ -558,7 +558,7 @@ async def ai_chat(user_message: str, companies: list, chat_history: list = None,
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(GROQ_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            async with session.post(GROQ_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
                     logger.error(f"Groq chat API error {resp.status}: {error_text[:200]}")
