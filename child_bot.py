@@ -6726,32 +6726,49 @@ class ChildBot:
                     pass
         else:
             # Single media or text-only mode
+            # Build reply_markup from buttons if available
+            reply_markup = None
+            if grid_buttons_json:
+                buttons = json.loads(grid_buttons_json) if isinstance(grid_buttons_json, str) else grid_buttons_json
+                if buttons:
+                    keyboard_rows = []
+                    for btn in buttons:
+                        url = btn['url']
+                        if url.startswith('t.me/'):
+                            url = 'https://' + url
+                        keyboard_rows.append([InlineKeyboardButton(btn['text'], url=url)])
+                    reply_markup = InlineKeyboardMarkup(keyboard_rows)
+            
             if broadcast.get('media_type') == 'photo' and broadcast.get('media_file_id'):
                 await bot.send_photo(
                     chat_id=chat_id,
                     photo=broadcast['media_file_id'],
                     caption=broadcast.get('message') or '',
-                    parse_mode='HTML'
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
             elif broadcast.get('media_type') == 'video' and broadcast.get('media_file_id'):
                 await bot.send_video(
                     chat_id=chat_id,
                     video=broadcast['media_file_id'],
                     caption=broadcast.get('message') or '',
-                    parse_mode='HTML'
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
             elif broadcast.get('media_type') == 'document' and broadcast.get('media_file_id'):
                 await bot.send_document(
                     chat_id=chat_id,
                     document=broadcast['media_file_id'],
                     caption=broadcast.get('message') or '',
-                    parse_mode='HTML'
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
             elif broadcast.get('message'):
                 await bot.send_message(
                     chat_id=chat_id,
                     text=broadcast['message'],
-                    parse_mode='HTML'
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
                 )
 
 

@@ -219,7 +219,7 @@ async def generate_caption_from_image(image_bytes, company_name: str = '', compa
     
     except Exception as e:
         logger.error(f"Groq Vision API failed: {e}")
-        return None
+        return None, None
 
 # --- AI Company Detection ---
 _detect_cache = {}  # {text_hash: (timestamp, result)}
