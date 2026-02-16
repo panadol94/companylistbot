@@ -97,7 +97,7 @@ async def rewrite_promo(original_text: str, company_name: str = '') -> str:
         return original_text
 
 
-GROQ_VISION_MODEL = 'llama-3.2-11b-vision-preview'
+GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct'
 
 VISION_CAPTION_PROMPT = """Kau adalah pakar copywriter untuk promosi online di Malaysia.
 Tugas kau: tengok gambar ni dan tulis caption promosi yang menarik berdasarkan apa yang kau nampak.
