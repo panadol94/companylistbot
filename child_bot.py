@@ -5826,9 +5826,13 @@ class ChildBot:
             )
             return BROADCAST_AI_REWRITE
         
-        # Call AI Vision
+        # Call AI Vision - include company link in caption
         from ai_rewriter import generate_caption_from_image
-        caption, _ = await generate_caption_from_image(bytes(image_bytes), company_name)
+        company_link = ''
+        grid_buttons = context.user_data.get('grid_buttons', [])
+        if grid_buttons and isinstance(grid_buttons, list) and len(grid_buttons) > 0:
+            company_link = grid_buttons[0].get('url', '') if isinstance(grid_buttons[0], dict) else ''
+        caption, _ = await generate_caption_from_image(bytes(image_bytes), company_name, company_link=company_link)
         
         if not caption:
             await query.message.edit_text(
@@ -6679,6 +6683,17 @@ class ChildBot:
             tmp_dir = tempfile.mkdtemp(prefix='grid_')
             
             try:
+                # Build reply_markup if buttons exist
+                reply_markup = None
+                if buttons:
+                    keyboard_rows = []
+                    for btn in buttons:
+                        url = btn['url']
+                        if url.startswith('t.me/'):
+                            url = 'https://' + url
+                        keyboard_rows.append([InlineKeyboardButton(btn['text'], url=url)])
+                    reply_markup = InlineKeyboardMarkup(keyboard_rows)
+                
                 if has_video:
                     # Mixed: create video collage via FFmpeg
                     output_path = await self._create_grid_video(bot, media_items, tmp_dir)
@@ -6688,7 +6703,8 @@ class ChildBot:
                             video=f,
                             caption=caption_text or None,
                             parse_mode='HTML' if caption_text else None,
-                            supports_streaming=True
+                            supports_streaming=True,
+                            reply_markup=reply_markup
                         )
                 else:
                     # Photos only: create image grid via Pillow
@@ -6698,24 +6714,9 @@ class ChildBot:
                             chat_id=chat_id,
                             photo=f,
                             caption=caption_text or None,
-                            parse_mode='HTML' if caption_text else None
+                            parse_mode='HTML' if caption_text else None,
+                            reply_markup=reply_markup
                         )
-                
-                # Send follow-up ONLY for buttons
-                if buttons:
-                    await asyncio.sleep(0.3)
-                    keyboard_rows = []
-                    for btn in buttons:
-                        url = btn['url']
-                        if url.startswith('t.me/'):
-                            url = 'https://' + url
-                        keyboard_rows.append([InlineKeyboardButton(btn['text'], url=url)])
-                    
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text='.',
-                        reply_markup=InlineKeyboardMarkup(keyboard_rows)
-                    )
             finally:
                 # Cleanup temp files
                 import shutil

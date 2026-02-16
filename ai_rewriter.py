@@ -116,19 +116,26 @@ PENTING - DETECT COMPANY:
 - Kalau tak nampak/tak pasti, tulis DETECTED_COMPANY: NONE
 - Lepas tu baru tulis caption biasa
 
+LINK:
+- Kalau ada link company diberikan, WAJIB masukkan dalam caption sebagai CTA
+- Format: <a href="URL">DAFTAR SEKARANG</a> atau <a href="URL">PLAY NOW</a>
+- Letak di akhir caption
+
 FORMAT HTML (WAJIB):
 - Guna <b>bold</b> untuk highlight penting (nama company, bonus amount, game name)
 - Guna <i>italic</i> untuk penekanan ringan
+- Guna <a href="url">text</a> untuk link
 - JANGAN guna markdown — HANYA HTML tags
-- Structure kemas: Header → Info → CTA"""
+- Structure kemas: Header → Info → CTA dengan link"""
 
 
-async def generate_caption_from_image(image_bytes, company_name: str = '') -> tuple:
+async def generate_caption_from_image(image_bytes, company_name: str = '', company_link: str = '') -> tuple:
     """Generate a promo caption by analyzing images using Groq Vision AI.
     
     Args:
         image_bytes: Raw image bytes (single bytes) or list of bytes (multiple images)
         company_name: Company name for context
+        company_link: Company registration/play link to include in caption
     
     Returns:
         tuple(caption, detected_company) or (None, None) if failed
@@ -148,10 +155,13 @@ async def generate_caption_from_image(image_bytes, company_name: str = '') -> tu
         images_list = list(image_bytes)  # Already a list
     
     # Build user content with all images
+    # Build text prompt with optional link
+    link_info = f"\nLink company: {company_link} — WAJIB masukkan dalam caption sebagai CTA link." if company_link else ''
+    
     user_content = [
         {
             "type": "text",
-            "text": f"Company: {company_name or 'Unknown'}\n\nTengok {'semua ' + str(len(images_list)) + ' gambar' if len(images_list) > 1 else 'gambar'} ni dan tulis caption promosi yang menarik berdasarkan apa yang kau nampak:"
+            "text": f"Company: {company_name or 'Unknown'}{link_info}\n\nTengok {'semua ' + str(len(images_list)) + ' gambar' if len(images_list) > 1 else 'gambar'} ni dan tulis caption promosi yang menarik berdasarkan apa yang kau nampak:"
         }
     ]
     
