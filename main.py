@@ -607,12 +607,16 @@ async def wa_status_update(request: Request):
             
             if child:
                 admins = child.db.get_admins(bot_id)
+                logger.info(f"📱 WA notify: bot {bot_id} found, admins={admins}")
                 if status == 'connected':
                     msg = "✅ <b>WhatsApp Connected!</b>\n\n📱 WhatsApp monitor aktif. Semua mesej group akan dimonitor untuk company detection."
                 elif status == 'disconnected':
                     msg = "❌ <b>WhatsApp Disconnected</b>\n\nSambungan WhatsApp terputus. Pergi ke /settings → 📱 WhatsApp Monitor untuk reconnect."
                 else:
                     msg = f"📱 WhatsApp status: <b>{status}</b>"
+                
+                if not admins:
+                    logger.warning(f"📱 WA notify: No admins found for bot {bot_id}, skipping notification")
                 
                 for admin_id in admins:
                     try:
@@ -621,8 +625,11 @@ async def wa_status_update(request: Request):
                             text=msg,
                             parse_mode='HTML'
                         )
+                        logger.info(f"📱 WA notify: Sent '{status}' to admin {admin_id}")
                     except Exception as e:
                         logger.warning(f"Failed to notify admin {admin_id}: {e}")
+            else:
+                logger.warning(f"📱 WA notify: No child bot found for bot_id={bot_id} (type={type(bot_id)}). Active bots: {[(t[:10], b.bot_id) for t,b in bot_manager.bots.items()]}")
         except Exception as e:
             logger.error(f"WA admin notification error: {e}")
         
