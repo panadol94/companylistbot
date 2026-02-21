@@ -616,7 +616,13 @@ async def wa_status_update(request: Request):
                     msg = f"📱 WhatsApp status: <b>{status}</b>"
                 
                 if not admins:
-                    logger.warning(f"📱 WA notify: No admins found for bot {bot_id}, skipping notification")
+                    # Fallback to owner_id
+                    bot_data = child.db.get_bot_by_id(bot_id)
+                    if bot_data and bot_data.get('owner_id'):
+                        admins = [bot_data['owner_id']]
+                        logger.info(f"📱 WA notify: No admins, using owner {admins[0]} as fallback")
+                    else:
+                        logger.warning(f"📱 WA notify: No admins or owner for bot {bot_id}, skipping")
                 
                 for admin_id in admins:
                     try:
