@@ -156,6 +156,9 @@ async def _validate_groq(api_key: str) -> tuple:
             ) as resp:
                 if resp.status == 200:
                     return True, "Groq API ✅"
+                elif resp.status == 429:
+                    # 429 = rate limited but key IS valid
+                    return True, "Groq API ✅ (rate limited, try again later)"
                 elif resp.status == 401:
                     return False, "API key tidak sah. Sila semak semula."
                 else:
@@ -181,6 +184,9 @@ async def _validate_gemini(api_key: str) -> tuple:
             ) as resp:
                 if resp.status == 200:
                     return True, "Google Gemini ✅"
+                elif resp.status == 429:
+                    # 429 = quota exceeded but key IS valid
+                    return True, "Google Gemini ✅ (quota limit, try again later)"
                 elif resp.status in (400, 403):
                     return False, "API key tidak sah. Sila semak semula."
                 else:
