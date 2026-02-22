@@ -56,7 +56,10 @@ class MotherBot:
         ai_builder_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(self.ai_builder_entry, pattern=r'^ai_setup_\d+$')],
             states={
-                AI_PROVIDER_SELECT: [CallbackQueryHandler(self.ai_provider_selected, pattern=r'^ai_provider_')],
+                AI_PROVIDER_SELECT: [
+                    CallbackQueryHandler(self.ai_provider_selected, pattern=r'^ai_provider_'),
+                    CallbackQueryHandler(self.show_ai_tutorial_conv, pattern=r'^ai_tutorial$'),
+                ],
                 AI_API_KEY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ai_apikey_received)],
                 AI_CHAT: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.ai_chat_message),
@@ -73,6 +76,7 @@ class MotherBot:
                 CallbackQueryHandler(self.cancel_callback, pattern=r'^cancel$'),
             ],
             per_message=False,
+            allow_reentry=True,
         )
         self.app.add_handler(ai_builder_conv)
         
@@ -95,6 +99,7 @@ class MotherBot:
                 CallbackQueryHandler(self.cancel_callback, pattern=r'^cancel$'),
             ],
             per_message=False,
+            allow_reentry=True,
         )
         self.app.add_handler(ai_modify_conv)
         
@@ -105,7 +110,11 @@ class MotherBot:
                 CallbackQueryHandler(self.apikey_menu, pattern=r'^manage_api_key$'),
             ],
             states={
-                APIKEY_PROVIDER: [CallbackQueryHandler(self.apikey_provider_selected, pattern=r'^apikey_add_')],
+                APIKEY_PROVIDER: [
+                    CallbackQueryHandler(self.apikey_provider_selected, pattern=r'^apikey_add_'),
+                    CallbackQueryHandler(self.apikey_delete_confirmed, pattern=r'^apikey_confirm_del_'),
+                    CallbackQueryHandler(self.show_ai_tutorial_conv, pattern=r'^ai_tutorial$'),
+                ],
                 APIKEY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.apikey_received)],
                 APIKEY_CONFIRM_DELETE: [CallbackQueryHandler(self.apikey_delete_confirmed, pattern=r'^apikey_confirm_del_')],
             },
@@ -115,6 +124,7 @@ class MotherBot:
                 CallbackQueryHandler(self.apikey_menu, pattern=r'^manage_api_key$'),
             ],
             per_message=False,
+            allow_reentry=True,
         )
         self.app.add_handler(apikey_conv)
         
@@ -1886,6 +1896,72 @@ class MotherBot:
         keyboard = [
             [InlineKeyboardButton("🔑 Setup API Key Sekarang", callback_data="manage_api_key")],
             [InlineKeyboardButton("« Back", callback_data="close_panel")],
+        ]
+        
+        await query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML',
+            disable_web_page_preview=True
+        )
+
+    async def show_ai_tutorial_conv(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show tutorial inside ConversationHandler"""
+        query = update.callback_query
+        await query.answer()
+        
+        text = (
+            "📚 <b>Cara Dapat AI API Key (FREE)</b>\n\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "⚡ <b>Groq (Recommended)</b>\n"
+            "1️⃣ Pergi ke <a href='https://console.groq.com'>console.groq.com</a>\n"
+            "2️⃣ Sign Up (free, guna Google/GitHub)\n"
+            "3️⃣ API Keys → Create API Key\n"
+            "4️⃣ Copy key → paste sini\n\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "💎 <b>Google Gemini</b>\n"
+            "1️⃣ Pergi ke <a href='https://aistudio.google.com'>aistudio.google.com</a>\n"
+            "2️⃣ Sign in → Get API Key → Create\n"
+            "3️⃣ Copy key → paste sini\n\n"
+            "Dua-dua 100% <b>FREE</b>!"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔑 Setup Key", callback_data="manage_api_key")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+        ]
+        
+        await query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML',
+            disable_web_page_preview=True
+        )
+
+    async def show_ai_tutorial_conv(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show tutorial inside ConversationHandler"""
+        query = update.callback_query
+        await query.answer()
+        
+        text = (
+            "📚 <b>Cara Dapat AI API Key (FREE)</b>\n\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "⚡ <b>Groq (Recommended)</b>\n"
+            "1️⃣ Pergi ke <a href='https://console.groq.com'>console.groq.com</a>\n"
+            "2️⃣ Sign Up (free, guna Google/GitHub)\n"
+            "3️⃣ API Keys → Create API Key\n"
+            "4️⃣ Copy key → paste sini\n\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "💎 <b>Google Gemini</b>\n"
+            "1️⃣ Pergi ke <a href='https://aistudio.google.com'>aistudio.google.com</a>\n"
+            "2️⃣ Sign in → Get API Key → Create\n"
+            "3️⃣ Copy key → paste sini\n\n"
+            "Dua-dua 100% <b>FREE</b>!"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔑 Setup Key", callback_data="manage_api_key")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
         ]
         
         await query.message.edit_text(
