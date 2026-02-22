@@ -568,6 +568,18 @@ class Database:
                 )
             ''')
 
+            # 17. AI API Keys Table (User-provided AI API keys for AI Bot Builder)
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS ai_api_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    provider TEXT DEFAULT 'groq',
+                    api_key TEXT NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, provider)
+                )
+            ''')
+
             conn.commit()
             conn.close()
 
@@ -2894,3 +2906,55 @@ class Database:
             conn.execute("DELETE FROM whatsapp_sessions WHERE bot_id = ?", (bot_id,))
             conn.commit()
             conn.close()
+
+    # --- AI API Key Management ---
+    def save_ai_api_key(self, user_id, provider, api_key):
+        """Save or update AI API key for a user (upsert)"""
+        with self.lock:
+            conn = self.get_connection()
+            conn.execute(
+                "INSERT INTO ai_api_keys (user_id, provider, api_key) VALUES (?, ?, ?) "
+                "ON CONFLICT(user_id, provider) DO UPDATE SET api_key = ?, created_at = CURRENT_TIMESTAMP",
+                (user_id, provider.lower(), api_key, api_key)
+            )
+            conn.commit()
+            conn.close()
+
+    def get_ai_api_key(self, user_id, provider=None):
+        """Get AI API key for a user. Returns first key if no provider specified."""
+        conn = self.get_connection()
+        if provider:
+            row = conn.execute(
+                "SELECT * FROM ai_api_keys WHERE user_id = ? AND provider = ?",
+                (user_id, provider.lower())
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM ai_api_keys WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+                (user_id,)
+            ).fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_all_ai_api_keys(self, user_id):
+        """Get all AI API keys for a user"""
+        conn = self.get_connection()
+        rows = conn.execute(
+            "SELECT * FROM ai_api_keys WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,)
+        ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def delete_ai_api_key(self, user_id, provider):
+        """Delete AI API key for a user"""
+        with self.lock:
+            conn = self.get_connection()
+            result = conn.execute(
+                "DELETE FROM ai_api_keys WHERE user_id = ? AND provider = ?",
+                (user_id, provider.lower())
+            )
+            conn.commit()
+            deleted = result.rowcount > 0
+            conn.close()
+            return deleted

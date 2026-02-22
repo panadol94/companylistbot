@@ -4,9 +4,21 @@ from database import Database
 from config import MASTER_ADMIN_ID, MASTER_ADMIN_IDS, MOTHER_TOKEN
 import logging
 import datetime
+import ai_bot_builder
 
 TOKEN_INPUT = 0
 CLONE_TOKEN = 1
+
+# AI Builder states
+AI_PROVIDER_SELECT = 10
+AI_API_KEY_INPUT = 11
+AI_CHAT = 12
+AI_PREVIEW = 13
+
+# API Key management states
+APIKEY_PROVIDER = 20
+APIKEY_INPUT = 21
+APIKEY_CONFIRM_DELETE = 22
 
 class MotherBot:
     def __init__(self, token, db: Database, bot_manager):
@@ -39,6 +51,72 @@ class MotherBot:
             fallbacks=[CommandHandler("cancel", self.cancel)]
         )
         self.app.add_handler(create_conv)
+        
+        # AI Bot Builder ConversationHandler
+        ai_builder_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.ai_builder_entry, pattern=r'^ai_setup_\d+$')],
+            states={
+                AI_PROVIDER_SELECT: [CallbackQueryHandler(self.ai_provider_selected, pattern=r'^ai_provider_')],
+                AI_API_KEY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.ai_apikey_received)],
+                AI_CHAT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.ai_chat_message),
+                    MessageHandler(filters.PHOTO, self.ai_chat_image),
+                    CallbackQueryHandler(self.ai_generate_config, pattern=r'^ai_generate$'),
+                ],
+                AI_PREVIEW: [
+                    CallbackQueryHandler(self.ai_apply_config, pattern=r'^ai_apply$'),
+                    CallbackQueryHandler(self.ai_back_to_chat, pattern=r'^ai_back_chat$'),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("cancel", self.cancel),
+                CallbackQueryHandler(self.cancel_callback, pattern=r'^cancel$'),
+            ],
+            per_message=False,
+        )
+        self.app.add_handler(ai_builder_conv)
+        
+        # AI Modify Bot ConversationHandler
+        ai_modify_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.ai_modify_entry, pattern=r'^ai_modify_\d+$')],
+            states={
+                AI_CHAT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.ai_chat_message),
+                    MessageHandler(filters.PHOTO, self.ai_chat_image),
+                    CallbackQueryHandler(self.ai_generate_config, pattern=r'^ai_generate$'),
+                ],
+                AI_PREVIEW: [
+                    CallbackQueryHandler(self.ai_apply_config, pattern=r'^ai_apply$'),
+                    CallbackQueryHandler(self.ai_back_to_chat, pattern=r'^ai_back_chat$'),
+                ],
+            },
+            fallbacks=[
+                CommandHandler("cancel", self.cancel),
+                CallbackQueryHandler(self.cancel_callback, pattern=r'^cancel$'),
+            ],
+            per_message=False,
+        )
+        self.app.add_handler(ai_modify_conv)
+        
+        # API Key Management ConversationHandler
+        apikey_conv = ConversationHandler(
+            entry_points=[
+                CommandHandler("apikey", self.apikey_menu_cmd),
+                CallbackQueryHandler(self.apikey_menu, pattern=r'^manage_api_key$'),
+            ],
+            states={
+                APIKEY_PROVIDER: [CallbackQueryHandler(self.apikey_provider_selected, pattern=r'^apikey_add_')],
+                APIKEY_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.apikey_received)],
+                APIKEY_CONFIRM_DELETE: [CallbackQueryHandler(self.apikey_delete_confirmed, pattern=r'^apikey_confirm_del_')],
+            },
+            fallbacks=[
+                CommandHandler("cancel", self.cancel),
+                CallbackQueryHandler(self.cancel_callback, pattern=r'^cancel$'),
+                CallbackQueryHandler(self.apikey_menu, pattern=r'^manage_api_key$'),
+            ],
+            per_message=False,
+        )
+        self.app.add_handler(apikey_conv)
         
         # Clone Bot Wizard (handle token input for cloning)
         self.app.add_handler(MessageHandler(
@@ -126,7 +204,7 @@ class MotherBot:
                 bot_data = self.db.get_bot_by_token(token)
                 await self.manager.spawn_bot(bot_data)
                 
-                # Show detailed success message
+                # Show detailed success message WITH AI/Manual choice
                 bot_link = f"https://t.me/{bot_username}"
                 success_msg = (
                     f"🎉 **Bot is ONLINE!**\n\n"
@@ -137,11 +215,18 @@ class MotherBot:
                     f"• ID: #{bot_data['id']}\n\n"
                     f"📅 **Subscription:** Trial 3 Days\n"
                     f"⏰ **Expires:** {bot_data['subscription_end'][:10]}\n\n"
-                    f"✨ Go to your bot and type /start to begin!\n\n"
                     f"━━━━━━━━━━━━━━━━━\n"
-                    f"🔧 Powered by **MASUK10 ROBOT**"
+                    f"🛠️ **Macam mana nak setup bot ni?**\n\n"
+                    f"🤖 **AI Generate** — Chat dengan AI, describe\n"
+                    f"   apa kau nak. Boleh hantar screenshot!\n\n"
+                    f"⚙️ **Manual** — Setup sendiri guna\n"
+                    f"   /settings dalam bot kau."
                 )
-                await update.message.reply_text(success_msg, parse_mode='Markdown')
+                keyboard = [
+                    [InlineKeyboardButton("🤖 Generate Guna AI", callback_data=f"ai_setup_{bot_data['id']}")],
+                    [InlineKeyboardButton("⚙️ Settings Manual", callback_data=f"manual_setup_{bot_data['id']}")],
+                ]
+                await update.message.reply_text(success_msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
             except Exception as e:
                 await update.message.reply_text(f"⚠️ Registered but failed to start: {e}")
             return ConversationHandler.END
@@ -324,6 +409,21 @@ class MotherBot:
                     )
                 except Exception as e:
                     logging.error(f"Failed to notify owner {owner_id}: {e}")
+        elif data.startswith("manual_setup_"):
+            # User chose manual setup - dismiss AI choice
+            bot_id = int(data.split("_")[2])
+            bot = self.db.get_bot_by_id(bot_id)
+            bot_username = bot.get('bot_username', 'unknown') if bot else 'unknown'
+            await query.message.edit_text(
+                f"✅ **Manual Setup Mode**\n\n"
+                f"Pergi ke @{bot_username} dan tekan /start\n"
+                f"Lepas tu guna /settings untuk configure bot kau.\n\n"
+                f"━━━━━━━━━━━━━━━━━\n"
+                f"💡 Bila-bila boleh guna AI: /mybots → 🤖 AI Modify",
+                parse_mode='Markdown'
+            )
+        elif data == "ai_tutorial":
+            await self.show_ai_tutorial(update)
         elif data == "close_panel":
             # Carousel style - edit to show main menu instead of delete
             text = (
@@ -549,7 +649,8 @@ class MotherBot:
             [InlineKeyboardButton("📊 Statistics", callback_data=f"stats_{bot_id}"), 
              InlineKeyboardButton("👥 Users", callback_data=f"users_{bot_id}")],
             [InlineKeyboardButton("📈 Analytics", callback_data=f"analytics_{bot_id}")],
-            [InlineKeyboardButton("🧬 Clone Bot", callback_data=f"clone_bot_{bot_id}")],
+            [InlineKeyboardButton("🤖 AI Modify", callback_data=f"ai_modify_{bot_id}"),
+             InlineKeyboardButton("🧬 Clone Bot", callback_data=f"clone_bot_{bot_id}")],
             [InlineKeyboardButton(toggle_text, callback_data=f"toggle_bot_{bot_id}")],
         ]
         
@@ -1087,3 +1188,699 @@ class MotherBot:
                 f"Sila tambah content secara manual.",
                 parse_mode='Markdown'
             )
+
+    # =============================================
+    # AI BOT BUILDER HANDLERS
+    # =============================================
+
+    async def cancel_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Cancel via inline button callback"""
+        query = update.callback_query
+        await query.answer()
+        await query.message.edit_text("❌ Cancelled.")
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    # --- AI Builder Entry ---
+    async def ai_builder_entry(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Entry point when user clicks '🤖 Generate Guna AI' after bot creation"""
+        query = update.callback_query
+        await query.answer()
+        bot_id = int(query.data.split("_")[2])
+        user_id = update.effective_user.id
+        
+        # Store bot_id for this session
+        context.user_data['ai_bot_id'] = bot_id
+        context.user_data['ai_chat_history'] = []
+        context.user_data['ai_is_modify'] = False
+        
+        # Check if user already has an API key
+        existing_key = self.db.get_ai_api_key(user_id)
+        if existing_key:
+            # Has key, skip to AI chat
+            context.user_data['ai_provider'] = existing_key['provider']
+            context.user_data['ai_api_key'] = existing_key['api_key']
+            
+            bot = self.db.get_bot_by_id(bot_id)
+            bot_name = bot.get('bot_username', 'unknown') if bot else 'unknown'
+            
+            keyboard = [
+                [InlineKeyboardButton("✅ Generate Config", callback_data="ai_generate")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+            ]
+            await query.message.edit_text(
+                f"🤖 **AI Bot Builder**\n\n"
+                f"Bot: @{bot_name} (#{bot_id})\n"
+                f"API: {existing_key['provider'].upper()} ✅\n\n"
+                f"━━━━━━━━━━━━━━━━━\n"
+                f"Describe apa kau nak untuk bot ni.\n"
+                f"Contoh:\n"
+                f'• "Buat bot untuk kedai makan ada 5 company"\n'
+                f'• "Bot casino listing macam ni" + hantar screenshot\n'
+                f'• "Bot referral dengan 3 brand gaming"\n\n'
+                f"📸 Boleh hantar screenshot bot lain untuk reference!\n"
+                f"Bila dah ready, tekan ✅ Generate Config.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return AI_CHAT
+        else:
+            # No key, ask for provider
+            keyboard = [
+                [InlineKeyboardButton("⚡ Groq (Free & Fast)", callback_data="ai_provider_groq")],
+                [InlineKeyboardButton("💎 Google Gemini (Free)", callback_data="ai_provider_gemini")],
+                [InlineKeyboardButton("❓ Tutorial Dapat API Key", callback_data="ai_tutorial")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+            ]
+            await query.message.edit_text(
+                "🔑 **API Key Required**\n\n"
+                "Untuk guna AI Builder, kau perlukan API key.\n"
+                "Semua provider ni **FREE** — tak perlu bayar!\n\n"
+                "Pilih provider:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return AI_PROVIDER_SELECT
+
+    # --- AI Modify Entry ---
+    async def ai_modify_entry(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Entry point when user clicks '🤖 AI Modify' in bot management"""
+        query = update.callback_query
+        await query.answer()
+        bot_id = int(query.data.split("_")[2])
+        user_id = update.effective_user.id
+        
+        # Store context
+        context.user_data['ai_bot_id'] = bot_id
+        context.user_data['ai_chat_history'] = []
+        context.user_data['ai_is_modify'] = True
+        
+        # Check API key
+        existing_key = self.db.get_ai_api_key(user_id)
+        if not existing_key:
+            keyboard = [
+                [InlineKeyboardButton("🔑 Setup API Key", callback_data="manage_api_key")],
+                [InlineKeyboardButton("« Back", callback_data=f"manage_bot_{bot_id}")],
+            ]
+            await query.message.edit_text(
+                "❌ **API Key belum ada**\n\n"
+                "Sila setup API key dulu untuk guna AI features.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return ConversationHandler.END
+        
+        context.user_data['ai_provider'] = existing_key['provider']
+        context.user_data['ai_api_key'] = existing_key['api_key']
+        
+        # Get current bot config
+        current_config = ai_bot_builder.get_current_bot_config(self.db, bot_id)
+        context.user_data['ai_current_config'] = current_config
+        
+        bot = self.db.get_bot_by_id(bot_id)
+        bot_name = bot.get('bot_username', 'unknown') if bot else 'unknown'
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Generate Changes", callback_data="ai_generate")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+        ]
+        await query.message.edit_text(
+            f"🤖 **AI Modify Bot**\n\n"
+            f"Bot: @{bot_name} (#{bot_id})\n"
+            f"API: {existing_key['provider'].upper()} ✅\n\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"**Current Config:**\n{current_config[:500]}\n\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"Describe apa yang kau nak ubah.\n"
+            f"Contoh:\n"
+            f'• "Tukar welcome message jadi lebih formal"\n'
+            f'• "Tambah 2 company baru: ABC dan XYZ"\n'
+            f'• "Buang company yang nama X"',
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return AI_CHAT
+
+    # --- AI Provider & Key ---
+    async def ai_provider_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """User selected AI provider"""
+        query = update.callback_query
+        await query.answer()
+        provider = query.data.split("_")[2]  # ai_provider_groq -> groq
+        context.user_data['ai_provider'] = provider
+        
+        provider_name = "Groq" if provider == "groq" else "Google Gemini"
+        
+        if provider == "groq":
+            instructions = (
+                "1️⃣ Pergi ke console.groq.com\n"
+                "2️⃣ Sign up / Login (free)\n"
+                "3️⃣ Dashboard → API Keys → Create\n"
+                "4️⃣ Copy API key dan paste sini"
+            )
+        else:
+            instructions = (
+                "1️⃣ Pergi ke aistudio.google.com\n"
+                "2️⃣ Sign in dengan Google account\n"
+                "3️⃣ Get API Key → Create API Key\n"
+                "4️⃣ Copy API key dan paste sini"
+            )
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel")]]
+        await query.message.edit_text(
+            f"🔑 **Setup {provider_name} API Key**\n\n"
+            f"{instructions}\n\n"
+            f"📌 Paste your API key below:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return AI_API_KEY_INPUT
+
+    async def ai_apikey_received(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """User sent their API key during AI builder setup"""
+        api_key = update.message.text.strip()
+        user_id = update.effective_user.id
+        provider = context.user_data.get('ai_provider', 'groq')
+        
+        # Delete the message containing the key for security
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        
+        await update.message.reply_text("🔄 Validating API key...")
+        
+        # Validate
+        valid, info = await ai_bot_builder.validate_api_key(api_key, provider)
+        
+        if not valid:
+            keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel")]]
+            await update.message.reply_text(
+                f"❌ **Key Invalid**\n\n{info}\n\nCuba lagi — paste API key yang betul:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return AI_API_KEY_INPUT
+        
+        # Save key
+        self.db.save_ai_api_key(user_id, provider, api_key)
+        context.user_data['ai_api_key'] = api_key
+        
+        bot_id = context.user_data.get('ai_bot_id')
+        bot = self.db.get_bot_by_id(bot_id) if bot_id else None
+        bot_name = bot.get('bot_username', 'unknown') if bot else 'unknown'
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Generate Config", callback_data="ai_generate")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+        ]
+        await update.message.reply_text(
+            f"✅ **API Key Saved!** ({info})\n\n"
+            f"🤖 **AI Bot Builder Ready**\n"
+            f"Bot: @{bot_name}\n\n"
+            f"Describe apa kau nak untuk bot ni.\n"
+            f"📸 Boleh hantar screenshot juga!\n\n"
+            f"Bila dah ready, tekan ✅ Generate Config.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return AI_CHAT
+
+    # --- AI Chat ---
+    async def ai_chat_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle text messages in AI chat"""
+        user_message = update.message.text.strip()
+        api_key = context.user_data.get('ai_api_key', '')
+        provider = context.user_data.get('ai_provider', 'groq')
+        bot_id = context.user_data.get('ai_bot_id')
+        is_modify = context.user_data.get('ai_is_modify', False)
+        current_config = context.user_data.get('ai_current_config', '')
+        chat_history = context.user_data.get('ai_chat_history', [])
+        
+        if not api_key:
+            await update.message.reply_text("❌ API key not found. Use /apikey to set up.")
+            return ConversationHandler.END
+        
+        # Show typing indicator
+        await update.message.reply_text("🤖 AI sedang fikir...")
+        
+        # Get bot info
+        bot = self.db.get_bot_by_id(bot_id) if bot_id else None
+        bot_info = {'username': bot.get('bot_username', ''), 'id': bot_id} if bot else None
+        
+        # Call AI
+        response = await ai_bot_builder.ai_configure_bot(
+            api_key=api_key,
+            provider=provider,
+            user_message=user_message,
+            bot_info=bot_info,
+            chat_history=chat_history,
+            is_modify=is_modify,
+            current_config=current_config
+        )
+        
+        # Update chat history
+        chat_history.append({"role": "user", "content": user_message})
+        chat_history.append({"role": "assistant", "content": response})
+        context.user_data['ai_chat_history'] = chat_history
+        
+        # Check if AI returned a config
+        config = ai_bot_builder.parse_bot_config(response)
+        if config:
+            # AI sent a ready config — show preview
+            context.user_data['ai_parsed_config'] = config
+            preview = ai_bot_builder.format_config_preview(config)
+            
+            keyboard = [
+                [InlineKeyboardButton("✅ Apply Config", callback_data="ai_apply")],
+                [InlineKeyboardButton("✏️ Ubah Lagi", callback_data="ai_back_chat")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+            ]
+            await update.message.reply_text(
+                preview,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
+            return AI_PREVIEW
+        
+        # Regular chat response
+        keyboard = [
+            [InlineKeyboardButton("✅ Generate Config", callback_data="ai_generate")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+        ]
+        # Truncate long responses
+        if len(response) > 4000:
+            response = response[:4000] + "..."
+        
+        await update.message.reply_text(
+            response,
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return AI_CHAT
+
+    async def ai_chat_image(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle image/screenshot in AI chat"""
+        api_key = context.user_data.get('ai_api_key', '')
+        provider = context.user_data.get('ai_provider', 'groq')
+        bot_id = context.user_data.get('ai_bot_id')
+        is_modify = context.user_data.get('ai_is_modify', False)
+        current_config = context.user_data.get('ai_current_config', '')
+        chat_history = context.user_data.get('ai_chat_history', [])
+        
+        if not api_key:
+            await update.message.reply_text("❌ API key not found. Use /apikey to set up.")
+            return ConversationHandler.END
+        
+        # Download photo
+        photo = update.message.photo[-1]  # Largest resolution
+        caption = update.message.caption or "Analyze screenshot ni dan suggest bot config"
+        
+        try:
+            file = await photo.get_file()
+            image_bytes = await file.download_as_bytearray()
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to download image: {e}")
+            return AI_CHAT
+        
+        await update.message.reply_text("🤖📸 AI sedang analyze gambar...")
+        
+        # Get bot info
+        bot = self.db.get_bot_by_id(bot_id) if bot_id else None
+        bot_info = {'username': bot.get('bot_username', ''), 'id': bot_id} if bot else None
+        
+        # Call AI with image
+        response = await ai_bot_builder.ai_configure_bot(
+            api_key=api_key,
+            provider=provider,
+            user_message=caption,
+            bot_info=bot_info,
+            chat_history=chat_history,
+            image_bytes=bytes(image_bytes),
+            is_modify=is_modify,
+            current_config=current_config
+        )
+        
+        # Update chat history (text only for history)
+        chat_history.append({"role": "user", "content": f"[Image sent] {caption}"})
+        chat_history.append({"role": "assistant", "content": response})
+        context.user_data['ai_chat_history'] = chat_history
+        
+        # Check if AI returned config
+        config = ai_bot_builder.parse_bot_config(response)
+        if config:
+            context.user_data['ai_parsed_config'] = config
+            preview = ai_bot_builder.format_config_preview(config)
+            keyboard = [
+                [InlineKeyboardButton("✅ Apply Config", callback_data="ai_apply")],
+                [InlineKeyboardButton("✏️ Ubah Lagi", callback_data="ai_back_chat")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+            ]
+            await update.message.reply_text(preview, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            return AI_PREVIEW
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Generate Config", callback_data="ai_generate")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+        ]
+        if len(response) > 4000:
+            response = response[:4000] + "..."
+        await update.message.reply_text(response, reply_markup=InlineKeyboardMarkup(keyboard))
+        return AI_CHAT
+
+    async def ai_generate_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """User clicked 'Generate Config' - ask AI to produce final config"""
+        query = update.callback_query
+        await query.answer()
+        
+        api_key = context.user_data.get('ai_api_key', '')
+        provider = context.user_data.get('ai_provider', 'groq')
+        bot_id = context.user_data.get('ai_bot_id')
+        is_modify = context.user_data.get('ai_is_modify', False)
+        current_config = context.user_data.get('ai_current_config', '')
+        chat_history = context.user_data.get('ai_chat_history', [])
+        
+        if not api_key:
+            await query.message.reply_text("❌ API key not found.")
+            return ConversationHandler.END
+        
+        await query.message.edit_text("🤖 Generating bot config...")
+        
+        bot = self.db.get_bot_by_id(bot_id) if bot_id else None
+        bot_info = {'username': bot.get('bot_username', ''), 'id': bot_id} if bot else None
+        
+        # Send generation prompt
+        gen_prompt = "OK saya dah ready. Sila generate JSON config berdasarkan apa yang kita discuss."
+        if is_modify:
+            gen_prompt = "OK saya dah ready. Sila generate JSON config untuk modification berdasarkan apa yang kita discuss."
+        
+        response = await ai_bot_builder.ai_configure_bot(
+            api_key=api_key,
+            provider=provider,
+            user_message=gen_prompt,
+            bot_info=bot_info,
+            chat_history=chat_history,
+            is_modify=is_modify,
+            current_config=current_config
+        )
+        
+        # Parse config
+        config = ai_bot_builder.parse_bot_config(response)
+        if config:
+            context.user_data['ai_parsed_config'] = config
+            preview = ai_bot_builder.format_config_preview(config)
+            keyboard = [
+                [InlineKeyboardButton("✅ Apply Config", callback_data="ai_apply")],
+                [InlineKeyboardButton("✏️ Ubah Lagi", callback_data="ai_back_chat")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+            ]
+            await query.message.edit_text(preview, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            return AI_PREVIEW
+        else:
+            # AI didn't return config — show response and let user continue
+            chat_history.append({"role": "user", "content": gen_prompt})
+            chat_history.append({"role": "assistant", "content": response})
+            context.user_data['ai_chat_history'] = chat_history
+            
+            keyboard = [
+                [InlineKeyboardButton("✅ Generate Config", callback_data="ai_generate")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+            ]
+            if len(response) > 4000:
+                response = response[:4000] + "..."
+            await query.message.edit_text(
+                f"{response}\n\n⚠️ AI belum generate config. Cuba describe lebih detail.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return AI_CHAT
+
+    async def ai_apply_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Apply the parsed config to the bot's database"""
+        query = update.callback_query
+        await query.answer()
+        
+        config = context.user_data.get('ai_parsed_config')
+        bot_id = context.user_data.get('ai_bot_id')
+        
+        if not config or not bot_id:
+            await query.message.edit_text("❌ No config to apply.")
+            return ConversationHandler.END
+        
+        await query.message.edit_text("⏳ Applying config...")
+        
+        success, summary = await ai_bot_builder.apply_bot_config(self.db, bot_id, config)
+        
+        bot = self.db.get_bot_by_id(bot_id)
+        bot_username = bot.get('bot_username', 'unknown') if bot else 'unknown'
+        
+        if success:
+            keyboard = [
+                [InlineKeyboardButton(f"🤖 Go to @{bot_username}", url=f"https://t.me/{bot_username}")],
+                [InlineKeyboardButton("📋 My Bots", callback_data="my_bots_panel")],
+            ]
+            await query.message.edit_text(
+                f"🎉 <b>Config Applied Successfully!</b>\n\n"
+                f"{summary}\n\n"
+                f"━━━━━━━━━━━━━━━━━\n"
+                f"✨ Tekan /start di @{bot_username} untuk tengok hasil!",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
+        else:
+            keyboard = [
+                [InlineKeyboardButton("✏️ Cuba Lagi", callback_data="ai_back_chat")],
+                [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+            ]
+            await query.message.edit_text(
+                f"❌ <b>Apply Failed</b>\n\n{summary}",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='HTML'
+            )
+            return AI_CHAT
+        
+        # Clean up
+        context.user_data.pop('ai_bot_id', None)
+        context.user_data.pop('ai_chat_history', None)
+        context.user_data.pop('ai_parsed_config', None)
+        context.user_data.pop('ai_is_modify', None)
+        context.user_data.pop('ai_current_config', None)
+        return ConversationHandler.END
+
+    async def ai_back_to_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Go back to AI chat from preview"""
+        query = update.callback_query
+        await query.answer()
+        keyboard = [
+            [InlineKeyboardButton("✅ Generate Config", callback_data="ai_generate")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
+        ]
+        await query.message.edit_text(
+            "📝 OK, describe apa yang kau nak ubah.\n"
+            "Bila dah ready, tekan ✅ Generate Config.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return AI_CHAT
+
+    # =============================================
+    # API KEY MANAGEMENT HANDLERS
+    # =============================================
+
+    async def apikey_menu_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /apikey command"""
+        user_id = update.effective_user.id
+        keys = self.db.get_all_ai_api_keys(user_id)
+        
+        if keys:
+            text = "🔑 **Your AI API Keys**\n\n"
+            for k in keys:
+                masked = k['api_key'][:8] + "..." + k['api_key'][-4:]
+                text += f"• **{k['provider'].upper()}**: `{masked}`\n"
+            text += f"\nTotal: {len(keys)} key(s)"
+        else:
+            text = "🔑 **No API Keys**\n\nBelum ada API key. Tambah sekarang!"
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ Add Key", callback_data="apikey_add_menu")],
+        ]
+        if keys:
+            for k in keys:
+                keyboard.append([InlineKeyboardButton(
+                    f"🗑️ Remove {k['provider'].upper()}", 
+                    callback_data=f"apikey_confirm_del_{k['provider']}"
+                )])
+        keyboard.append([InlineKeyboardButton("❓ Tutorial", callback_data="ai_tutorial")])
+        keyboard.append([InlineKeyboardButton("❌ Close", callback_data="cancel")])
+        
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return APIKEY_PROVIDER
+
+    async def apikey_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle inline button to open API key menu"""
+        query = update.callback_query
+        await query.answer()
+        user_id = update.effective_user.id
+        keys = self.db.get_all_ai_api_keys(user_id)
+        
+        if keys:
+            text = "🔑 **Your AI API Keys**\n\n"
+            for k in keys:
+                masked = k['api_key'][:8] + "..." + k['api_key'][-4:]
+                text += f"• **{k['provider'].upper()}**: `{masked}`\n"
+        else:
+            text = "🔑 **No API Keys**\n\nBelum ada API key."
+        
+        keyboard = [
+            [InlineKeyboardButton("➕ Add Key", callback_data="apikey_add_menu")],
+        ]
+        if keys:
+            for k in keys:
+                keyboard.append([InlineKeyboardButton(
+                    f"🗑️ Remove {k['provider'].upper()}", 
+                    callback_data=f"apikey_confirm_del_{k['provider']}"
+                )])
+        keyboard.append([InlineKeyboardButton("❓ Tutorial", callback_data="ai_tutorial")])
+        keyboard.append([InlineKeyboardButton("❌ Close", callback_data="cancel")])
+        
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return APIKEY_PROVIDER
+
+    async def apikey_provider_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """User selected provider to add key for"""
+        query = update.callback_query
+        await query.answer()
+        data = query.data
+        
+        if data == "apikey_add_menu":
+            # Show provider choice
+            keyboard = [
+                [InlineKeyboardButton("⚡ Groq (Free)", callback_data="apikey_add_groq")],
+                [InlineKeyboardButton("💎 Gemini (Free)", callback_data="apikey_add_gemini")],
+                [InlineKeyboardButton("« Back", callback_data="manage_api_key")],
+            ]
+            await query.message.edit_text(
+                "Pilih provider untuk add API key:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return APIKEY_PROVIDER
+        
+        # Extract provider from callback
+        provider = data.replace("apikey_add_", "")
+        context.user_data['apikey_provider'] = provider
+        
+        provider_name = "Groq" if provider == "groq" else "Google Gemini"
+        
+        keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel")]]
+        await query.message.edit_text(
+            f"🔑 **Add {provider_name} API Key**\n\n"
+            f"Paste your API key below:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return APIKEY_INPUT
+
+    async def apikey_received(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """User sent API key in key management flow"""
+        api_key = update.message.text.strip()
+        user_id = update.effective_user.id
+        provider = context.user_data.get('apikey_provider', 'groq')
+        
+        # Delete the key message
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        
+        await update.message.reply_text("🔄 Validating...")
+        
+        valid, info = await ai_bot_builder.validate_api_key(api_key, provider)
+        
+        if not valid:
+            keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel")]]
+            await update.message.reply_text(
+                f"❌ **Key Invalid**\n\n{info}\n\nCuba lagi:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return APIKEY_INPUT
+        
+        self.db.save_ai_api_key(user_id, provider, api_key)
+        masked = api_key[:8] + "..." + api_key[-4:]
+        
+        keyboard = [
+            [InlineKeyboardButton("🔑 Manage Keys", callback_data="manage_api_key")],
+            [InlineKeyboardButton("✅ Done", callback_data="cancel")],
+        ]
+        await update.message.reply_text(
+            f"✅ **API Key Saved!**\n\n"
+            f"Provider: **{provider.upper()}**\n"
+            f"Key: `{masked}`\n\n"
+            f"Sekarang boleh guna AI Bot Builder! 🤖",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return ConversationHandler.END
+
+    async def apikey_delete_confirmed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Confirm and delete API key"""
+        query = update.callback_query
+        await query.answer()
+        provider = query.data.replace("apikey_confirm_del_", "")
+        user_id = update.effective_user.id
+        
+        deleted = self.db.delete_ai_api_key(user_id, provider)
+        
+        if deleted:
+            text = f"✅ **{provider.upper()}** API key removed."
+        else:
+            text = f"❌ Key not found."
+        
+        keyboard = [
+            [InlineKeyboardButton("🔑 Manage Keys", callback_data="manage_api_key")],
+            [InlineKeyboardButton("✅ Done", callback_data="cancel")],
+        ]
+        await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return ConversationHandler.END
+
+    # =============================================
+    # AI TUTORIAL
+    # =============================================
+
+    async def show_ai_tutorial(self, update: Update):
+        """Show step-by-step tutorial for getting API keys"""
+        query = update.callback_query
+        
+        text = (
+            "📚 <b>Tutorial: Cara Dapat AI API Key (FREE)</b>\n\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "⚡ <b>OPTION 1: Groq (Recommended)</b>\n"
+            "✅ 100% Free | ⚡ Super Fast\n\n"
+            "1️⃣ Pergi ke <a href='https://console.groq.com'>console.groq.com</a>\n"
+            "2️⃣ Click <b>Sign Up</b> (guna Google/GitHub)\n"
+            "3️⃣ Dashboard → <b>API Keys</b> (left menu)\n"
+            "4️⃣ Click <b>Create API Key</b>\n"
+            "5️⃣ Copy the key → paste dalam bot\n\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "💎 <b>OPTION 2: Google Gemini</b>\n"
+            "✅ Free tier | 🧠 Smart + Vision\n\n"
+            "1️⃣ Pergi ke <a href='https://aistudio.google.com'>aistudio.google.com</a>\n"
+            "2️⃣ Sign in dengan Google account\n"
+            "3️⃣ Click <b>Get API Key</b> (top menu)\n"
+            "4️⃣ Click <b>Create API Key</b>\n"
+            "5️⃣ Copy the key → paste dalam bot\n\n"
+            "━━━━━━━━━━━━━━━━━\n"
+            "💡 <b>Mana satu pilih?</b>\n"
+            "• <b>Groq</b> → Laju, simple, best untuk text\n"
+            "• <b>Gemini</b> → Smart, vision terbaik, free tier besar\n\n"
+            "Dua-dua FREE. Recommend: <b>Groq</b> untuk mula."
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("🔑 Setup API Key Sekarang", callback_data="manage_api_key")],
+            [InlineKeyboardButton("« Back", callback_data="close_panel")],
+        ]
+        
+        await query.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='HTML',
+            disable_web_page_preview=True
+        )
