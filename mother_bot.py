@@ -1113,7 +1113,9 @@ class MotherBot:
         source_bot_id = context.user_data.get('clone_source_bot')
         
         if not source_bot_id:
-            return  # Not in clone mode, ignore
+            # Not in clone mode - ignore silently (this is expected)
+            # The ConversationHandlers above handle AI builder flows
+            return
         
         token = update.message.text.strip()
         user_id = update.effective_user.id
@@ -1207,8 +1209,11 @@ class MotherBot:
         """Cancel via inline button callback"""
         query = update.callback_query
         await query.answer()
-        await query.message.edit_text("❌ Cancelled.")
-        context.user_data.clear()
+        await query.message.edit_text("✅ OK, done.")
+        # Only clear AI-specific keys, not everything
+        for key in ['ai_bot_id', 'ai_chat_history', 'ai_parsed_config', 'ai_is_modify',
+                     'ai_current_config', 'ai_provider', 'ai_api_key', 'apikey_provider']:
+            context.user_data.pop(key, None)
         return ConversationHandler.END
 
     # --- AI Builder Entry ---
@@ -1823,7 +1828,7 @@ class MotherBot:
         masked = api_key[:8] + "..." + api_key[-4:]
         
         keyboard = [
-            [InlineKeyboardButton("🔑 Manage Keys", callback_data="manage_api_key")],
+            [InlineKeyboardButton("� My Bots", callback_data="my_bots_panel")],
             [InlineKeyboardButton("✅ Done", callback_data="cancel")],
         ]
         await context.bot.send_message(
@@ -1832,7 +1837,9 @@ class MotherBot:
                 f"✅ **API Key Saved!**\n\n"
                 f"Provider: **{provider.upper()}**\n"
                 f"Key: `{masked}`\n\n"
-                f"Sekarang boleh guna AI Bot Builder! 🤖"
+                f"━━━━━━━━━━━━━━━━━\n"
+                f"🤖 Nak guna AI? Pergi ke:\n"
+                f"/mybots → pilih bot → 🤖 AI Modify"
             ),
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
