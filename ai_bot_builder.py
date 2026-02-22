@@ -281,6 +281,8 @@ async def _chat_groq(api_key, user_message, bot_info, chat_history, image_bytes,
                     logger.error(f"Groq builder API error {resp.status}: {error[:200]}")
                     if resp.status == 401:
                         return "❌ API key tidak sah atau expired. Sila update key anda."
+                    elif resp.status == 429:
+                        return "⏳ Rate limit — quota dah habis buat sementara. Cuba lagi dalam 1-2 minit, atau tukar ke provider lain (Gemini/Groq)."
                     return f"❌ AI Error: {resp.status}"
                 
                 data = await resp.json()
@@ -352,6 +354,8 @@ async def _chat_gemini(api_key, user_message, bot_info, chat_history, image_byte
                     logger.error(f"Gemini builder API error {resp.status}: {error[:200]}")
                     if resp.status in (400, 403):
                         return "❌ API key tidak sah atau expired. Sila update key anda."
+                    elif resp.status == 429:
+                        return "⏳ Quota exceeded — Gemini free tier limit dah habis. Cuba lagi dalam beberapa minit, atau tukar ke Groq (/apikey)."
                     return f"❌ AI Error: {resp.status}"
                 
                 data = await resp.json()
