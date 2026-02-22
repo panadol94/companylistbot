@@ -1360,6 +1360,7 @@ class MotherBot:
         """User sent their API key during AI builder setup"""
         api_key = update.message.text.strip()
         user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
         provider = context.user_data.get('ai_provider', 'groq')
         
         # Delete the message containing the key for security
@@ -1368,15 +1369,16 @@ class MotherBot:
         except Exception:
             pass
         
-        await update.message.reply_text("🔄 Validating API key...")
+        await context.bot.send_message(chat_id=chat_id, text="🔄 Validating API key...")
         
         # Validate
         valid, info = await ai_bot_builder.validate_api_key(api_key, provider)
         
         if not valid:
             keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel")]]
-            await update.message.reply_text(
-                f"❌ **Key Invalid**\n\n{info}\n\nCuba lagi — paste API key yang betul:",
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ **Key Invalid**\n\n{info}\n\nCuba lagi — paste API key yang betul:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
@@ -1394,13 +1396,16 @@ class MotherBot:
             [InlineKeyboardButton("✅ Generate Config", callback_data="ai_generate")],
             [InlineKeyboardButton("❌ Cancel", callback_data="cancel")],
         ]
-        await update.message.reply_text(
-            f"✅ **API Key Saved!** ({info})\n\n"
-            f"🤖 **AI Bot Builder Ready**\n"
-            f"Bot: @{bot_name}\n\n"
-            f"Describe apa kau nak untuk bot ni.\n"
-            f"📸 Boleh hantar screenshot juga!\n\n"
-            f"Bila dah ready, tekan ✅ Generate Config.",
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"✅ **API Key Saved!** ({info})\n\n"
+                f"🤖 **AI Bot Builder Ready**\n"
+                f"Bot: @{bot_name}\n\n"
+                f"Describe apa kau nak untuk bot ni.\n"
+                f"📸 Boleh hantar screenshot juga!\n\n"
+                f"Bila dah ready, tekan ✅ Generate Config."
+            ),
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
@@ -1781,6 +1786,7 @@ class MotherBot:
         """User sent API key in key management flow"""
         api_key = update.message.text.strip()
         user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
         provider = context.user_data.get('apikey_provider', 'groq')
         
         # Delete the key message
@@ -1789,14 +1795,15 @@ class MotherBot:
         except Exception:
             pass
         
-        await update.message.reply_text("🔄 Validating...")
+        await context.bot.send_message(chat_id=chat_id, text="🔄 Validating...")
         
         valid, info = await ai_bot_builder.validate_api_key(api_key, provider)
         
         if not valid:
             keyboard = [[InlineKeyboardButton("❌ Cancel", callback_data="cancel")]]
-            await update.message.reply_text(
-                f"❌ **Key Invalid**\n\n{info}\n\nCuba lagi:",
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"❌ **Key Invalid**\n\n{info}\n\nCuba lagi:",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
@@ -1809,11 +1816,14 @@ class MotherBot:
             [InlineKeyboardButton("🔑 Manage Keys", callback_data="manage_api_key")],
             [InlineKeyboardButton("✅ Done", callback_data="cancel")],
         ]
-        await update.message.reply_text(
-            f"✅ **API Key Saved!**\n\n"
-            f"Provider: **{provider.upper()}**\n"
-            f"Key: `{masked}`\n\n"
-            f"Sekarang boleh guna AI Bot Builder! 🤖",
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"✅ **API Key Saved!**\n\n"
+                f"Provider: **{provider.upper()}**\n"
+                f"Key: `{masked}`\n\n"
+                f"Sekarang boleh guna AI Bot Builder! 🤖"
+            ),
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
