@@ -5,6 +5,7 @@ from config import MASTER_ADMIN_ID, MASTER_ADMIN_IDS, MOTHER_TOKEN
 import logging
 import datetime
 import ai_bot_builder
+from html import escape as html_escape
 
 TOKEN_INPUT = 0
 CLONE_TOKEN = 1
@@ -404,18 +405,19 @@ class MotherBot:
             if owner_id and owner_id != update.effective_user.id:
                 try:
                     days_left = (new_expiry - datetime.datetime.now()).days
+                    safe_username = html_escape(str(bot_username or f"Bot #{bot_id}"))
                     notify_text = (
-                        f"🎉 **SUBSCRIPTION EXTENDED!**\n\n"
-                        f"🤖 **Bot:** @{bot_username}\n"
-                        f"➕ **Added:** {days} days\n"
-                        f"📅 **New Expiry:** {new_expiry.strftime('%Y-%m-%d')}\n"
-                        f"⏳ **Days Left:** {days_left} days\n\n"
-                        f"_Terima kasih! Bot anda sekarang aktif._"
+                        f"🎉 <b>SUBSCRIPTION EXTENDED!</b>\n\n"
+                        f"🤖 <b>Bot:</b> @{safe_username}\n"
+                        f"➕ <b>Added:</b> {days} days\n"
+                        f"📅 <b>New Expiry:</b> {new_expiry.strftime('%Y-%m-%d')}\n"
+                        f"⏳ <b>Days Left:</b> {days_left} days\n\n"
+                        f"<i>Terima kasih! Bot anda sekarang aktif.</i>"
                     )
                     await self.app.bot.send_message(
                         chat_id=owner_id,
                         text=notify_text,
-                        parse_mode='Markdown'
+                        parse_mode='HTML'
                     )
                 except Exception as e:
                     logging.error(f"Failed to notify owner {owner_id}: {e}")
@@ -424,13 +426,14 @@ class MotherBot:
             bot_id = int(data.split("_")[2])
             bot = self.db.get_bot_by_id(bot_id)
             bot_username = bot.get('bot_username', 'unknown') if bot else 'unknown'
+            safe_username = html_escape(str(bot_username))
             await query.message.edit_text(
-                f"✅ **Manual Setup Mode**\n\n"
-                f"Pergi ke @{bot_username} dan tekan /start\n"
+                f"✅ <b>Manual Setup Mode</b>\n\n"
+                f"Pergi ke @{safe_username} dan tekan /start\n"
                 f"Lepas tu guna /settings untuk configure bot kau.\n\n"
                 f"━━━━━━━━━━━━━━━━━\n"
                 f"💡 Bila-bila boleh guna AI: /mybots → 🤖 AI Modify",
-                parse_mode='Markdown'
+                parse_mode='HTML'
             )
         elif data == "ai_tutorial":
             await self.show_ai_tutorial(update)

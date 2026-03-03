@@ -7175,7 +7175,53 @@ class ChildBot:
                     where = "in group" if target_chat_id != original_user_id else "via DM"
                     await update.message.reply_text(f"✅ Sent to user ({where})!")
                 except Exception as e:
-                    await update.message.reply_text(f"❌ Failed: {str(e)}")
+                    err_text = str(e)
+                    # Fallback: replied message may be deleted/not found in group thread.
+                    if reply_to and "message to be replied not found" in err_text.lower():
+                        try:
+                            if update.message.text:
+                                await context.bot.send_message(
+                                    chat_id=target_chat_id,
+                                    text=update.message.text,
+                                    parse_mode='Markdown'
+                                )
+                            elif update.message.photo:
+                                await context.bot.send_photo(
+                                    chat_id=target_chat_id,
+                                    photo=update.message.photo[-1].file_id,
+                                    caption=(update.message.caption or '')[:1024],
+                                    parse_mode='Markdown'
+                                )
+                            elif update.message.video:
+                                await context.bot.send_video(
+                                    chat_id=target_chat_id,
+                                    video=update.message.video.file_id,
+                                    caption=(update.message.caption or '')[:1024],
+                                    parse_mode='Markdown'
+                                )
+                            elif update.message.document:
+                                await context.bot.send_document(
+                                    chat_id=target_chat_id,
+                                    document=update.message.document.file_id,
+                                    caption=(update.message.caption or '')[:1024],
+                                    parse_mode='Markdown'
+                                )
+                            elif update.message.voice:
+                                await context.bot.send_voice(
+                                    chat_id=target_chat_id,
+                                    voice=update.message.voice.file_id
+                                )
+                            elif update.message.sticker:
+                                await context.bot.send_sticker(
+                                    chat_id=target_chat_id,
+                                    sticker=update.message.sticker.file_id
+                                )
+                            await update.message.reply_text("✅ Sent to user (fallback without reply target)!")
+                            return
+                        except Exception as e2:
+                            await update.message.reply_text(f"❌ Failed (fallback): {str(e2)}")
+                            return
+                    await update.message.reply_text(f"❌ Failed: {err_text}")
                 return
         
         # Intercept: Admin setting AI prompt
@@ -9946,6 +9992,17 @@ class ChildBot:
                         if bot_entities:
                             caption_entities = bot_entities
                             use_parse_mode = None  # Don't mix parse_mode with entities
+
+                    def _caption_payload(raw_text: str):
+                        """Build safe caption payload; drop entities if caption is truncated."""
+                        caption = (raw_text or "")[:1024]
+                        pm = use_parse_mode
+                        ce = caption_entities
+                        if ce and len(raw_text or "") > len(caption):
+                            # Entity offsets were computed for full text; they become invalid after truncation.
+                            ce = None
+                            pm = None
+                        return caption, pm, ce
                     
                     is_album = promo_data.get('is_album', False)
                     all_bytes = promo_data.get('all_media_bytes', [])
@@ -9973,20 +10030,22 @@ class ChildBot:
                             buf = BytesIO(grid_data)
                             if is_video:
                                 buf.name = 'grid_collage.mp4'
+                                caption, pm, ce = _caption_payload(text)
                                 return await self.app.bot.send_video(
                                     chat_id=chat_id, video=buf,
-                                    caption=text[:1024],
-                                    parse_mode=use_parse_mode,
-                                    caption_entities=caption_entities,
+                                    caption=caption,
+                                    parse_mode=pm,
+                                    caption_entities=ce,
                                     reply_markup=reply_markup
                                 )
                             else:
                                 buf.name = 'grid_collage.jpg'
+                                caption, pm, ce = _caption_payload(text)
                                 return await self.app.bot.send_photo(
                                     chat_id=chat_id, photo=buf,
-                                    caption=text[:1024],
-                                    parse_mode=use_parse_mode,
-                                    caption_entities=caption_entities,
+                                    caption=caption,
+                                    parse_mode=pm,
+                                    caption_entities=ce,
                                     reply_markup=reply_markup
                                 )
                         else:
@@ -9998,9 +10057,10 @@ class ChildBot:
                                 buf = BytesIO(mb)
                                 ext = {'photo': '.jpg', 'video': '.mp4', 'document': '.bin'}
                                 buf.name = f'promo_{i}{ext.get(mt, ".bin")}'
-                                cap = text[:1024] if i == 0 else None
-                                pm = use_parse_mode if cap else None
-                                ce = caption_entities if cap and caption_entities else None
+                                if i == 0:
+                                    cap, pm, ce = _caption_payload(text)
+                                else:
+                                    cap, pm, ce = None, None, None
                                 if mt == 'photo':
                                     media_group.append(InputMediaPhoto(media=buf, caption=cap, parse_mode=pm, caption_entities=ce))
                                 elif mt == 'video':
@@ -10020,28 +10080,29 @@ class ChildBot:
                         buf = BytesIO(media_bytes)
                         ext = {'photo': '.jpg', 'video': '.mp4', 'document': '.bin'}
                         buf.name = f'promo{ext.get(media_type, ".bin")}'
+                        caption, pm, ce = _caption_payload(text)
                         if media_type == 'photo':
                             return await self.app.bot.send_photo(
                                 chat_id=chat_id, photo=buf,
-                                caption=text[:1024],
-                                parse_mode=use_parse_mode,
-                                caption_entities=caption_entities,
+                                caption=caption,
+                                parse_mode=pm,
+                                caption_entities=ce,
                                 reply_markup=reply_markup
                             )
                         elif media_type == 'video':
                             return await self.app.bot.send_video(
                                 chat_id=chat_id, video=buf,
-                                caption=text[:1024],
-                                parse_mode=use_parse_mode,
-                                caption_entities=caption_entities,
+                                caption=caption,
+                                parse_mode=pm,
+                                caption_entities=ce,
                                 reply_markup=reply_markup
                             )
                         else:
                             return await self.app.bot.send_document(
                                 chat_id=chat_id, document=buf,
-                                caption=text[:1024],
-                                parse_mode=use_parse_mode,
-                                caption_entities=caption_entities,
+                                caption=caption,
+                                parse_mode=pm,
+                                caption_entities=ce,
                                 reply_markup=reply_markup
                             )
                     else:
