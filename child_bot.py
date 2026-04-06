@@ -6954,6 +6954,37 @@ class ChildBot:
         
         self.logger.info(f"📨 Text message: {msg_text} | Forwarded: {is_forwarded}")
         self.logger.info(f"📨 States: source={context.user_data.get('waiting_forwarder_source')}, target={context.user_data.get('waiting_forwarder_target')}")
+
+        # Fallback command routing: sometimes Telegram/webhook updates can arrive
+        # without proper command entities, causing slash commands to slip past
+        # CommandHandler and land here as plain text.
+        raw_text = (update.message.text or '').strip()
+        if raw_text.startswith('/'):
+            parts = raw_text.split()
+            cmd = parts[0].split('@', 1)[0].lower()
+            context.args = parts[1:]
+
+            if cmd == '/start':
+                await self.start_command(update, context)
+                return
+            elif cmd in ('/settings', '/admin'):
+                await self.admin_dashboard(update, context)
+                return
+            elif cmd == '/company':
+                await self.main_menu(update, context)
+                return
+            elif cmd == '/list':
+                await self.cmd_list_companies(update, context)
+                return
+            elif cmd == '/menu':
+                await self.cmd_show_menu(update, context)
+                return
+            elif cmd == '/4d':
+                await self.cmd_4d_menu(update, context)
+                return
+            elif cmd == '/wallet':
+                await self.cmd_wallet_private(update, context)
+                return
         
         # Handle Add Admin flow
         if await self.add_admin_handler(update, context):
