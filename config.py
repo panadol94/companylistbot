@@ -20,7 +20,12 @@ DB_FILE = os.getenv("DB_FILE", "bot_platform.db")
 # Global Ad Footer (Default - leave empty or customize)
 DEFAULT_GLOBAL_AD = ""
 
-# Webhook Domain (Coolify URL)
-# Example: https://bot-saas.coolify.yourvps.com
-DOMAIN_URL = os.getenv("DOMAIN_URL", "http://localhost:8000")
-
+# Webhook Domain (prefer Coolify-provided public URL when available)
+# This prevents stale manual DOMAIN_URL values from breaking Telegram webhooks
+# after redeploys or hostname changes.
+DOMAIN_URL = (
+    os.getenv("COOLIFY_URL")
+    or os.getenv("SERVICE_URL_BOT_PLATFORM")
+    or os.getenv("DOMAIN_URL")
+    or "http://localhost:8000"
+).strip().strip('"').rstrip('/')
