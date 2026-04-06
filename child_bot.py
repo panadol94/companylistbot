@@ -7,6 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMe
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler, ChatMemberHandler
 from telegram.error import TimedOut, NetworkError
 from database import Database
+from config import MASTER_ADMIN_IDS
 from html import escape as html_escape
 
 async def send_with_retry(coro_func, retries=3, delay=2):
@@ -892,6 +893,16 @@ class ChildBot:
     def _invalidate_bot_cache(self):
         """Clear bot data cache when settings change"""
         self._bot_data_cache = None
+
+    def _can_manage_userbot(self, user_id: int) -> bool:
+        """Allow bot owner, assigned bot admins, or platform master admins."""
+        bot_data = self.db.get_bot_by_token(self.token)
+        owner_id = int(bot_data.get('owner_id', 0)) if bot_data else 0
+        return (
+            user_id == owner_id
+            or self.db.is_bot_admin(self.bot_id, user_id)
+            or user_id in MASTER_ADMIN_IDS
+        )
 
     async def show_page(self, update: Update, page: int, companies=None):
         """Display company in CAROUSEL mode - one company at a time with Prev/Next buttons"""
@@ -8472,11 +8483,7 @@ class ChildBot:
             await query.answer()
 
         user_id = update.effective_user.id
-        bot_data = self.db.get_bot_by_token(self.token)
-        owner_id = int(bot_data.get('owner_id', 0)) if bot_data else 0
-        is_owner = user_id == owner_id
-        is_admin = self.db.is_bot_admin(self.bot_id, user_id)
-        if not (is_owner or is_admin):
+        if not self._can_manage_userbot(user_id):
             return ConversationHandler.END
 
         session = self.db.get_userbot_session(self.bot_id)
@@ -8525,6 +8532,8 @@ class ChildBot:
             await query.answer()
         except Exception:
             pass
+        if not self._can_manage_userbot(update.effective_user.id):
+            return ConversationHandler.END
         data = query.data
 
         if data == "ubhub_setup":
@@ -8592,6 +8601,9 @@ class ChildBot:
         if query:
             await query.answer()
 
+        if not self._can_manage_userbot(update.effective_user.id):
+            return ConversationHandler.END
+
         session = self.db.get_userbot_session(self.bot_id)
         if not session or not session.get('session_string'):
             text = "❌ Userbot belum di-setup. Sila setup dulu di Userbot Hub."
@@ -8635,6 +8647,9 @@ class ChildBot:
         query = update.callback_query
         if query:
             await query.answer()
+
+        if not self._can_manage_userbot(update.effective_user.id):
+            return ConversationHandler.END
 
         text = (
             "📋 **CLONE MEDIA — Step 1/3**\n\n"
@@ -8893,11 +8908,7 @@ class ChildBot:
             await query.answer()
 
         user_id = update.effective_user.id
-        bot_data = self.db.get_bot_by_token(self.token)
-        owner_id = int(bot_data.get('owner_id', 0)) if bot_data else 0
-        is_owner = user_id == owner_id
-        is_admin = self.db.is_bot_admin(self.bot_id, user_id)
-        if not (is_owner or is_admin):
+        if not self._can_manage_userbot(user_id):
             return ConversationHandler.END
 
         session = self.db.get_userbot_session(self.bot_id)
@@ -8964,6 +8975,8 @@ class ChildBot:
             await query.answer()
         except Exception:
             pass
+        if not self._can_manage_userbot(update.effective_user.id):
+            return ConversationHandler.END
         data = query.data
 
         if data == "ub_toggle":
