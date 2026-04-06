@@ -2005,6 +2005,14 @@ class ChildBot:
         elif data == "forwarder_manage_sources": await self.show_forwarder_sources(update)
         elif data.startswith("forwarder_remove_source_"): await self.remove_forwarder_source_handler(update, int(data.split("_")[3]))
         elif data == "forwarder_back": await self.show_admin_settings(update)
+        # Userbot Hub / Promo Monitor — keep routing alive even if
+        # ConversationHandler state expired or got lost.
+        elif data.startswith("ubhub_"): await self.ub_hub_handle_action(update, context)
+        elif data.startswith("ub_") and data != "ub_menu": await self.ub_handle_action(update, context)
+        elif data.startswith("scan_show_item_"): await self.ub_handle_action(update, context)
+        elif data.startswith("scan_picker_"): await self.ub_handle_action(update, context)
+        elif data.startswith("scan_pick_"): await self.ub_handle_action(update, context)
+        elif data == "noop": await self.ub_handle_action(update, context)
         # Promo Monitor Actions
         elif data.startswith("promo_bc_groups_"): await self._promo_broadcast_action(update, int(data.split("_")[3]), 'groups')
         elif data.startswith("promo_bc_users_"): await self._promo_broadcast_action(update, int(data.split("_")[3]), 'users')
@@ -8482,7 +8490,10 @@ class ChildBot:
     async def ub_hub_handle_action(self, update: Update, context=None):
         """Handle actions from the userbot hub menu"""
         query = update.callback_query
-        await query.answer()
+        try:
+            await query.answer()
+        except Exception:
+            pass
         data = query.data
 
         if data == "ubhub_setup":
@@ -8918,7 +8929,10 @@ class ChildBot:
     async def ub_handle_action(self, update: Update, context=None):
         """Handle userbot menu actions"""
         query = update.callback_query
-        await query.answer()
+        try:
+            await query.answer()
+        except Exception:
+            pass
         data = query.data
 
         if data == "ub_toggle":
@@ -10280,24 +10294,41 @@ class ChildBot:
 
                 sent_msg = await send_with_media(owner_id, caption, keyboard)
                 
-                # Capture file_id and store in DB for later broadcast
+                # Capture file_id(s) and store in DB for later broadcast
                 if sent_msg:
-                    file_id = None
-                    if sent_msg.photo:
-                        file_id = sent_msg.photo[-1].file_id
-                    elif sent_msg.video:
-                        file_id = sent_msg.video.file_id
-                    elif sent_msg.document:
-                        file_id = sent_msg.document.file_id
-                    
-                    if file_id and media_type:
+                    file_ids = []
+                    media_types_to_store = []
+
+                    if isinstance(sent_msg, (list, tuple)):
+                        for msg in sent_msg:
+                            if msg.photo:
+                                file_ids.append(msg.photo[-1].file_id)
+                                media_types_to_store.append('photo')
+                            elif msg.video:
+                                file_ids.append(msg.video.file_id)
+                                media_types_to_store.append('video')
+                            elif msg.document:
+                                file_ids.append(msg.document.file_id)
+                                media_types_to_store.append('document')
+                    else:
+                        if sent_msg.photo:
+                            file_ids.append(sent_msg.photo[-1].file_id)
+                            media_types_to_store.append('photo')
+                        elif sent_msg.video:
+                            file_ids.append(sent_msg.video.file_id)
+                            media_types_to_store.append('video')
+                        elif sent_msg.document:
+                            file_ids.append(sent_msg.document.file_id)
+                            media_types_to_store.append('document')
+
+                    if file_ids:
                         try:
                             import json
                             conn = self.db.get_connection()
                             try:
                                 conn.execute(
                                     "UPDATE detected_promos SET media_file_ids = ?, media_types = ? WHERE id = ?",
-                                    (json.dumps([file_id]), json.dumps([media_type]), promo_id)
+                                    (json.dumps(file_ids), json.dumps(media_types_to_store), promo_id)
                                 )
                                 conn.commit()
                             finally:
