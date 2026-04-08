@@ -904,6 +904,72 @@ class ChildBot:
             or user_id in MASTER_ADMIN_IDS
         )
 
+    async def _deny_admin_access(self, update: Update, text: str = "❌ No access. Owner/Admin sahaja boleh guna Settings."):
+        query = update.callback_query
+        if query:
+            try:
+                await query.answer("❌ No access", show_alert=True)
+            except Exception:
+                pass
+            return
+
+        if update.effective_message:
+            await send_with_retry(lambda: update.effective_message.reply_text(text))
+
+    async def _require_admin_access(self, update: Update) -> bool:
+        user_id = update.effective_user.id if update.effective_user else 0
+        if self._can_manage_userbot(user_id):
+            return True
+        await self._deny_admin_access(update)
+        return False
+
+    def _is_settings_admin_callback(self, data: str) -> bool:
+        if not data:
+            return False
+
+        exact = {
+            "admin_settings",
+            "group_mgmt",
+            "manage_admins",
+            "show_analytics",
+            "customize_menu",
+            "manage_menu_btns",
+            "ref_settings",
+            "ref_back",
+            "wa_hub",
+            "userbot_hub",
+            "ai_settings",
+            "forwarder_menu",
+            "reorder_companies",
+            "admin_edit_company_list",
+            "admin_del_list",
+            "group_welcome_setup",
+            "edit_welcome",
+        }
+        prefixes = (
+            "admin_",
+            "toggle_",
+            "export_",
+            "media_",
+            "gm_",
+            "gw_",
+            "wa_",
+            "ub_",
+            "clone_",
+            "forwarder_",
+            "ai_",
+            "edit_company_",
+            "delete_company_",
+            "reorder_",
+            "menu_add_btn",
+            "add_menu_btn",
+            "pair_menu_btns",
+            "ef_",
+            "rr_",
+            "sched_",
+        )
+        return data in exact or any(data.startswith(prefix) for prefix in prefixes)
+
     async def show_page(self, update: Update, page: int, companies=None):
         """Display company in CAROUSEL mode - one company at a time with Prev/Next buttons"""
         if companies is None:
@@ -1488,16 +1554,11 @@ class ChildBot:
     # --- Referral Settings (Admin) ---
     async def ref_settings_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show referral settings menu for admin"""
+        if not await self._require_admin_access(update):
+            return ConversationHandler.END
         query = update.callback_query
         if query:
             await query.answer()
-        
-        # Check if user is admin (bot owner)
-        bot_data = self.db.get_bot_by_token(self.token)
-        if update.effective_user.id != bot_data['owner_id']:
-            if query:
-                await query.answer("⚠️ Admin only!", show_alert=True)
-            return ConversationHandler.END
         
         # Get current settings
         settings = self.db.get_referral_settings(self.bot_id)
@@ -1806,6 +1867,8 @@ class ChildBot:
             parse_mode='Markdown'
         )
     async def admin_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._require_admin_access(update):
+            return
         await self.show_admin_settings(update)
 
 
@@ -1851,6 +1914,10 @@ class ChildBot:
                 pass
             
         self.logger.info(f"🔘 Callback received: {data}")
+
+        if self._is_settings_admin_callback(data) and not self._can_manage_userbot(update.effective_user.id):
+            await self._deny_admin_access(update)
+            return
 
         try:
             await self._route_callback(update, context, query, data)
@@ -2053,6 +2120,8 @@ class ChildBot:
     # --- Edit Company Wizard Functions ---
     async def edit_company_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Entry point for edit company conversation"""
+        if not await self._require_admin_access(update):
+            return ConversationHandler.END
         await update.callback_query.answer()
         data = update.callback_query.data
         
@@ -3020,6 +3089,8 @@ class ChildBot:
     # --- Edit Company List Logic (New) ---
     async def show_edit_company_list(self, update: Update):
         """Show list of companies to select for editing"""
+        if not await self._require_admin_access(update):
+            return
         companies = self.db.get_companies(self.bot_id)
         if not companies:
             await update.callback_query.answer("📭 Tiada company untuk edit.", show_alert=True)
@@ -3038,6 +3109,8 @@ class ChildBot:
     # --- Delete Company Logic ---
     async def show_delete_company_list(self, update: Update):
         """Show list of companies with delete buttons"""
+        if not await self._require_admin_access(update):
+            return
         companies = self.db.get_companies(self.bot_id)
         if not companies:
             await update.callback_query.message.edit_text("📭 Tiada company untuk delete.")
@@ -3163,6 +3236,8 @@ class ChildBot:
     
     async def wa_hub_menu(self, update: Update):
         """Show WhatsApp Monitor hub menu"""
+        if not await self._require_admin_access(update):
+            return
         wa_session = self.db.get_whatsapp_session(self.bot_id)
         status = wa_session['status'] if wa_session else 'disconnected'
         
@@ -3315,6 +3390,8 @@ class ChildBot:
     # --- Referral Management Wizard ---
     async def manage_ref_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start referral management menu"""
+        if not await self._require_admin_access(update):
+            return ConversationHandler.END
         await update.callback_query.answer()  # Acknowledge button click
         text = (
             "🔄 **MANAGE REFERRALS**\n\n"
@@ -3408,6 +3485,8 @@ class ChildBot:
     
     async def show_admin_settings(self, update: Update):
         """Show admin settings dashboard (called from back buttons)"""
+        if not await self._require_admin_access(update):
+            return
         try:
 
             
@@ -4261,6 +4340,8 @@ class ChildBot:
 
     async def gw_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show group welcome settings menu - with group selection"""
+        if not await self._require_admin_access(update):
+            return ConversationHandler.END
         await update.callback_query.answer()
         
         # Check if a group is already selected
@@ -4680,6 +4761,8 @@ class ChildBot:
     # --- Media Manager Functions ---
     async def show_media_manager(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Show Media Manager Section Selection"""
+        if not await self._require_admin_access(update):
+            return ConversationHandler.END
         text = (
             "🎨 **MEDIA MANAGER**\n\n"
             "Pilih section mana yang anda nak tukar gambar/video:\n\n"
@@ -4798,6 +4881,8 @@ class ChildBot:
     # --- Add Menu Button Wizard ---
     async def add_menu_btn_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Start Add Menu Button wizard"""
+        if not await self._require_admin_access(update):
+            return ConversationHandler.END
         await update.callback_query.answer()
         await update.callback_query.message.reply_text(
             "➕ **ADD BUTTON**\n\n"
@@ -5134,6 +5219,8 @@ class ChildBot:
 
     # --- Add Company Wizard Steps ---
     async def add_company_start(self, update, context):
+        if not await self._require_admin_access(update):
+            return ConversationHandler.END
         await send_with_retry(lambda: update.callback_query.message.reply_text(
             "Sila masukkan **NAMA Company**:\n\n💡 _Boleh masukkan emoji sekali, contoh: 🎰 Mega888_", parse_mode='Markdown'
         ))
