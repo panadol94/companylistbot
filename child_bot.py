@@ -531,12 +531,6 @@ class ChildBot:
             self.handle_bot_status_change,
             ChatMemberHandler.MY_CHAT_MEMBER
         ))
-        
-        # Bot Status Change Handler (detect when bot becomes admin)
-        self.app.add_handler(ChatMemberHandler(
-            self.handle_bot_status_change,
-            ChatMemberHandler.MY_CHAT_MEMBER
-        ))
 
     # --- Group Commands ---
     async def cmd_list_companies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1203,12 +1197,16 @@ class ChildBot:
                 await update.effective_chat.send_message(full_caption, parse_mode='HTML')
 
         except Exception as e:
-             self.logger.error(f"Media error in show_page: {e}")
+             self.logger.error(f"Media error in show_page: {e}", exc_info=True)
              # Don't delete on error - keep previous media intact for navigation
+             error_msg = "⚠️ Failed to load media. Please try again."
              try:
                  if update.callback_query:
-                     await update.callback_query.answer("⚠️ Gagal memuatkan. Cuba lagi.", show_alert=True)
-             except Exception: pass
+                     await update.callback_query.answer(error_msg, show_alert=True)
+                 elif update.message:
+                     await update.message.reply_text(error_msg)
+             except Exception:
+                 pass
 
     async def view_company(self, update: Update, comp_id: int):
         # Redirect to Carousel View (find index)
@@ -1817,55 +1815,9 @@ class ChildBot:
             except Exception: pass
 
     # --- Admin Dashboard ---
-    async def withdraw_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle withdrawal with validation: min RM10, max RM1000, 24h cooldown"""
-        user_id = update.effective_user.id
-        
-        # Get user current balance
-        user = self.db.get_user(self.bot_id, user_id)
-        balance = user.get('balance', 0) if user else 0
-        
-        # Validation 1: Minimum withdrawal RM10
-        MIN_WITHDRAW = 10.0
-        if balance < MIN_WITHDRAW:
-            await update.message.reply_text(
-                f"❌ **Minimum Withdrawal: RM{MIN_WITHDRAW:.2f}**\n\n"
-                f"Your balance: RM{balance:.2f}\n"
-                f"Need: RM{MIN_WITHDRAW - balance:.2f} more",
-                parse_mode='Markdown'
-            )
-            return
-        
-        # Validation 2: Check last withdrawal time (24h cooldown)
-        last_withdraw = self.db.get_last_withdrawal(self.bot_id, user_id)
-        if last_withdraw:
-            last_time = datetime.datetime.fromisoformat(last_withdraw['requested_at'])
-            cooldown = datetime.timedelta(hours=24)
-            time_left = (last_time + cooldown) - datetime.datetime.now()
-            
-            if time_left.total_seconds() > 0:
-                hours = int(time_left.total_seconds() // 3600)
-                minutes = int((time_left.total_seconds() % 3600) // 60)
-                await update.message.reply_text(
-                    f"⏰ **Cooldown Period**\n\n"
-                    f"You can withdraw again in:\n"
-                    f"**{hours}h {minutes}m**",
-                    parse_mode='Markdown'
-                )
-                return
-        
-        # Validation 3: Maximum per transaction RM1000
-        MAX_WITHDRAW = 1000.0
-        max_allowed = min(balance, MAX_WITHDRAW)
-        
-        await update.message.reply_text(
-            f"💰 **WITHDRAW REQUEST**\n\n"
-            f"Balance: RM{balance:.2f}\n"
-            f"Max per request: RM{MAX_WITHDRAW:.2f}\n"
-            f"Min: RM{MIN_WITHDRAW:.2f}\n\n"
-            f"Enter withdrawal amount\n(RM{MIN_WITHDRAW:.2f} - RM{max_allowed:.2f}):",
-            parse_mode='Markdown'
-        )
+    # NOTE: withdraw_request method removed - withdrawal is handled via ConversationHandler
+    # The conversation flow in start_withdrawal -> withdrawal_input_amount is the active path
+
     async def admin_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self._require_admin_access(update):
             return
@@ -1906,7 +1858,7 @@ class ChildBot:
         
         # Skip early answer for navigation/company buttons - let edit_media handle it 
         # to avoid button flash. Answer immediately for all other callbacks.
-        skip_answer = data.startswith("list_page_") or data == "wa_status" or (data.startswith("c_") and data != "c_4d" and not data.startswith("c_edit"))
+        skip_answer = data.startswith("list_page_") or data == "wa_status" or (data.startswith("c_") and not data.startswith("c_menu_") and not data.startswith("c_edit"))
         if not skip_answer:
             try:
                 await query.answer()
@@ -1939,7 +1891,7 @@ class ChildBot:
         if data.startswith("list_page_"):
             page = int(data.split("_")[2])
             await self.show_page(update, page)
-        elif data.startswith("c_") and data != "c_4d" and not data.startswith("c_edit"):
+        elif data.startswith("c_") and not data.startswith("c_menu_") and not data.startswith("c_edit"):
             # Handle company view (c_123)
             company_id = int(data.split("_")[1])
             await self.view_company(update, company_id)
@@ -2307,12 +2259,14 @@ class ChildBot:
     async def edit_company_save_keywords(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         company_id = context.user_data.get('edit_company_id')
         keywords = update.message.text.strip()
-        self.db.edit_company(company_id, 'keywords', keywords)
+        # Escape HTML special chars to prevent XSS/SQL injection issues
+        safe_keywords = html_escape(keywords)
+        self.db.edit_company(company_id, 'keywords', safe_keywords)
         
         keyboard = [[InlineKeyboardButton("« Back to Admin Settings", callback_data="admin_settings")]]
         await update.message.reply_text(
             f"✅ Keywords berjaya dikemaskini!\n\n"
-            f"🔑 Keywords: `{keywords}`\n\n"
+            f"🔑 Keywords: `{safe_keywords}`\n\n"
             f"_Bot akan guna keywords ini untuk auto-detect company dari channel._",
             parse_mode='Markdown',
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -2485,7 +2439,7 @@ class ChildBot:
     async def check_4d_number(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Check if user's number won in any draw"""
         if not context.user_data.get('waiting_4d_check'):
-            return False
+            return True  # Block processing by other handlers
         
         number = update.message.text.strip()
         
@@ -4826,7 +4780,7 @@ class ChildBot:
         """Save uploaded media to bot_assets"""
         section = context.user_data.get('media_section')
         if not section:
-            await update.message.reply_text("❌ Session expired. Please start again.")
+            await update.message.reply_text("❌ Session expired. Please start again.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="customize_menu")]]))
             return ConversationHandler.END
             
         file_id = None
@@ -4842,18 +4796,28 @@ class ChildBot:
         else:
             await update.message.reply_text("❌ Sila hantar Photo atau Video sahaja.")
             return MEDIA_UPLOAD
-            
-        # Save to DB
-        success = self.db.upsert_asset(self.bot_id, section, file_id, file_type, caption)
         
-        if success:
+        try:
+            # Save to DB
+            success = self.db.upsert_asset(self.bot_id, section, file_id, file_type, caption)
+            
+            if success:
+                await update.message.reply_text(
+                    f"✅ **Media Saved!**\n\nSection `{section}` telah dikemaskini.\n"
+                    f"Paparan pengguna akan berubah serta-merta.",
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Database Error. Gagal simpan media.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Try Again", callback_data="media_manager")]])
+                )
+        except Exception as e:
+            self.logger.error(f"Error saving media for section {section}: {e}", exc_info=True)
             await update.message.reply_text(
-                f"✅ **Media Saved!**\n\nSection `{section}` telah dikemaskini.\n"
-                f"Paparan pengguna akan berubah serta-merta.",
-                parse_mode='Markdown'
+                "❌ Failed to save media. Please try again or contact support.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="customize_menu")]])
             )
-        else:
-            await update.message.reply_text("❌ Database Error. Gagal simpan.")
             
         return ConversationHandler.END
 
