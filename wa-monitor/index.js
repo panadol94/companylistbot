@@ -28,6 +28,7 @@ app.use(express.json());
 const PORT = process.env.WA_PORT || 3001;
 const PYTHON_API = process.env.PYTHON_API_URL || 'http://localhost:8000';
 const AUTH_DIR = process.env.WA_AUTH_DIR || path.join('/data', 'wa_sessions');
+const WA_SHARED_SECRET = process.env.WA_SHARED_SECRET || '';
 
 // Ensure auth dir exists
 if (!fs.existsSync(AUTH_DIR)) fs.mkdirSync(AUTH_DIR, { recursive: true });
@@ -175,7 +176,10 @@ async function connectBot(botId) {
             try {
                 const response = await fetch(`${PYTHON_API}/api/wa-promo`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-wa-secret': WA_SHARED_SECRET,
+                    },
                     body: JSON.stringify({
                         bot_id: parseInt(botId),
                         group_name: groupName,
@@ -206,7 +210,10 @@ async function notifyPython(botId, status) {
     try {
         await fetch(`${PYTHON_API}/api/wa-status`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'x-wa-secret': WA_SHARED_SECRET,
+            },
             body: JSON.stringify({ bot_id: parseInt(botId), status })
         });
     } catch (err) {

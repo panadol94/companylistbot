@@ -3561,7 +3561,7 @@ class ChildBot:
             f"📝 <b>Method:</b> {wd.get('method', 'TNG')}\n"
             f"📋 <b>Account:</b> <code>{wd.get('account', 'N/A')}</code>\n"
             f"📊 <b>Status:</b> {wd['status']}\n"
-            f"🕐 <b>Requested:</b> {wd.get('created_at', 'N/A')}\n"
+            f"🕐 <b>Requested:</b> {wd.get('request_date', 'N/A')}\n"
             f"💰 <b>User Balance:</b> RM {wd.get('current_balance', 0):.2f}"
         )
         

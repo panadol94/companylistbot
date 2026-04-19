@@ -139,6 +139,12 @@ class Database:
             except Exception:
                 pass  # Column already exists
 
+            # Migration: Add created_at column to companies if missing
+            try:
+                cursor.execute("ALTER TABLE companies ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
+            except Exception:
+                pass  # Column already exists
+
             # 3. Users Table (End users of child bots)
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS users (
@@ -439,6 +445,12 @@ class Database:
             except Exception as e:
 
                 pass  # Silently handle exception
+
+            # Keep referral columns in sync for older/newer logic
+            try:
+                cursor.execute("UPDATE users SET referred_by = referrer_id WHERE referred_by IS NULL AND referrer_id IS NOT NULL")
+            except Exception:
+                pass
             
             # Add method and account columns to existing withdrawals table
             try:
@@ -904,7 +916,10 @@ class Database:
                 # Check if user exists
                 exists = conn.execute("SELECT id FROM users WHERE bot_id = ? AND telegram_id = ?", (bot_id, telegram_id)).fetchone()
                 if not exists:
-                    conn.execute("INSERT INTO users (bot_id, telegram_id, referrer_id) VALUES (?, ?, ?)", (bot_id, telegram_id, referrer_id))
+                    conn.execute(
+                        "INSERT INTO users (bot_id, telegram_id, referrer_id, referred_by) VALUES (?, ?, ?, ?)",
+                        (bot_id, telegram_id, referrer_id, referrer_id)
+                    )
                     
                     # Reward Referrer with custom amount
                     if referrer_id and referrer_id != telegram_id:
@@ -1931,15 +1946,18 @@ class Database:
         ).fetchone()[0]
         
         # Referral stats
-        total_referred = conn.execute("SELECT COUNT(*) FROM users WHERE bot_id = ? AND referred_by IS NOT NULL", (bot_id,)).fetchone()[0]
+        total_referred = conn.execute(
+            "SELECT COUNT(*) FROM users WHERE bot_id = ? AND COALESCE(referred_by, referrer_id) IS NOT NULL",
+            (bot_id,)
+        ).fetchone()[0]
         
         # Company stats
         total_companies = conn.execute("SELECT COUNT(*) FROM companies WHERE bot_id = ?", (bot_id,)).fetchone()[0]
         
         # Top referrers
         top_referrers = conn.execute(
-            """SELECT u.telegram_id, u.username, COUNT(r.id) as referral_count, SUM(u.balance) as earnings
-               FROM users u LEFT JOIN users r ON r.referred_by = u.telegram_id AND r.bot_id = u.bot_id
+            """SELECT u.telegram_id, u.username, COUNT(r.id) as referral_count, u.balance as earnings
+               FROM users u LEFT JOIN users r ON COALESCE(r.referred_by, r.referrer_id) = u.telegram_id AND r.bot_id = u.bot_id
                WHERE u.bot_id = ? GROUP BY u.telegram_id ORDER BY referral_count DESC LIMIT 10""",
             (bot_id,)
         ).fetchall()
@@ -1974,7 +1992,8 @@ class Database:
         """Export all users for a bot"""
         conn = self.get_connection()
         users = conn.execute(
-            """SELECT telegram_id, username, first_name, balance, referred_by, joined_at 
+            """SELECT telegram_id, username, first_name, balance,
+                      COALESCE(referred_by, referrer_id) as referred_by, joined_at 
                FROM users WHERE bot_id = ? ORDER BY joined_at""",
             (bot_id,)
         ).fetchall()
@@ -2042,11 +2061,11 @@ class Database:
             ).fetchall()
         elif filter_type == "referred":
             users = conn.execute(
-                "SELECT * FROM users WHERE bot_id = ? AND referred_by IS NOT NULL", (bot_id,)
+                "SELECT * FROM users WHERE bot_id = ? AND COALESCE(referred_by, referrer_id) IS NOT NULL", (bot_id,)
             ).fetchall()
         elif filter_type == "organic":
             users = conn.execute(
-                "SELECT * FROM users WHERE bot_id = ? AND referred_by IS NULL", (bot_id,)
+                "SELECT * FROM users WHERE bot_id = ? AND COALESCE(referred_by, referrer_id) IS NULL", (bot_id,)
             ).fetchall()
         elif filter_type == "with_balance":
             users = conn.execute(
@@ -2112,7 +2131,7 @@ class Database:
             """SELECT u.telegram_id, u.username, u.first_name, 
                       COUNT(r.id) as referral_count, u.balance
                FROM users u 
-               JOIN users r ON r.referred_by = u.telegram_id AND r.bot_id = u.bot_id
+               JOIN users r ON COALESCE(r.referred_by, r.referrer_id) = u.telegram_id AND r.bot_id = u.bot_id
                WHERE u.bot_id = ?
                GROUP BY u.telegram_id 
                ORDER BY referral_count DESC 

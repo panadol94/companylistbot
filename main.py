@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import datetime
+import os
+import secrets
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Response
 from telegram import Update
@@ -26,6 +28,8 @@ class BotManager:
         self.bots = {} # {token: ChildBotInstance}
         self.mother_bot = None
         self.userbot_manager = UserbotManager(self.db)
+        self.wa_process = None
+        self.wa_secret = secrets.token_urlsafe(32)
 
     async def start(self):
         logger.info("🚀 Starting Bot SaaS Platform...")
@@ -78,16 +82,19 @@ class BotManager:
         
         # 4. Start WhatsApp Monitor (Node.js) in background
         try:
-            import subprocess, os, shutil
+            import subprocess, shutil
             node_path = shutil.which('node')
             logger.info(f"📱 WA Monitor: node binary = {node_path}")
             wa_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'wa-monitor')
             wa_index = os.path.join(wa_dir, 'index.js')
             logger.info(f"📱 WA Monitor: index.js exists = {os.path.exists(wa_index)}, dir = {wa_dir}")
             if node_path and os.path.exists(wa_index):
+                wa_env = os.environ.copy()
+                wa_env['WA_SHARED_SECRET'] = self.wa_secret
                 self.wa_process = subprocess.Popen(
                     [node_path, 'index.js'],
-                    cwd=wa_dir
+                    cwd=wa_dir,
+                    env=wa_env
                 )
                 logger.info(f"📱 WhatsApp Monitor started (PID: {self.wa_process.pid})")
             else:
@@ -359,7 +366,61 @@ class BotManager:
     async def shutdown(self):
         logger.info("🔻 Shutting down platform...")
         await self.userbot_manager.stop_all()
-        self.scheduler.shutdown()
+        for child in list(self.bots.values()):
+            try:
+                await child.stop()
+            except Exception as e:
+                logger.error(f"❌ Failed stopping child bot during shutdown: {e}")
+        self.bots.clear()
+
+        if self.mother_bot:
+            try:
+                await self.mother_bot.stop()
+            except Exception as e:
+                logger.error(f"❌ Failed stopping mother bot during shutdown: {e}")
+
+        if self.wa_process and self.wa_process.poll() is None:
+            try:
+                self.wa_process.terminate()
+                self.wa_process.wait(timeout=10)
+            except Exception:
+                try:
+                    self.wa_process.kill()
+                except Exception as e:
+                    logger.error(f"❌ Failed killing WA monitor: {e}")
+
+        try:
+            self.scheduler.shutdown()
+        except Exception as e:
+            logger.error(f"❌ Failed shutting down scheduler: {e}")
+
+
+def _is_authorized_wa_request(request: Request) -> bool:
+    if not bot_manager or not bot_manager.wa_secret:
+        return False
+    return request.headers.get('x-wa-secret', '') == bot_manager.wa_secret
+
+
+def _load_wa_media_bytes(media_path: str):
+    if not media_path:
+        return None
+
+    real_path = os.path.realpath(media_path)
+    allowed_dir = os.path.realpath('/tmp')
+    allowed_prefix = 'wa_media_'
+    filename = os.path.basename(real_path)
+
+    if os.path.commonpath([real_path, allowed_dir]) != allowed_dir:
+        raise ValueError('Invalid media path')
+    if not filename.startswith(allowed_prefix):
+        raise ValueError('Invalid media filename')
+    if not os.path.isfile(real_path):
+        raise FileNotFoundError('Media file not found')
+
+    with open(real_path, 'rb') as f:
+        media_bytes = f.read()
+    os.remove(real_path)
+    return media_bytes
 
 # --- FastAPI Lifecycle ---
 @asynccontextmanager
@@ -447,6 +508,9 @@ async def wa_promo_received(request: Request):
     Runs 2-layer company detection (fuzzy + AI) and notifies admin.
     """
     try:
+        if not _is_authorized_wa_request(request):
+            return Response(status_code=403)
+
         data = await request.json()
         bot_id = data.get('bot_id')
         text = data.get('text', '')
@@ -512,12 +576,12 @@ async def wa_promo_received(request: Request):
         media_type = data.get('media_type')  # 'photo' or 'video'
         media_path = data.get('media_path')
         if media_path:
-            import os
             try:
-                with open(media_path, 'rb') as f:
-                    media_bytes = f.read()
-                os.remove(media_path)  # Clean up temp file immediately
+                media_bytes = _load_wa_media_bytes(media_path)
                 logger.info(f"📱 WA media loaded: {media_type}, {len(media_bytes)} bytes, temp file cleaned")
+            except (ValueError, FileNotFoundError) as e:
+                logger.warning(f"Rejected WA media path {media_path}: {e}")
+                media_bytes = None
             except Exception as e:
                 logger.error(f"Failed to read WA media from {media_path}: {e}")
                 media_bytes = None
@@ -586,6 +650,9 @@ async def wa_promo_received(request: Request):
 async def wa_status_update(request: Request):
     """Receive WhatsApp connection status update from Baileys."""
     try:
+        if not _is_authorized_wa_request(request):
+            return Response(status_code=403)
+
         data = await request.json()
         bot_id = data.get('bot_id')
         status = data.get('status', 'disconnected')
