@@ -183,6 +183,39 @@ class ChildBot:
         self.userbot_manager = None  # Set by BotManager after spawn
         self.setup_handlers()
 
+    # Telegram parse error fragments that mean the HTML/Markdown in the
+    # caption is malformed. When we see one, retry the send once with all
+    # formatting stripped so the message still gets through.
+    _HTML_PARSE_ERROR_MARKERS = (
+        "can't parse entities",
+        "can't find end of the entity",
+        "can't find end tag",
+        "unsupported start tag",
+        "unexpected end tag",
+        "unmatched end tag",
+        "entity beginning at",
+    )
+
+    async def _send_with_html_fallback(self, method, **kwargs):
+        """Call a python-telegram-bot send_* method with kwargs. If Telegram
+        rejects the caption/text because the HTML doesn't parse, retry once
+        with parse_mode/entities stripped so the message still delivers."""
+        try:
+            return await method(**kwargs)
+        except Exception as e:
+            msg = str(e).lower()
+            if not any(m in msg for m in self._HTML_PARSE_ERROR_MARKERS):
+                raise
+            self.logger.warning(
+                f"HTML parse failed on {getattr(method, '__name__', 'send')}, "
+                f"retrying plain text: {str(e)[:120]}"
+            )
+            retry_kwargs = dict(kwargs)
+            retry_kwargs.pop('parse_mode', None)
+            retry_kwargs.pop('caption_entities', None)
+            retry_kwargs.pop('entities', None)
+            return await method(**retry_kwargs)
+
     def _mark_dead_chat_if_needed(self, chat_id, err, is_group: bool) -> bool:
         """If `err` indicates the chat is unreachable and target is a group,
         mark it inactive in bot_known_groups. Returns True if pruned."""
@@ -6212,21 +6245,24 @@ class ChildBot:
                             
                             # Send with buttons based on media type
                             if data.get('photo'):
-                                await self.app.bot.send_photo(
+                                await self._send_with_html_fallback(
+                                    self.app.bot.send_photo,
                                     chat_id=tid, photo=data['photo'],
                                     caption=data.get('text') or None,
                                     parse_mode='HTML' if data.get('text') else None,
                                     reply_markup=reply_markup
                                 )
                             elif data.get('video'):
-                                await self.app.bot.send_video(
+                                await self._send_with_html_fallback(
+                                    self.app.bot.send_video,
                                     chat_id=tid, video=data['video'],
                                     caption=data.get('text') or None,
                                     parse_mode='HTML' if data.get('text') else None,
                                     reply_markup=reply_markup
                                 )
                             elif data.get('text'):
-                                await self.app.bot.send_message(
+                                await self._send_with_html_fallback(
+                                    self.app.bot.send_message,
                                     chat_id=tid, text=data['text'],
                                     parse_mode='HTML',
                                     reply_markup=reply_markup
@@ -10173,7 +10209,8 @@ class ChildBot:
                             if is_video:
                                 buf.name = 'grid_collage.mp4'
                                 caption, pm, ce = _caption_payload(text)
-                                return await self.app.bot.send_video(
+                                return await self._send_with_html_fallback(
+                                    self.app.bot.send_video,
                                     chat_id=chat_id, video=buf,
                                     caption=caption,
                                     parse_mode=pm,
@@ -10183,7 +10220,8 @@ class ChildBot:
                             else:
                                 buf.name = 'grid_collage.jpg'
                                 caption, pm, ce = _caption_payload(text)
-                                return await self.app.bot.send_photo(
+                                return await self._send_with_html_fallback(
+                                    self.app.bot.send_photo,
                                     chat_id=chat_id, photo=buf,
                                     caption=caption,
                                     parse_mode=pm,
@@ -10224,7 +10262,8 @@ class ChildBot:
                         buf.name = f'promo{ext.get(media_type, ".bin")}'
                         caption, pm, ce = _caption_payload(text)
                         if media_type == 'photo':
-                            return await self.app.bot.send_photo(
+                            return await self._send_with_html_fallback(
+                                self.app.bot.send_photo,
                                 chat_id=chat_id, photo=buf,
                                 caption=caption,
                                 parse_mode=pm,
@@ -10232,7 +10271,8 @@ class ChildBot:
                                 reply_markup=reply_markup
                             )
                         elif media_type == 'video':
-                            return await self.app.bot.send_video(
+                            return await self._send_with_html_fallback(
+                                self.app.bot.send_video,
                                 chat_id=chat_id, video=buf,
                                 caption=caption,
                                 parse_mode=pm,
@@ -10240,7 +10280,8 @@ class ChildBot:
                                 reply_markup=reply_markup
                             )
                         else:
-                            return await self.app.bot.send_document(
+                            return await self._send_with_html_fallback(
+                                self.app.bot.send_document,
                                 chat_id=chat_id, document=buf,
                                 caption=caption,
                                 parse_mode=pm,
@@ -10248,7 +10289,8 @@ class ChildBot:
                                 reply_markup=reply_markup
                             )
                     else:
-                        return await self.app.bot.send_message(
+                        return await self._send_with_html_fallback(
+                            self.app.bot.send_message,
                             chat_id=chat_id, text=text,
                             parse_mode=use_parse_mode,
                             entities=caption_entities,
@@ -10329,21 +10371,23 @@ class ChildBot:
                         if grid_file_id:
                             # Grid collage: send as video or photo based on type
                             if grid_type == 'video':
-                                await self.app.bot.send_video(
+                                await self._send_with_html_fallback(
+                                    self.app.bot.send_video,
                                     chat_id=g['group_id'], video=grid_file_id,
                                     caption=swapped[:1024], parse_mode='HTML')
                             else:
-                                await self.app.bot.send_photo(
+                                await self._send_with_html_fallback(
+                                    self.app.bot.send_photo,
                                     chat_id=g['group_id'], photo=grid_file_id,
                                     caption=swapped[:1024], parse_mode='HTML')
                         elif len(all_file_ids) == 1:
                             fid, ft = all_file_ids[0], all_file_types[0]
                             if ft == 'photo':
-                                await self.app.bot.send_photo(chat_id=g['group_id'], photo=fid, caption=swapped[:1024], parse_mode='HTML')
+                                await self._send_with_html_fallback(self.app.bot.send_photo, chat_id=g['group_id'], photo=fid, caption=swapped[:1024], parse_mode='HTML')
                             elif ft == 'video':
-                                await self.app.bot.send_video(chat_id=g['group_id'], video=fid, caption=swapped[:1024], parse_mode='HTML')
+                                await self._send_with_html_fallback(self.app.bot.send_video, chat_id=g['group_id'], video=fid, caption=swapped[:1024], parse_mode='HTML')
                             else:
-                                await self.app.bot.send_document(chat_id=g['group_id'], document=fid, caption=swapped[:1024], parse_mode='HTML')
+                                await self._send_with_html_fallback(self.app.bot.send_document, chat_id=g['group_id'], document=fid, caption=swapped[:1024], parse_mode='HTML')
                         elif len(all_file_ids) > 1:
                             # Fallback album
                             from telegram import InputMediaPhoto, InputMediaVideo, InputMediaDocument
@@ -10359,7 +10403,7 @@ class ChildBot:
                                     media_group.append(InputMediaDocument(media=fid, caption=cap, parse_mode=pm))
                             await self.app.bot.send_media_group(chat_id=g['group_id'], media=media_group)
                         else:
-                            await self.app.bot.send_message(chat_id=g['group_id'], text=swapped, parse_mode='HTML')
+                            await self._send_with_html_fallback(self.app.bot.send_message, chat_id=g['group_id'], text=swapped, parse_mode='HTML')
                         bc_count += 1
                     except Exception as e:
                         self.logger.error(f"Auto-broadcast send error to {g['group_id']}: {e}")
@@ -10532,15 +10576,15 @@ class ChildBot:
                     elif file_ids:
                         fid, ft = file_ids[0], m_types[0]
                         if ft == 'photo':
-                            await self.app.bot.send_photo(chat_id=chat_id, photo=fid, caption=text[:1024], parse_mode='HTML')
+                            await self._send_with_html_fallback(self.app.bot.send_photo, chat_id=chat_id, photo=fid, caption=text[:1024], parse_mode='HTML')
                         elif ft == 'video':
-                            await self.app.bot.send_video(chat_id=chat_id, video=fid, caption=text[:1024], parse_mode='HTML')
+                            await self._send_with_html_fallback(self.app.bot.send_video, chat_id=chat_id, video=fid, caption=text[:1024], parse_mode='HTML')
                         elif ft == 'document':
-                            await self.app.bot.send_document(chat_id=chat_id, document=fid, caption=text[:1024], parse_mode='HTML')
+                            await self._send_with_html_fallback(self.app.bot.send_document, chat_id=chat_id, document=fid, caption=text[:1024], parse_mode='HTML')
                         else:
-                            await self.app.bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML')
+                            await self._send_with_html_fallback(self.app.bot.send_message, chat_id=chat_id, text=text, parse_mode='HTML')
                     else:
-                        await self.app.bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML')
+                        await self._send_with_html_fallback(self.app.bot.send_message, chat_id=chat_id, text=text, parse_mode='HTML')
                     return True
                 except Exception as e:
                     self.logger.error(f"Broadcast send error to {chat_id}: {e}")
