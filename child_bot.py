@@ -153,6 +153,22 @@ CLONE_SOURCE, CLONE_TARGET, CLONE_CONFIRM = range(120, 123)
 CLONE_CAPTION_MODE, CLONE_CAPTION_TEXT = range(123, 125)
 
 class ChildBot:
+    # Error strings from Telegram indicating the chat no longer reachable.
+    # When these appear for a *group* target, mark the group inactive so future
+    # broadcasts skip it instead of retrying dead chats every round.
+    _DEAD_CHAT_MARKERS = (
+        'chat not found',
+        'chat was deleted',
+        'chat_write_forbidden',
+        'bot was kicked',
+        'bot is not a member',
+        'bot was blocked',
+        'group chat was deactivated',
+        'supergroup chat was deactivated',
+        'user is deactivated',
+        'peer_id_invalid',
+    )
+
     def __init__(self, token, bot_id, db: Database, scheduler):
         self.token = token
         self.bot_id = bot_id
@@ -166,6 +182,22 @@ class ChildBot:
         self._bot_data_cache = None
         self.userbot_manager = None  # Set by BotManager after spawn
         self.setup_handlers()
+
+    def _mark_dead_chat_if_needed(self, chat_id, err, is_group: bool) -> bool:
+        """If `err` indicates the chat is unreachable and target is a group,
+        mark it inactive in bot_known_groups. Returns True if pruned."""
+        if not is_group:
+            return False
+        msg = str(err).lower()
+        if not any(marker in msg for marker in self._DEAD_CHAT_MARKERS):
+            return False
+        try:
+            self.db.set_group_inactive(self.bot_id, chat_id)
+            self.logger.info(f"🧹 Pruned dead group {chat_id} from known_groups ({msg[:80]})")
+            return True
+        except Exception as prune_err:
+            self.logger.error(f"Failed to prune dead group {chat_id}: {prune_err}")
+            return False
 
     async def initialize(self):
         """Prepare bot application but do not start polling (Webhook mode)"""
@@ -6206,7 +6238,8 @@ class ChildBot:
                     failed += 1
                     last_error = str(e)
                     self.logger.error(f"Broadcast send error to {tid}: {e}")
-            
+                    self._mark_dead_chat_if_needed(tid, e, is_group=(target_type == 'groups'))
+
             grid_label = " 🖼️ Grid" if is_grid else ""
             error_msg = f"\n⚠️ Last error: `{last_error}`" if last_error else ""
             await update.callback_query.message.reply_text(
@@ -10328,8 +10361,9 @@ class ChildBot:
                         else:
                             await self.app.bot.send_message(chat_id=g['group_id'], text=swapped, parse_mode='HTML')
                         bc_count += 1
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.logger.error(f"Auto-broadcast send error to {g['group_id']}: {e}")
+                        self._mark_dead_chat_if_needed(g['group_id'], e, is_group=True)
                     await asyncio.sleep(0.3)
                 
                 self.db.update_promo_status(promo_id, 'broadcast')
@@ -10478,7 +10512,7 @@ class ChildBot:
 
             is_album = len(file_ids) > 1
 
-            async def send_to_chat(chat_id):
+            async def send_to_chat(chat_id, is_group=False):
                 """Send promo to a single chat with album support"""
                 try:
                     if is_album:
@@ -10510,13 +10544,14 @@ class ChildBot:
                     return True
                 except Exception as e:
                     self.logger.error(f"Broadcast send error to {chat_id}: {e}")
+                    self._mark_dead_chat_if_needed(chat_id, e, is_group=is_group)
                     return False
 
             if target == 'groups':
                 groups = self.db.get_known_groups(self.bot_id)
                 count = 0
                 for g in groups:
-                    if await send_to_chat(g['group_id']):
+                    if await send_to_chat(g['group_id'], is_group=True):
                         count += 1
                     await asyncio.sleep(0.3)
                 self.db.update_promo_status(promo_id, 'broadcast')
@@ -10525,7 +10560,7 @@ class ChildBot:
                 users = self.db.get_users(self.bot_id)
                 count = 0
                 for u in users:
-                    if await send_to_chat(u['telegram_id']):
+                    if await send_to_chat(u['telegram_id'], is_group=False):
                         count += 1
                     await asyncio.sleep(0.3)
                 self.db.update_promo_status(promo_id, 'broadcast')
